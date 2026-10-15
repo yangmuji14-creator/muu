@@ -1,0 +1,38 @@
+{
+  "default_model": "deepseek",
+  "model_id": "deepseek-chat",
+  "models": {
+    "deepseek": {
+      "provider": "deepseek",
+      "model_name": "deepseek-chat",
+      "max_tokens": 4096,
+      "temperature": 1.0
+    }
+  },
+  "advanced": {
+    "segment_max_length": 16,
+    "debounce_seconds": 3,
+    "summarize_threshold": 15,
+    "max_retries": 2,
+    "max_messages": 50,
+    "context_char_budget": 24000,
+    "proactive_enabled": true,
+    "proactive_active_start": 7,
+    "proactive_active_end": 23,
+    "proactive_interval_min": 30,
+    "proactive_interval_max": 180,
+    "proactive_missing_days": 2,
+    "proactive_min_level": 20,
+    "brain_enabled": true,
+    "brain_max_tokens": 1000,
+    "brain_debug": false,
+    "checker_enabled": true,
+    "vision_model": {
+      "provider": "openai",
+      "model_name": "",
+      "api_key": "",
+      "base_url": "",
+      "_comment": "当主模型不支持图片时（如 DeepSeek），用此视觉模型识别图片。填 model_name 即可启用。"
+    }
+  }
+}

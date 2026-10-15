@@ -1,0 +1,159 @@
+"""LLM 注册中心 - 管理和切换不同模型"""
+
+import json
+import os
+from pathlib import Path
+
+from loguru import logger
+
+from core.security import get_secret_manager, resolve_config_secret
+
+from .base import BaseLLM
+from .deepseek import DeepSeekLLM
+from .openai_compatible import OpenAICompatibleLLM
+
+
+# 模型 provider 到 LLM 类的映射
+PROVIDER_MAP: dict[str, type[BaseLLM]] = {
+    "deepseek": DeepSeekLLM,
+    "openai": OpenAICompatibleLLM,
+}
+
+
+class LLMRegistry:
+    """LLM 注册中心，负责加载配置、实例化和管理所有模型"""
+
+    def __init__(self, config_path: str | Path | None = None):
+        self._models: dict[str, BaseLLM] = {}
+        self._default_model: str | None = None
+        self._config: dict = {}
+        self._config_path: Path | None = None
+
+        if config_path:
+            self.load_config(config_path)
+
+    def load_config(self, config_path: str | Path) -> None:
+        """从 settings.json 加载模型配置"""
+        path = Path(config_path)
+        if not path.exists():
+            logger.warning(f"Config file not found: {path}")
+            return
+
+        # Reloading is used by the Web onboarding flow. Clear old instances so
+        # a newly configured default model takes effect without a restart.
+        self._models.clear()
+        self._default_model = None
+        self._config_path = path.resolve()
+
+        with open(path, "r", encoding="utf-8-sig") as f:
+            self._config = json.load(f)
+
+        self._default_model = self._config.get("default_model")
+        models_config = self._config.get("models", {})
+
+        for name, cfg in models_config.items():
+            self._register_from_config(name, cfg)
+
+        logger.info(
+            f"Loaded {len(self._models)} models, default: {self._default_model}"
+        )
+
+    def _register_from_config(self, name: str, cfg: dict) -> None:
+        """根据配置注册一个模型
+
+        向后兼容：同时接受新字段名 (provider/model_name/base_url) 和
+        旧字段名 (model/api_base)。api_key 优先从环境变量读，
+        缺失时回退到 cfg["api_key"]。
+        """
+        provider = cfg.get("provider", "openai")
+        model_name = cfg.get("model_name") or cfg.get("model", "")
+
+        # 从环境变量读取 API Key
+        env_key_map = {
+            "deepseek": "DEEPSEEK_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "qwen": "TONGYI_API_KEY",
+            "kimi": "KIMI_API_KEY",
+            "zhipu": "ZHIPU_API_KEY",
+            "mimo": "MIMO_API_KEY",
+            "doubao": "OPENAI_API_KEY",
+            "baichuan": "OPENAI_API_KEY",
+            "minimax": "OPENAI_API_KEY",
+            "stepfun": "OPENAI_API_KEY",
+            "moonshot": "OPENAI_API_KEY",
+        }
+        env_key = env_key_map.get(name, f"{name.upper()}_API_KEY")
+        api_key = resolve_config_secret(
+            cfg,
+            env_value=os.getenv(env_key, ""),
+            manager=get_secret_manager(self._config_path.parent if self._config_path else None),
+        )
+
+        if not api_key:
+            logger.warning(f"No API key found for {name} (env: {env_key}), skipping")
+            return
+
+        base_url = cfg.get("base_url") or cfg.get("api_base")
+        # 对于 openai provider，也从环境变量读 base_url
+        if not base_url and provider == "openai":
+            base_url = os.getenv(f"{name.upper()}_BASE_URL")
+
+        llm_cls = PROVIDER_MAP.get(provider, OpenAICompatibleLLM)
+        max_retries = self._config.get("advanced", {}).get("max_retries", 2)
+        llm = llm_cls(
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            max_tokens=cfg.get("max_tokens", 2048),
+            temperature=cfg.get("temperature", 1.0),
+            max_retries=max_retries,
+            presence_penalty=cfg.get("presence_penalty", 0.3),
+            frequency_penalty=cfg.get("frequency_penalty", 0.3),
+        )
+        # 用户显式声明的多模态能力 ("auto"/"yes"/"no"); 让用户自己说了算,
+        # 模型名匹配表覆盖不了所有厂商, 猜错代价是多发一次无意义的图片请求。
+        llm.multimodal_declared = str(cfg.get("multimodal", "auto") or "auto").strip().lower()
+        self._models[name] = llm
+        logger.debug(f"Registered model: {name} ({provider}/{model_name})")
+
+    def register(self, name: str, llm: BaseLLM) -> None:
+        """手动注册一个模型实例"""
+        self._models[name] = llm
+
+    def get(self, name: str | None = None) -> BaseLLM:
+        """获取模型实例，默认返回 default_model"""
+        target = name or self._default_model
+        if not target or target not in self._models:
+            available = list(self._models.keys())
+            raise ValueError(
+                f"Model '{target}' not found. Available: {available}"
+            )
+        return self._models[target]
+
+    @property
+    def available_models(self) -> list[str]:
+        return list(self._models.keys())
+
+    @property
+    def default_model(self) -> str | None:
+        return self._default_model
+
+
+# 全局单例
+_registry: LLMRegistry | None = None
+
+
+def get_llm(name: str | None = None) -> BaseLLM:
+    """快捷函数：获取全局注册中心中的模型"""
+    global _registry
+    if _registry is None:
+        _registry = LLMRegistry()
+    return _registry.get(name)
+
+
+def init_registry(config_path: str | Path) -> LLMRegistry:
+    """初始化全局注册中心"""
+    global _registry
+    _registry = LLMRegistry(config_path)
+    return _registry

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muu"
+version = "4.5.0"
+description = "慕 — 本地优先的 AI 伴侣，支持多角色、长期记忆、微信接入和 MCP 扩展"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+authors = [
+    {name = "yangmuji14"},
+]
+keywords = ["ai", "chatbot", "companion", "llm"]
+
+dependencies = [
+    "python-dotenv>=1.1.0",
+    "pydantic>=2.10.0",
+    "litellm>=1.65.0",
+    "loguru>=0.7.0",
+    "numpy>=1.24.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+vector = ["sentence-transformers>=3.0.0,<5.0.0"]
+wechat = ["weixin-ilink>=0.3.5", "qrcode>=7.0"]
+dev = ["pytest>=9.0.0", "pytest-asyncio>=1.4.0", "pytest-mock>=3.15.0", "pytest-cov>=6.0.0"]
+
+[project.scripts]
+mu = "main:main"
+muu = "main:main"
+
+[tool.setuptools]
+include-package-data = true
+py-modules = ["main", "setup_wizard", "setup_wechat", "import_chat", "import_exskill"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "adapters*", "mcp_servers*", "plugins*", "tools*", "webui*"]
+exclude = ["tests*", "data*", "logs*", "config*", "packaging*", "scripts*"]
+
+[tool.setuptools.package-data]
+webui = ["static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["core", "adapters", "webui"]
+branch = true
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 60

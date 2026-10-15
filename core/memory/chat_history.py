@@ -1,0 +1,374 @@
+"""聊天历史持久化存储
+
+将 _user_histories 和 _short_memories 从内存 dict 持久化到 JSON 文件。
+"""
+
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from core.config import parse_uid
+from core.utils import atomic_write_json
+
+
+class ChatHistoryStorage:
+    """聊天历史持久化存储
+
+    每个用户的数据包含：
+    - messages: LLM 对话历史（role/content 列表，**默认全量保留，不裁剪**）
+    - short_memories: 短期记忆（user/assistant 对，用于总结）
+
+    对话记录是"档案"，不该被删：用户隔多久都应能翻到以前的聊天。
+    所以落盘**默认不设上限**（max_stored=None / 0 表示不限制）。
+    发给模型的上下文长度另有闸门（`max_messages` + `context_char_budget`），
+    与"存多少"完全解耦 —— 历史再长也不会撑爆 prompt。
+    """
+
+    DEFAULT_MAX_STORED = 0  # 0 / None = 不限制（全量保留）
+
+    def __init__(
+        self,
+        data_dir: str | Path,
+        max_messages: int = 20,
+        max_stored: int | None = None,
+    ):
+        """
+        Args:
+            data_dir: 数据存储目录
+            max_messages: 喂给模型的上下文消息条数上限
+            max_stored: 落盘保留的消息条数上限；**None 或 0 = 不限制**（默认）
+        """
+        self._data_dir = Path(data_dir) / "chat_history"
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._max_messages = max_messages
+        try:
+            cap = int(max_stored) if max_stored else 0
+        except (TypeError, ValueError):
+            cap = 0
+        # None 表示不裁剪；只有显式配了正数才裁剪
+        self._max_stored: int | None = cap if cap > 0 else None
+        # 内存缓存：user_id -> {"messages": [...], "short_memories": [...]}
+        self._cache: dict[str, dict[str, list]] = {}
+
+    @property
+    def data_dir(self) -> Path:
+        """公开数据目录路径"""
+        return self._data_dir
+
+    # 路径穿越防护：account_id / persona_id / wxid / api user_id 只允许
+    # ``[a-zA-Z0-9_-.@]``，不含 ``..`` / ``/`` / ``\``。复合 user_id 的磁盘
+    # 路径由 parse_uid 解析后按平台分目录，规避 Windows 文件名禁止冒号问题。
+    # 注：iLink 协议的 wxid 格式为 ``xxx@im.wechat``（含 @ 和 .），这两个字符
+    # 在 Windows/Linux 文件名中均合法、无路径穿越风险，故允许。
+    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.@]+$")
+
+    @classmethod
+    def _validate_segment(cls, value: str, label: str) -> None:
+        if ".." in value or not cls._SAFE_SEGMENT_RE.fullmatch(value):
+            raise ValueError(f"Invalid {label}: {value!r}")
+
+    def _get_user_file(self, user_id: str) -> Path:
+        """获取用户历史文件路径（子目录结构 + 路径穿越防护）。
+
+        - wechat: ``data/chat_history/wechat/{account_id}/{wxid}.json``
+        - web:    ``data/chat_history/web/{persona_id}.json``
+        - cli:    ``data/chat_history/cli/local.json``
+        - api:    ``data/chat_history/api/{user_id}.json``
+        - legacy（无 ``::`` 分隔）: ``data/chat_history/{safe_id}.json``
+          （保留旧 sanitize 逻辑向后兼容现有 ``web_user.json`` 等文件）
+        """
+        parsed = parse_uid(user_id)
+        platform = parsed["platform"]
+
+        if platform == "wechat":
+            account_id = parsed["account_id"]
+            raw_id = parsed["raw_id"]
+            self._validate_segment(account_id, "account_id")
+            self._validate_segment(raw_id, "wxid")
+            sub_dir = self._data_dir / "wechat" / account_id
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            return (sub_dir / f"{raw_id}.json").resolve()
+
+        if platform == "web":
+            persona_id = parsed["persona_id"]
+            self._validate_segment(persona_id, "persona_id")
+            sub_dir = self._data_dir / "web"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            return (sub_dir / f"{persona_id}.json").resolve()
+
+        if platform == "cli":
+            sub_dir = self._data_dir / "cli"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            return (sub_dir / "local.json").resolve()
+
+        if platform == "api":
+            raw_id = parsed["raw_id"]
+            self._validate_segment(raw_id, "api user_id")
+            sub_dir = self._data_dir / "api"
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            return (sub_dir / f"{raw_id}.json").resolve()
+
+        # legacy: 旧 user_id 无 `::` 分隔，保留原 sanitize 逻辑
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-.]", "_", user_id)
+        path = (self._data_dir / f"{safe_id}.json").resolve()
+        if not path.is_relative_to(self._data_dir.resolve()):
+            raise ValueError(f"Invalid user_id: {user_id}")
+        return path
+
+    def load(self, user_id: str) -> dict[str, list]:
+        """加载用户聊天历史
+
+        Returns:
+            {"messages": [...], "short_memories": [...]}
+        """
+        if user_id in self._cache:
+            return self._cache[user_id]
+
+        filepath = self._get_user_file(user_id)
+        if not filepath.exists():
+            empty = {"messages": [], "short_memories": []}
+            self._cache[user_id] = empty
+            return empty
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            result = {
+                "messages": data.get("messages", []),
+                "short_memories": data.get("short_memories", []),
+            }
+            self._cache[user_id] = result
+            return result
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load chat history for {user_id}: {e}")
+            # 损坏文件先改名保留（review P2-4）：不备份的话，下一次 save() 会用
+            # 内存里的空数据整体覆盖原文件 → 全量聊天档案无提示消失。
+            try:
+                corrupt = filepath.with_suffix(filepath.suffix + ".corrupt")
+                if not corrupt.exists():
+                    filepath.rename(corrupt)
+                    logger.warning(
+                        f"Corrupt chat history preserved as {corrupt.name}"
+                    )
+            except OSError:
+                pass
+            empty = {"messages": [], "short_memories": []}
+            self._cache[user_id] = empty
+            return empty
+
+    def save(self, user_id: str) -> None:
+        """保存用户聊天历史到文件（原子写入）"""
+        if user_id not in self._cache:
+            return
+
+        filepath = self._get_user_file(user_id)
+        data = self._cache[user_id]
+
+        try:
+            atomic_write_json(filepath, data)
+        except Exception as e:
+            logger.error(f"Failed to save chat history for {user_id}: {e}")
+            self._cache.pop(user_id, None)
+
+    def get_messages(self, user_id: str) -> list[dict[str, str]]:
+        """获取用户 LLM 对话历史"""
+        return self.load(user_id)["messages"]
+
+    def add_message(
+        self,
+        user_id: str,
+        role: str,
+        content: str,
+        emotion: str | None = None,
+        emotion_intensity: float | None = None,
+        emotion_understanding: str | None = None,
+        platform: str = "",
+        persona_id: str = "",
+        account_id: str = "",
+        sticker: dict[str, Any] | None = None,
+    ) -> None:
+        """添加一条消息并持久化
+
+        Args:
+            user_id: 用户 ID
+            role: 消息角色（user/assistant）
+            content: 消息内容
+            emotion: 情感类型（可选，如 "happy", "sad" 等）
+            emotion_intensity: 情感强度 0.0-1.0（可选）
+            emotion_understanding: 情感理解文本（可选）
+            platform: 来源平台（"wechat"/"web"/"cli"/"api"，可选，空字符串=legacy）
+            persona_id: 人设 ID（可选）
+            account_id: 账号 ID（wechat 多账号隔离用，可选）
+        """
+        data = self.load(user_id)
+        msg: dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if platform:
+            msg["platform"] = platform
+        if persona_id:
+            msg["persona_id"] = persona_id
+        if account_id:
+            msg["account_id"] = account_id
+        if emotion is not None:
+            msg["emotion"] = emotion
+        if emotion_intensity is not None:
+            msg["emotion_intensity"] = round(emotion_intensity, 3)
+        if emotion_understanding is not None:
+            msg["emotion_understanding"] = emotion_understanding
+        if sticker:
+            # Metadata only: the actual image remains in a sticker pack.
+            msg["sticker"] = {
+                key: sticker[key] for key in ("pack", "emotion", "filename", "url")
+                if sticker.get(key) is not None
+            }
+        data["messages"].append(msg)
+
+        # 落盘裁剪：默认不裁剪（None）。只有显式配置了正上限才会裁。
+        if self._max_stored is not None and len(data["messages"]) > self._max_stored:
+            data["messages"] = data["messages"][-self._max_stored:]
+
+        self.save(user_id)
+
+    def get_short_memories(self, user_id: str) -> list[dict[str, str]]:
+        """获取用户短期记忆"""
+        return self.load(user_id)["short_memories"]
+
+    def add_short_memory(self, user_id: str, user_msg: str, assistant_msg: str) -> None:
+        """添加一组短期记忆并持久化"""
+        data = self.load(user_id)
+        data["short_memories"].append({"user": user_msg, "assistant": assistant_msg})
+        self.save(user_id)
+
+    def clear_short_memories(self, user_id: str) -> None:
+        """清空用户短期记忆（总结后调用）"""
+        data = self.load(user_id)
+        data["short_memories"] = []
+        self.save(user_id)
+
+    def delete_last_messages(self, user_id: str, count: int = 2) -> list[dict[str, Any]]:
+        """删除最后 N 条消息，返回被删除的消息列表
+
+        Args:
+            user_id: 用户 ID
+            count: 要删除的消息数量
+
+        Returns:
+            被删除的消息列表（从旧到新）
+        """
+        # count<=0 直接不删：Python 的 `messages[:-0]` 是空列表，会把全部历史删光
+        if count is None or count <= 0:
+            return []
+        data = self.load(user_id)
+        messages = data["messages"]
+        if not messages:
+            return []
+
+        count = min(count, len(messages))
+        deleted = messages[-count:]
+        data["messages"] = messages[:-count]
+        self.save(user_id)
+        return deleted
+
+    def search_messages(
+        self, user_id: str, keyword: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """搜索包含关键词的消息
+
+        Args:
+            user_id: 用户 ID
+            keyword: 搜索关键词
+            limit: 最大返回数量
+
+        Returns:
+            匹配结果列表，每项包含 index, message, before, after
+        """
+        messages = self.get_messages(user_id)
+        if not messages or not keyword:
+            return []
+
+        keyword_lower = keyword.lower()
+        results = []
+        for i, msg in enumerate(messages):
+            content = msg.get("content", "")
+            if keyword_lower in content.lower():
+                before = messages[i - 1] if i > 0 else None
+                after = messages[i + 1] if i < len(messages) - 1 else None
+                results.append({
+                    "index": i,
+                    "message": msg,
+                    "before": before,
+                    "after": after,
+                })
+                if len(results) >= limit:
+                    break
+        return results
+
+    def delete_user(self, user_id: str) -> bool:
+        """删除用户所有聊天历史"""
+        self._cache.pop(user_id, None)
+        filepath = self._get_user_file(user_id)
+        if filepath.exists():
+            filepath.unlink()
+            return True
+        return False
+
+    def export_markdown(self, user_id: str, persona_name: str = "AI") -> str:
+        """将聊天历史导出为 Markdown 格式
+
+        Args:
+            user_id: 用户 ID
+            persona_name: AI 角色名
+
+        Returns:
+            Markdown 格式的聊天记录字符串
+        """
+        messages = self.get_messages(user_id)
+        if not messages:
+            return ""
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [
+            f"# 💬 聊天记录",
+            f"",
+            f"> 导出时间：{now}",
+            f"> 角色：{persona_name}",
+            f"> 消息数：{len(messages)}",
+            f"",
+            f"---",
+            f"",
+        ]
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            ts = msg.get("timestamp", "")
+            time_str = ""
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    time_str = f" `{dt.strftime('%H:%M')}`"
+                except (ValueError, TypeError):
+                    pass
+
+            if role == "user":
+                label = "🧑 你"
+            elif role == "assistant":
+                label = f"💕 {persona_name}"
+            else:
+                label = role
+
+            lines.append(f"**{label}**{time_str}")
+            lines.append(f"")
+            lines.append(f"{content}")
+            lines.append(f"")
+            lines.append(f"---")
+            lines.append(f"")
+
+        return "\n".join(lines)
