@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "muu"
-version = "4.5.0"
+version = "0.1.8"
 description = "慕 — 本地优先的 AI 伴侣，支持多角色、长期记忆、微信接入和 MCP 扩展"
 readme = "README.md"
 requires-python = ">=3.11"

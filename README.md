@@ -6,7 +6,7 @@
 
 「慕」是一个本地优先的 AI 伴侣。所有数据（聊天记录、记忆、身份、配置）默认存放在你的设备上，不上传云端；模型通过 LiteLLM 统一对接，支持 OpenAI 系、Anthropic、通义、DeepSeek、本地 Ollama 等任意兼容接口。
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![License](https://img.shields.io/badge/License-AGPL_v3-blue) ![version](https://img.shields.io/badge/version-4.5.0-blue)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![License](https://img.shields.io/badge/License-AGPL_v3-blue) ![version](https://img.shields.io/badge/version-0.1.8-blue)
 
 ## 🖼️ 界面预览
 
