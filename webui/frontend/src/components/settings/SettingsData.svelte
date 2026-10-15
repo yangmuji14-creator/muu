@@ -126,6 +126,7 @@
     {#if !about}
       <p class="hint">正在加载…</p>
     {:else}
+      {#if about.tagline}<p class="about-tagline">{about.tagline}</p>{/if}
       <div class="about-grid">
         {#if about.name}<div class="about-item"><span class="about-k">名称</span><span class="about-v">{about.name}</span></div>{/if}
         {#if about.version}<div class="about-item"><span class="about-k">版本</span><span class="about-v">{about.version}</span></div>{/if}
@@ -150,6 +151,7 @@
   .file-btn { position: relative; cursor: pointer; }
   .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
+  .about-tagline { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-2); font-style: italic; line-height: 1.7; }
   .about-grid { display: flex; flex-direction: column; gap: var(--space-2); }
   .about-item { display: flex; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
   .about-item:last-child { border-bottom: none; }
