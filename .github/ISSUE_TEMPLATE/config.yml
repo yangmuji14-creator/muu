@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 使用问题与交流
+    url: https://github.com/yangmuji14-creator/muu/discussions
+    about: 使用疑问、想法讨论请到这里（Issues 只用于Bug 与功能追踪）
+  - name: 🔒 安全漏洞
+    url: https://github.com/yangmuji14-creator/muu/security/advisories/new
+    about: 请勿公开提交安全漏洞，使用私密安全建议报告

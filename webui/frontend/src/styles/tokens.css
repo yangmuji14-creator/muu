@@ -1,0 +1,410 @@
+/* ============================================================
+   慕 · Ink — 极简冷峻设计系统
+   暖纸底 + 冷蓝点缀 · 细线分隔 · 无卡片阴影 · 高信息密度
+
+   Layer 1: 基础 (字体/圆角/阴影/间距/过渡)  — 主题无关
+   Layer 2: 语义色 (bg/surface/text/accent/status) — 按主题覆盖
+   Layer 3: 组件级 token — 由 Layer 1 + Layer 2 组合派生, 主题自动跟随
+
+   设计原则:
+   - 圆角克制 (2~6px), 靠 1px 细线而非阴影划分层次
+   - 底色暖 (#f7f5f2 纸白), 文字暖炭黑 (#1e1b18), 不用纯黑纯白
+   - 冷蓝 (#2f5d8a) 只作点缀: 链接/选中/焦点, 不铺面积
+   - 数字与时间戳走等宽字体, 拉开与正文的质感对比
+   ============================================================ */
+
+:root {
+  /* ---- 基础字体栈 ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, 'Liberation Mono',
+    monospace;
+
+  /* ---- 圆角 (克制: 最锐利的一档, 保留 2~6px 避免纯直角显得廉价) ---- */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-full: 999px;
+
+  /* ---- 阴影 (极弱: 仅用于浮层/模态, 平面元素一律靠细线) ---- */
+  --shadow-sm: 0 1px 1px rgba(30, 27, 24, 0.03);
+  --shadow: 0 2px 6px rgba(30, 27, 24, 0.05);
+  --shadow-md: 0 4px 14px rgba(30, 27, 24, 0.08);
+  --shadow-lg: 0 8px 30px rgba(30, 27, 24, 0.12);
+  --shadow-accent: 0 1px 2px rgba(30, 27, 24, 0.06);
+
+  /* ---- 过渡缓动 (收紧时长, 冷峻感来自"快而干脆") ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-snap: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --transition: 120ms var(--ease-in-out);
+  --transition-fast: 90ms var(--ease-in-out);
+  --transition-slow: 220ms var(--ease-out);
+  --transition-snap: 180ms var(--ease-snap);
+  --transition-spring: 220ms var(--ease-spring);
+
+  /* ---- 间距刻度（4px 基准） ---- */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ---- 布局尺寸 ---- */
+  --sidebar-w: 208px;           /* 桌面侧边栏宽度 */
+  --topbar-h: 44px;             /* 顶栏高度 */
+  --tabbar-h: 54px;             /* 底部 Tab 栏高度 */
+  --phone-maxw: 520px;          /* 窄屏容器最大宽度 */
+  --app-maxw: 100%;             /* 桌面铺满, 不再居中留白 */
+  --chat-msg-maxw: 720px;       /* 聊天消息最大宽度 */
+
+  /* ---- 字体尺寸与行高 ---- */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+}
+
+/* ============================================================
+   Layer 2: 语义色 — 浅色（暖纸底）
+   ============================================================ */
+[data-theme='light'] {
+  --bg: #f7f5f2;            /* 暖纸白 */
+  --surface: #ffffff;       /* 卡片/面板 */
+  --surface-2: #f2efeb;     /* 次级面板 / hover */
+  --surface-3: #e8e3dc;     /* 再次级 / 按下 */
+  --text-1: #1e1b18;        /* 暖炭黑 (主文字) */
+  --text-2: #6a645c;        /* 次级文字 */
+  --text-3: #9a938a;        /* 弱化文字 / 微标签 */
+  --accent: #2f5d8a;        /* 冷蓝 — 点缀色 */
+  --accent-strong: #24496e;
+  --accent-soft: #e8eff6;
+  --accent-contrast: #ffffff;
+  --border: #e5e0d8;        /* 暖灰细线 */
+  --border-strong: #d3ccc1;
+  --success: #4a7c59;
+  --warning: #a8813a;
+  --error: #a84a42;
+  --info: #2f5d8a;
+  --on-accent: #ffffff;
+  --overlay: rgba(30, 27, 24, 0.35);
+  --glass: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(229, 224, 216, 0.7);
+
+  /* ---- 交互反馈覆盖层 ---- */
+  --hover-overlay: rgba(30, 27, 24, 0.04);
+  --active-overlay: rgba(30, 27, 24, 0.08);
+  --disabled-text: rgba(30, 27, 24, 0.32);
+  --disabled-bg: rgba(30, 27, 24, 0.05);
+
+  /* ---- 状态软底 ---- */
+  --success-soft: rgba(74, 124, 89, 0.12);
+  --warning-soft: rgba(168, 129, 58, 0.14);
+  --error-soft: rgba(168, 74, 66, 0.12);
+  --info-soft: rgba(47, 93, 138, 0.10);
+
+  /* ---- 骨架屏 ---- */
+  --skeleton-bg: color-mix(in srgb, var(--surface-3) 70%, transparent);
+  --skeleton-hi: color-mix(in srgb, var(--surface) 70%, transparent);
+
+  /* ---- 进度条 ---- */
+  --progress-track: var(--surface-3);
+  --progress-fill: var(--text-1);
+
+  /* ---- 强遮罩 / 强毛玻璃 ---- */
+  --scrim: rgba(20, 18, 15, 0.45);
+  --glass-strong: rgba(255, 255, 255, 0.94);
+}
+
+/* ============================================================
+   Layer 2: 语义色 — 深色（中性黑，不用暖棕）
+   ============================================================ */
+[data-theme='dark'] {
+  --bg: #0f0f0f;
+  --surface: #161616;
+  --surface-2: #1e1e1e;
+  --surface-3: #272727;
+  --text-1: #ededed;
+  --text-2: #a8a8a8;
+  --text-3: #7a7a7a;
+  --accent: #7ba6cd;
+  --accent-strong: #9cbfdd;
+  --accent-soft: #1b2430;
+  --accent-contrast: #0b0d10;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --success: #7aa889;
+  --warning: #c9a75f;
+  --error: #cf8079;
+  --info: #7ba6cd;
+  --on-accent: #0b0d10;
+  --overlay: rgba(0, 0, 0, 0.62);
+  --glass: rgba(22, 22, 22, 0.86);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* ---- 交互反馈覆盖层 ---- */
+  --hover-overlay: rgba(255, 255, 255, 0.06);
+  --active-overlay: rgba(255, 255, 255, 0.11);
+  --disabled-text: rgba(255, 255, 255, 0.30);
+  --disabled-bg: rgba(255, 255, 255, 0.05);
+
+  /* ---- 状态软底 ---- */
+  --success-soft: rgba(122, 168, 137, 0.14);
+  --warning-soft: rgba(201, 167, 95, 0.14);
+  --error-soft: rgba(207, 128, 121, 0.14);
+  --info-soft: rgba(123, 166, 205, 0.14);
+
+  /* ---- 骨架屏 ---- */
+  --skeleton-bg: color-mix(in srgb, var(--surface-3) 80%, transparent);
+  --skeleton-hi: color-mix(in srgb, var(--surface) 60%, transparent);
+
+  /* ---- 进度条 ---- */
+  --progress-track: var(--surface-3);
+  --progress-fill: var(--text-1);
+
+  /* ---- 强遮罩 / 强毛玻璃 ---- */
+  --scrim: rgba(0, 0, 0, 0.66);
+  --glass-strong: rgba(22, 22, 22, 0.94);
+}
+
+/* ============================================================
+   Layer 3: 组件级 token (由 Layer1+Layer2 派生, 主题自动跟随)
+   ============================================================ */
+:root {
+  /* ---- 卡片 (弱化: 无阴影, 只留细线) ---- */
+  --card-bg: var(--surface);
+  --card-border: var(--border);
+  --card-radius: var(--radius-lg);
+  --card-shadow: none;
+  --card-pad: var(--space-4);
+
+  /* ---- 列表行 ---- */
+  --row-bg: transparent;
+  --row-hover: var(--surface-2);
+  --row-active: var(--surface-3);
+  --row-border: var(--border);
+  --row-radius: var(--radius);
+  --row-pad-x: var(--space-4);
+  --row-pad-y: var(--space-3);
+
+  /* ---- 按钮 (主按钮用炭黑, 冷蓝只做链接/选中) ---- */
+  --btn-primary-bg: var(--text-1);
+  --btn-primary-text: var(--surface);
+  --btn-primary-hover: color-mix(in srgb, var(--text-1) 84%, var(--surface));
+  --btn-primary-shadow: none;
+  --btn-outline-bg: transparent;
+  --btn-outline-border: var(--border-strong);
+  --btn-outline-text: var(--text-1);
+  --btn-outline-hover: var(--surface-2);
+  --btn-radius: var(--radius-sm);
+  --btn-h-lg: 36px;
+  --btn-h-md: 30px;
+  --btn-h-sm: 24px;
+
+  /* ---- 开关 (方形, 更冷) ---- */
+  --switch-bg: var(--surface-3);
+  /* 开启态用强调色（冷蓝），深色主题下不再用近白，避免「白色才是不确定状态」的误判 */
+  --switch-bg-on: var(--accent);
+  --switch-knob: #ffffff;
+  --switch-knob-on: #ffffff;
+  --switch-w: 34px;
+  --switch-h: 19px;
+  --switch-knob-size: 15px;
+  --switch-shadow: none;
+  --switch-shadow-on: none;
+
+  /* ---- 头像 (方角, 不用圆) ---- */
+  --avatar-border: var(--border);
+  --avatar-shadow: none;
+
+  /* ---- 聊天气泡 ---- */
+  --bubble-self-bg: var(--text-1);
+  --bubble-self-text: var(--surface);
+  --bubble-friend-bg: var(--surface-2);
+  --bubble-friend-text: var(--text-1);
+  --bubble-border: var(--border);
+  --bubble-radius-lg: var(--radius);
+  --bubble-radius-sm: var(--radius-xs);
+  --bubble-time: var(--text-3);
+
+  /* ---- 输入条 ---- */
+  --input-bg: var(--surface);
+  --input-border: var(--border);
+  --input-focus-border: var(--accent);
+  --input-text: var(--text-1);
+  --input-placeholder: var(--text-3);
+  --input-radius: var(--radius-sm);
+  --input-h: 34px;
+
+  /* ---- 顶栏 / 底栏 (去毛玻璃) ---- */
+  --topbar-bg: var(--surface);
+  --topbar-border: var(--border);
+  --topbar-text: var(--text-1);
+  --tabbar-bg: var(--surface);
+  --tabbar-border: var(--border);
+  --tab-active: var(--text-1);
+  --tab-inactive: var(--text-3);
+  --tab-hover: var(--text-2);
+  --sidebar-bg: var(--bg);
+  --sidebar-border: var(--border);
+
+  /* ---- 毛玻璃 (已停用, 保留 token 兼容) ---- */
+  --blur: 0px;
+  --blur-heavy: 0px;
+
+  /* ---- 空状态 ---- */
+  --empty-text: var(--text-3);
+  --empty-icon: var(--text-3);
+  --empty-title: var(--text-2);
+
+  /* ---- Toast ---- */
+  --toast-bg: var(--text-1);
+  --toast-text: var(--surface);
+  --toast-radius: var(--radius-sm);
+  --toast-shadow: var(--shadow-md);
+  --toast-success-bg: var(--success);
+  --toast-success-text: #ffffff;
+  --toast-error-bg: var(--error);
+  --toast-error-text: #ffffff;
+  --toast-info-bg: var(--text-1);
+  --toast-info-text: var(--surface);
+
+  /* ---- 骨架屏 / 进度 ---- */
+  --skeleton-radius: var(--radius-sm);
+  --progress-radius: var(--radius-xs);
+  --progress-h: 3px;
+
+  /* ---- 选中高亮 / 焦点环 (冷蓝点缀) ---- */
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+  --tint: color-mix(in srgb, var(--text-1) 6%, transparent);
+  --tint-strong: color-mix(in srgb, var(--text-1) 12%, transparent);
+}
+
+/* 全局默认 */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  background: var(--bg);
+  color: var(--text-1);
+  transition: background var(--transition), color var(--transition);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 可聚焦元素全局焦点环 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* 细滚动条 (全局) */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-3) 32%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--radius-full);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-3) 55%, transparent);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 表单类元素 */
+input,
+textarea,
+select {
+  caret-color: var(--accent);
+}
+
+/* 通用按压反馈 */
+.pressable {
+  transition: transform var(--transition), box-shadow var(--transition),
+    background var(--transition), border-color var(--transition), color var(--transition);
+}
+.pressable:active {
+  transform: scale(0.98);
+}
+
+/* 微标签: 全站统一的小号分区标题 (拉开排版层次的关键) */
+.micro-label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+  text-transform: none;
+}
+
+/* 数值/时间戳: 等宽字体 */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 骨架屏 shimmer 动画 */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  border-radius: var(--skeleton-radius);
+  background: linear-gradient(
+    90deg,
+    var(--skeleton-bg) 25%,
+    var(--skeleton-hi) 50%,
+    var(--skeleton-bg) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s var(--ease-in-out) infinite;
+}
+
+/* 进度条 */
+.progress {
+  height: var(--progress-h);
+  border-radius: var(--progress-radius);
+  background: var(--progress-track);
+  overflow: hidden;
+}
+.progress > .progress-bar {
+  height: 100%;
+  border-radius: var(--progress-radius);
+  background: var(--progress-fill);
+  transition: width var(--transition-slow);
+}
