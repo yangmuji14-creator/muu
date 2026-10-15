@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-APP_NAME = "MuCompanion"
+APP_NAME = "Muu"
 # 旧版（更名前）的应用目录名：打包模式下若旧数据目录存在而新目录不存在，
 # 继续沿用旧目录，避免用户已产生的数据被"改名"孤立。
 LEGACY_APP_NAME = "CyberCompanion"

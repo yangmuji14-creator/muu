@@ -407,12 +407,9 @@ def _load_settings() -> dict:
 
 
 def _app_version() -> str:
-    for distribution in ("muu",):
-        try:
-            return version(distribution)
-        except PackageNotFoundError:
-            continue
-    return "4.3.0"
+    """单一来源：core/config.APP_VERSION（与 pyproject.toml 同步维护）。"""
+    from core.config import APP_VERSION
+    return APP_VERSION
 
 
 def _installation_id() -> str:
