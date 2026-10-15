@@ -115,6 +115,7 @@ def register(routes, app_components):
             "name": "慕",
             "version": _app_version(),
             "license": "AGPL-3.0",
+            "author": "yangmuji14-creator",
             "installation_id": _installation_id(),
             "storage": str(DATA_DIR.resolve()),
             "backup_format_version": BACKUP_FORMAT_VERSION,

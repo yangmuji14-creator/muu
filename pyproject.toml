@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-only"
 authors = [
-    {name = "yangmuji14"},
+    {name = "yangmuji14-creator"},
 ]
 keywords = ["ai", "chatbot", "companion", "llm"]
 
