@@ -19,7 +19,7 @@ def resolve_runtime_command(command: str) -> str:
     """Map portable interpreter aliases to the interpreter running the app."""
     normalized = (command or "").strip().lower()
     if normalized in {"python", "python3", "{python}"}:
-        # PyInstaller 冻结环境里 sys.executable 是 MuCompanion.exe 而非 Python 解释器,
+        # PyInstaller 冻结环境里 sys.executable 是 Muu.exe 而非 Python 解释器,
         # 直接用它当 python 启动子进程会导致握手超时, 必须回退到机器上真实的 python。
         if getattr(sys, "frozen", False):
             return _real_python() or sys.executable

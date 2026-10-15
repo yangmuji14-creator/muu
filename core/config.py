@@ -8,6 +8,8 @@ from pathlib import Path
 from loguru import logger
 from core.runtime.paths import bootstrap_example_config, ensure_user_directories, resolve_runtime_paths
 
+APP_VERSION = "4.5.0"  # 与 pyproject.toml 同步；打包版经 _app_version 读取
+
 # Runtime paths are source-checkout compatible and become portable when the
 # launcher sets MU_PORTABLE=1. Modules should use these constants instead of
 # deriving paths from __file__.

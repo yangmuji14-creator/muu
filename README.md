@@ -117,7 +117,7 @@ python main.py web        # 网页端，默认 http://127.0.0.1:8000
 - 内置 MCP 服务器脚本（`mcp_servers/`）
 - 首次启动自动写入默认 MCP 配置（开箱即用）
 
-数据落盘于 `%APPDATA%\MuCompanion\`（config / data / logs），不写进安装目录。打包配置保留在开发侧，不随源码仓库分发。
+数据落盘于 `%APPDATA%\Muu\`（config / data / logs），不写进安装目录。打包配置保留在开发侧，不随源码仓库分发。
 
 ---
 
