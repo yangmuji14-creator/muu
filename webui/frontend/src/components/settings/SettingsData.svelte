@@ -129,6 +129,7 @@
       <div class="about-grid">
         {#if about.name}<div class="about-item"><span class="about-k">名称</span><span class="about-v">{about.name}</span></div>{/if}
         {#if about.version}<div class="about-item"><span class="about-k">版本</span><span class="about-v">{about.version}</span></div>{/if}
+        {#if about.author}<div class="about-item"><span class="about-k">创作者</span><span class="about-v">{about.author}</span></div>{/if}
         {#if about.license}<div class="about-item"><span class="about-k">许可证</span><span class="about-v">{about.license}</span></div>{/if}
       </div>
       {#if about.extra}
