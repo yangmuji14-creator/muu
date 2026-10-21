@@ -148,26 +148,23 @@ def load_vision_config() -> dict:
     return config
 
 
-def resolve_multimodal(model_name: str, declared: str = "auto") -> bool:
-    """判定模型是否支持图片输入。
+def resolve_multimodal(model_name: str, declared: str = "") -> bool:
+    """判定模型是否支持图片输入 —— **只看用户勾选，不按模型名字猜**。
 
-    **用户显式声明优先于启发式检测** —— 模型名匹配表不可能覆盖所有厂商,
-    猜错的代价是多发一次无意义的图片请求, 所以让用户自己说了算。
+    PawzoChat 同款设计：模型能力由用户在设置页显式勾选（「能看图」复选框），
+    写入 models.<key>.multimodal = "yes"/"no"。旧的按模型名匹配启发式
+    （MULTIMODAL_PATTERNS）已删除——厂商上新比代码快，猜错的代价是
+    要么白发一次图片请求，要么把看不了的图硬塞给纯文本模型。
 
     Args:
-        model_name: 模型名 (启发式判定用)
-        declared: models.*.multimodal 的取值: "auto" | "yes" | "no"
+        model_name: 保留参数位（日志/兼容用），不参与判定
+        declared: models.*.multimodal 的取值: "yes" | "no"（缺省/未知一律视为 no）
 
     Returns:
         是否走多模态直连
     """
-    v = str(declared or "auto").strip().lower()
-    if v in ("yes", "true", "1", "on"):
-        return True
-    if v in ("no", "false", "0", "off"):
-        return False
-    from core.multimodal.vision import is_multimodal_model
-    return is_multimodal_model(model_name or "")
+    v = str(declared or "").strip().lower()
+    return v in ("yes", "true", "1", "on")
 
 
 def load_image_mode() -> str:

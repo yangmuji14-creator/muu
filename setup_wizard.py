@@ -82,15 +82,6 @@ PROVIDERS = {
         "base_url_env": None,
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
     },
-    "mimo": {
-        "name": "小米 MiMo",
-        "desc": "V2.5系列，多模态+深度思考",
-        "model": "",
-        "env_key": "MIMO_API_KEY",
-        "base_url_env": "MIMO_BASE_URL",
-        "base_url": "https://api.xiaomimimo.com/v1",
-        "note": "按量付费(sk-xxx) / Token Plan(tp-xxx) base_url不同",
-    },
     "doubao": {
         "name": "豆包 (字节)",
         "desc": "字节跳动，Vision版本支持图片",
@@ -320,12 +311,6 @@ def step_llm() -> tuple[str, str, str]:
     info = PROVIDERS[provider]
     print(f"\n  ✅ 已选择：{info['name']}")
 
-    # MiMo 特殊提示
-    if provider == "mimo":
-        print(f"  MiMo 支持两种计费方式：")
-        print(f"    按量付费：API Key 格式 sk-xxx，Base URL: https://api.xiaomimimo.com/v1")
-        print(f"    Token Plan：API Key 格式 tp-xxx，Base URL: https://token-plan-cn.xiaomimimo.com/v1")
-
     print(f"  请前往对应平台获取 API Key\n")
 
     api_key = _prompt(f"请输入 {info['name']} API Key")
@@ -388,7 +373,6 @@ def _default_fallback_model(provider: str) -> str:
         "qwen": "qwen-turbo",
         "kimi": "moonshot-v1-8k",
         "zhipu": "glm-4-flash",
-        "mimo": "mimo-v2.5-pro",
         "doubao": "doubao-1.5-pro-32k",
         "baichuan": "baichuan4",
         "minimax": "abab6.5s-chat",
@@ -733,7 +717,6 @@ def step_vision(provider: str, model_id: str = "") -> dict:
         "gemini": "Gemini (1.5 Flash) — 有免费额度",
         "qwen": "通义千问 VL — 阿里云",
         "zhipu": "智谱 GLM-4V — 国产",
-        "mimo": "小米 MiMo",
         "doubao": "豆包 Vision",
         "stepfun": "阶跃星辰 Step-1V",
         "moonshot": "Moonshot VL",
@@ -777,7 +760,7 @@ def step_vision(provider: str, model_id: str = "") -> dict:
         # 过滤出可能是视觉模型的（名称含 vision/vl/gpt-4o/gemini/glm-4v 等）
         vision_keywords = ("vision", "vl", "gpt-4o", "gpt-4-turbo", "gemini",
                           "claude-3", "claude-4", "glm-4v", "cogview",
-                          "llava", "mimo", "step-1v", "doubao-vision")
+                          "llava", "step-1v", "doubao-vision")
         vision_models = [m for m in models if any(kw in m.lower() for kw in vision_keywords)]
         if not vision_models:
             vision_models = models  # 没匹配到就显示全部
@@ -810,7 +793,6 @@ def step_vision(provider: str, model_id: str = "") -> dict:
             "gemini": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
             "qwen": ["qwen-vl-plus", "qwen-vl-max", "qwen2.5-vl-72b-instruct"],
             "zhipu": ["glm-4v-flash", "glm-4v-plus", "glm-4v"],
-            "mimo": ["mimo-v2.5"],
             "doubao": ["doubao-1.5-vision-pro-32k"],
             "stepfun": ["step-1v-8k", "step-1o-vision-32k"],
             "moonshot": ["moonshot-v1-8k-vision"],
@@ -863,12 +845,15 @@ def run_setup():
     advanced = step_advanced()
 
     # ── 步骤 4：视觉降级模型（可选）──
-    # 多模态模型直接跳过（不需要视觉降级）
-    from core.multimodal.vision import is_multimodal_model
-    if is_multimodal_model(model_id or provider):
-        print(f"\n  📷 模型 '{model_id or provider}' 已支持图片识别，跳过视觉配置\n")
+    # 模型是否支持图片由用户确认（不再按模型名猜）
+    print(f"\n  📷 模型 '{model_id or provider}' 支持图片识别吗？（不确定就选否，"
+          f"之后可在 Web 设置页给模型勾选「能看图」）")
+    if _prompt_yes_no("支持图片识别", default=False):
+        print(f"  ✓ 已将 '{model_id or provider}' 标记为支持图片（multimodal=yes）")
         vision_model = {"provider": "openai", "model_name": "", "api_key": "", "base_url": ""}
+        _multimodal_declared = "yes"
     else:
+        _multimodal_declared = "no"
         vision_model = step_vision(provider, model_id)
 
     # 应用人设中的亲密度
@@ -919,6 +904,7 @@ def run_setup():
         "temperature": advanced.get("model_temperature", 1.0),
         "presence_penalty": advanced.get("model_repetition_penalty", 0.3),
         "frequency_penalty": advanced.get("model_repetition_penalty", 0.3),
+        "multimodal": _multimodal_declared,
     }
     model_config, _ = protect_config_secret(
         model_config, main_secret_ref, manager=secret_manager

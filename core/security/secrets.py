@@ -269,15 +269,23 @@ def resolve_config_secret(
     env_value: str = "",
     manager: SecretManager | None = None,
 ) -> str:
+    """Resolve the API key for a config entry.
+
+    优先级（具体者优先）：用户为此提供商显式保存的密钥（api_key_ref → DPAPI，
+    其次明文 api_key）＞ 环境变量回退。环境变量绝不能压过显式保存的密钥——
+    否则 .env 里的旧 key / 占位符（如 sk-xxx）会让设置页保存的真 key 静默失效
+    （实测：拉取模型列表 401、聊天 401）。
+    """
     values = config if isinstance(config, dict) else {}
-    if env_value:
-        return env_value
     reference = str(values.get("api_key_ref") or "")
     if reference:
         secret = (manager or get_secret_manager()).get(reference)
         if secret:
             return secret
-    return str(values.get("api_key") or "")
+    plaintext = str(values.get("api_key") or "")
+    if plaintext:
+        return plaintext
+    return env_value or ""
 
 
 def protect_config_secret(

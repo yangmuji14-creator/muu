@@ -107,6 +107,10 @@ packaging/
 # TTS 服务商配置含明文 api_key，不入库（结构见 tts_providers.example.json）
 config/tts_providers.json
 
+# 本地配置备份（改动前的快照，含明文配置，不入库）
+config/*.bak-*
+*.bak-*
+
 # 开发内部文档（交接/评审/排查/设计过程）——只留本地，不入发布仓库
 /docs/HANDOFF.md
 /docs/README.md
@@ -116,3 +120,6 @@ config/tts_providers.json
 /docs/模型配置与记忆排查.md
 /docs/设计语言_Ink.md
 /docs/screenshots/legacy/
+/docs/iLink接入调研.md
+/docs/项目架构对齐方案.md
+/docs/项目理解报告/

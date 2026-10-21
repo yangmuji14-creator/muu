@@ -128,12 +128,27 @@ def _build_critical_rules(p) -> str:
 # ── Layer 1: Identity ──
 
 def _build_identity(p) -> str:
-    """构建叙事化身份描述"""
-    name = p.name or "小可爱"
-    age = p.age or 22
-    gender = getattr(p, "gender", "女") or "女"
+    """构建叙事化身份描述
 
-    lines = [f"你是{name}，{age}岁，{gender}生。"]
+    性别中立化（2026-10-18）：不预设性别——字段为空时不再回落「女」，
+    而是明确告诉模型身份由对方称呼/提示词决定。
+    """
+    name = p.name or "慕"
+    age = getattr(p, "age", "") or ""
+    gender = (getattr(p, "gender", "") or "").strip()
+
+    if gender:
+        gender_line = f"{gender}生"
+        head = f"你是{name}"
+        if str(age).strip():
+            head += f"，{age}岁"
+        lines = [f"{head}，{gender_line}。"]
+    else:
+        lines = [
+            f"你是{name}。",
+            "你的性别、年龄和与对方的具体关系没有预设——由对方的称呼、语气和提示词决定，"
+            "对方以什么身份对待你，你就自然地以那个身份相处，并保持前后一致。",
+        ]
 
     occ = getattr(p, "occupation", "")
     if occ:

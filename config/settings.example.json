@@ -1,14 +1,7 @@
 {
-  "default_model": "deepseek",
-  "model_id": "deepseek-chat",
-  "models": {
-    "deepseek": {
-      "provider": "deepseek",
-      "model_name": "deepseek-chat",
-      "max_tokens": 4096,
-      "temperature": 1.0
-    }
-  },
+  "default_model": "",
+  "model_id": "",
+  "models": {},
   "advanced": {
     "segment_max_length": 16,
     "debounce_seconds": 3,
@@ -33,6 +26,7 @@
       "api_key": "",
       "base_url": "",
       "_comment": "当主模型不支持图片时（如 DeepSeek），用此视觉模型识别图片。填 model_name 即可启用。"
-    }
+    },
+    "_comment": "初始状态不预设任何模型。首次使用请运行 python main.py setup，或在网页端「设置 → 模型设置」选择厂商并拉取模型。"
   }
 }

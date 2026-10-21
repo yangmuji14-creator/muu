@@ -20,9 +20,174 @@ from loguru import logger  # noqa: F401
 from aiohttp import web
 
 from webui.routes.common import *  # noqa: F401,F403
+from webui.routes.common import _scope_registry
+from core.multimodal.vision import VisionManager
+
+
+def _vision_failed(vision_result: str) -> bool:
+    """视觉结果是否属于失败/未配置（不应喂给主模型，否则会诱发幻觉）。"""
+    s = str(vision_result or "").strip()
+    return (
+        not s
+        or s.startswith("[图片识别失败")
+        or s.startswith("[图片识别未配置")
+    )
+
+
+def _message_blocks(m: dict) -> list[dict]:
+    """把存储层消息组装为 PawzoChat 式 content blocks（API 输出层）。
+
+    存储层保持「content 字符串 + image/sticker 附件字段」不变（零迁移），
+    块化只发生在 API 输出：前端按 blocks 渲染，每类内容独立气泡。
+    """
+    blocks: list[dict] = []
+    if m.get("image"):
+        blocks.append({"type": "image", "url": m["image"]})
+    st = m.get("sticker")
+    if st:
+        blocks.append({
+            "type": "emoji",
+            **{k: st[k] for k in ("pack", "emotion", "filename", "url") if st.get(k)},
+        })
+    text = str(m.get("content") or "")
+    # 占位文本不进块：图片消息的 "[图片]"、表情消息的 "[表情]"、语音消息的 "[语音]"
+    placeholder = (
+        (m.get("image") and text.strip() == "[图片]")
+        or (st and text.strip() in ("[表情]", ""))
+        or (m.get("voice") and text.strip() == "[语音]")
+    )
+    if text.strip() and not placeholder:
+        blocks.append({"type": "text", "text": text})
+    if m.get("voice_url") or m.get("voice"):
+        blocks.append({"type": "voice", "url": m.get("voice_url") or m.get("voice")})
+    if not blocks and text:
+        blocks.append({"type": "text", "text": text})
+    return blocks
 
 
 def register(routes, app_components):
+    # ---- PawzoChat/微信式图片聚合（2026-10-17）----
+    # 图片先到 → 立即上屏并开始后台视觉识别；文字后到 → /api/chat 认领合并；
+    # 8 秒内没有文字 → 看门任务自动按"只发图"处理。
+    pending_images = {}  # scope_id -> {url, desc_task, ts, user_id, persona_id, history_uid, scope_id}
+
+    def _patch_desc_later(entry) -> None:
+        """后台等描述完成并回填历史（直连路径用：回复不等描述）。"""
+        history = getattr(app_components, "chat_history", None)
+        if history is None or not hasattr(history, "update_image_desc"):
+            return
+
+        async def _patch():
+            try:
+                vision_result = await entry["desc_task"]
+            except Exception as e:
+                logger.error(f"Pending image vision task failed: {e}")
+                return
+            if _vision_failed(vision_result):
+                return
+            desc = VisionManager.single_line_description(vision_result)
+            # 描述任务在上传时就开始跑，可能比 pipeline 落库更早完成 ——
+            # 那一刻 update 找不到消息。短重试几次覆盖落库窗口，避免描述丢失
+            # （丢了之后旧图在后续轮次里就只剩 [图片] 占位）。
+            for delay in (0, 2.0, 5.0):
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    if history.update_image_desc(entry["history_uid"], entry["url"], desc):
+                        return
+                except Exception as e:
+                    logger.error(f"Patch image_desc failed: {e}")
+                    return
+            logger.warning(
+                f"image_desc patch missed after retries: {entry['url']}"
+            )
+
+        asyncio.create_task(_patch())
+
+    async def _consume_pending_image(entry, text: str = "") -> None:
+        """处理一张待聚合图片（看门兜底/多图强制消费）。
+
+        多模态主模型：图片本体进主调用，不等描述；否则等描述再注入 prompt。
+        ⚠️ 所有都会话状态写入必须经 per-scope 锁（ScopeExecutionRegistry），
+        与 /api/chat 同一把锁 —— 否则看门任务在用户正在生成回复时触发，
+        同一会话两轮 pipeline 并发跑，历史/记忆都会打架。
+        """
+        vision = getattr(app_components, "vision_manager", None)
+        history = getattr(app_components, "chat_history", None)
+        url = entry["url"]
+        persona_id = entry["persona_id"]
+        scope_key = entry.get("scope_id") or ""
+        pipeline = app_components.handler.pipeline
+        try:
+            parameters = inspect.signature(pipeline.process).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        kwargs = {}
+        if scope_key and "scope_id" in parameters:
+            kwargs["scope_id"] = scope_key
+
+        async def _run_locked(fn):
+            """在会话锁内执行一段写入（空 scope 直接执行）。"""
+            return await _scope_registry(app_components).submit(
+                scope_key, uuid.uuid4().hex, fn, dedup=False,
+            )
+
+        # ---- 原生直连（PawzoChat 式）：语言模型勾了「多模态」→ 图片本体
+        # 直接进主调用，回复不等描述；描述后台补写历史供之后轮次使用。
+        if vision is not None and vision.main_is_multimodal:
+            _patch_desc_later(entry)
+            kwargs_native = dict(kwargs)
+            if "image" in parameters:
+                kwargs_native["image"] = url
+            if "image_path" in parameters:
+                kwargs_native["image_path"] = entry.get("path")
+            if "attach_image" in parameters:
+                kwargs_native["attach_image"] = True
+
+            async def _run_native():
+                await pipeline.process(
+                    entry["user_id"], text or "[图片]", persona_id,
+                    **kwargs_native,
+                )
+
+            try:
+                await _run_locked(_run_native)
+            except Exception as e:
+                logger.error(f"Pending image process failed: {e}")
+            return
+
+        try:
+            vision_result = await entry["desc_task"]
+        except Exception as e:
+            logger.error(f"Pending image vision task failed: {e}")
+            vision_result = ""
+        failed = _vision_failed(vision_result)
+
+        async def _run_fallback():
+            if failed:
+                # 视觉失败：把失败说明作为回复落库，绝不能拿空/错误描述喂主模型
+                if history is not None:
+                    history.add_message(
+                        entry["history_uid"], "user", text or "[图片]",
+                        platform="web", persona_id=persona_id, image=url,
+                    )
+                    history.add_message(
+                        entry["history_uid"], "assistant",
+                        "图片识别失败了，稍后再发一次试试~",
+                        platform="web", persona_id=persona_id,
+                    )
+                return
+            desc = VisionManager.single_line_description(vision_result)
+            await pipeline.process(
+                entry["user_id"], text or "[图片]", persona_id,
+                image=url, image_desc=desc, **kwargs,
+            )
+
+        try:
+            await _run_locked(_run_fallback)
+        except Exception as e:
+            logger.error(f"Pending image process failed: {e}")
+
     @routes.get("/api/history")
     async def get_history(request):
         """返回当前用户的消息历史（脱敏，不含 emotion 内部元数据）。"""
@@ -47,15 +212,19 @@ def register(routes, app_components):
             if forged is not None:
                 return forged
             msgs = app_components.chat_history.get_messages(user_id)
-            sanitized = [
-                {
+            sanitized = []
+            for m in msgs:
+                item = {
                     "role": m.get("role"),
                     "content": m.get("content"),
                     "timestamp": m.get("timestamp"),
+                    "blocks": _message_blocks(m),
                     **({"sticker": m["sticker"]} if m.get("sticker") else {}),
+                    **({"image": m["image"]} if m.get("image") else {}),
+                    **({"voice": m["voice"]} if m.get("voice") else {}),
+                    **({"platform": m["platform"]} if m.get("platform") else {}),
                 }
-                for m in msgs
-            ]
+                sanitized.append(item)
             return web.json_response({"messages": sanitized})
         except Exception as e:
             logger.error(f"WebUI get_history error: {e}")
@@ -95,6 +264,67 @@ def register(routes, app_components):
             logger.error(f"WebUI delete_last error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
+    @routes.get("/api/events")
+    async def sse_events(request):
+        """SSE 实时事件流：订阅当前 scope 的 history_changed 事件。
+
+        前端 EventSource 收到后立即刷新聊天列表（替代固定 5s 轮询的主通道，
+        轮询保留作兜底）。15s 心跳防代理断连。
+        """
+        try:
+            user_id, _conv, _pid = _resolve_scoped_user_id(
+                request.query.get("conversation_id"), app_components,
+                fallback_persona_id=(
+                    request.query.get("persona_id") or DEFAULT_PERSONA_ID
+                ),
+            )
+        except _ConversationNotFound as e:
+            return web.json_response(
+                {"error": f"conversation not found: {e}"}, status=404
+            )
+        # ⚠️ 订阅 key 必须与消息落库的作用域一致：_resolve_scoped_user_id 返回的
+        # user_id 本身就是记忆作用域（scope_<sha>，与 /api/history 同一键空间）。
+        # 不要再用 _memory_scope_from_conversation 重算——那会得到另一个 key，
+        # 导致永远收不到 pipeline 发布的事件（2026-10-18 实测踩坑）。
+        scope_id = user_id
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+        from core.runtime import event_bus
+        queue = event_bus.subscribe(scope_id)
+        logger.info(f"SSE subscribed: scope={scope_id!r} user={user_id!r}")
+        try:
+            await response.write(
+                f"data: {json.dumps({'type': 'connected'})}\n\n".encode("utf-8")
+            )
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
+                    await response.write(
+                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+                    )
+                except asyncio.TimeoutError:
+                    # 心跳：保持连接、探测断连
+                    await response.write(b": ping\n\n")
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            logger.debug(f"SSE stream ended: {e}")
+        finally:
+            event_bus.unsubscribe(scope_id, queue)
+            try:
+                await response.write_eof()
+            except Exception:
+                pass
+        return response
+
     @routes.post("/api/chat")
     async def chat(request):
         try:
@@ -105,6 +335,14 @@ def register(routes, app_components):
         content = (body.get("content") or "").strip()
         if not content:
             return web.json_response({"error": "content is required"}, status=400)
+        # 顺序指纹：多行（前端去抖合并）时记录收到的行序，用于定位「分段连发乱序」
+        # 是前端合并就乱还是后端落库乱。每行只取前 6 字符，避免日志泄全文。
+        _mlines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        if len(_mlines) > 1:
+            logger.info(
+                "WebUI chat multi-line fingerprint: {} 行 | {}",
+                len(_mlines), " | ".join(ln[:6] for ln in _mlines),
+            )
         body_persona_id = body.get("persona_id") or DEFAULT_PERSONA_ID
         # T9: 优先用 conversation_id 解析 user_id；缺省走 build_web_uid(persona_id)
         try:
@@ -194,6 +432,43 @@ def register(routes, app_components):
                 kwargs["sticker"] = sticker_meta
             if scope_id and "scope_id" in parameters:
                 kwargs["scope_id"] = scope_id
+            # 图片聚合：本 scope 有未处理的上传图片 → 认领，图+文一轮处理。
+            entry = pending_images.pop(scope_id, None)
+            if entry is not None:
+                vision = getattr(app_components, "vision_manager", None)
+                if vision is not None and vision.main_is_multimodal:
+                    # ---- 原生直连：图片本体进主调用，回复不等描述 ----
+                    # 描述任务后台继续跑，完成后回填历史（update_image_desc）。
+                    _patch_desc_later(entry)
+                    if "image" in parameters:
+                        kwargs["image"] = entry["url"]
+                    if "image_path" in parameters:
+                        kwargs["image_path"] = entry.get("path")
+                    if "attach_image" in parameters:
+                        kwargs["attach_image"] = True
+                    logger.info("WebUI chat aggregated pending image (native vision)")
+                else:
+                    # ---- 备用路线：等描述 → 描述注入 prompt ----
+                    # 视觉任务在上传时就已开跑，此处最多等它完成。
+                    try:
+                        vision_result = await entry["desc_task"]
+                    except Exception as e:
+                        logger.error(f"Pending image vision failed: {e}")
+                        vision_result = ""
+                    if _vision_failed(vision_result):
+                        # 视觉失败：附一句说明，别让主模型对着空描述编内容
+                        if "image_desc" in parameters:
+                            kwargs["image_desc"] = "（图片识别失败，暂时无法看到这张图片的内容）"
+                        if "image" in parameters:
+                            kwargs["image"] = entry["url"]
+                    else:
+                        if "image" in parameters:
+                            kwargs["image"] = entry["url"]
+                        if "image_desc" in parameters:
+                            kwargs["image_desc"] = VisionManager.single_line_description(
+                                vision_result
+                            )
+                    logger.info("WebUI chat aggregated pending image for scope")
             # The pipeline already returns friendly user-facing error strings
             # internally; unexpected exceptions propagate to the SSE loop's
             # error handler below.
@@ -270,13 +545,16 @@ def register(routes, app_components):
     async def upload_image(request):
         vision = getattr(app_components, "vision_manager", None)
         pipeline = app_components.handler.pipeline
+        # 图片存到 attachments/web（静态可访问），历史消息带 /attachments URL；
+        # 2026-10-17 之前是存 uploads 且识别完即删，导致 Web 端永远看不到图。
+        ATTACH_WEB_DIR = DATA_DIR / "attachments" / "web"
 
         reader = await request.multipart()
         image_path = None
         caption = ""
         conversation_id = ""
         user_id_override = ""
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        ATTACH_WEB_DIR.mkdir(parents=True, exist_ok=True)
 
         async for part in reader:
             if part.name == "image":
@@ -284,7 +562,7 @@ def register(routes, app_components):
                 if content_type not in ALLOWED_IMAGE_TYPES:
                     return web.json_response({"error": "unsupported image type"}, status=415)
                 ext = Path(part.filename or "img.png").suffix or ".png"
-                image_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
+                image_path = ATTACH_WEB_DIR / f"{uuid.uuid4().hex}{ext}"
                 size = 0
                 with open(image_path, "wb") as f:
                     while True:
@@ -331,111 +609,50 @@ def register(routes, app_components):
             _conv, app_components, resolved_user_id, persona_id,
         )
         history_user_id = scope_id or user_id
+        image_url = f"/attachments/web/{image_path.name}"
 
-        try:
-            vision_prompt = (
-                "请客观描述这张图片的内容：画面里有什么、是什么场景、"
-                "有什么值得注意的细节。只描述事实，不要加表情、语气和评价。"
-            )
-            if caption:
-                vision_prompt += f"\n用户补充说明：{caption}\n请结合这句话理解图片并直接回复用户。"
-            vision_result = await vision.process(str(image_path), vision_prompt)
-            if vision.main_is_multimodal:
-                reply = vision_result
-                history = getattr(app_components, "chat_history", None)
-                if history is not None:
-                    user_content = "[用户发送了一张图片]" + (f" {caption}" if caption else "")
-                    history.add_message(
-                        history_user_id, "user", user_content, platform="web",
-                        persona_id=persona_id,
-                    )
-                    history.add_message(
-                        history_user_id, "assistant", reply, platform="web",
-                        persona_id=persona_id,
-                    )
-            else:
-                enhanced = vision.build_enhanced_message(vision_result, caption)
-                reply, _ = await pipeline.process(
-                    user_id, enhanced, persona_id,
-                    **_scope_kwargs(pipeline, scope_id),
-                )
-            return web.json_response({"reply": reply})
-        except Exception as e:
-            logger.error(f"WebUI image error: {e}")
-            return web.json_response({"error": str(e)}, status=500)
-        finally:
-            image_path.unlink(missing_ok=True)
-
-    @routes.post("/api/upload/voice")
-    async def upload_voice(request):
-        """语音上传：若配置了 ASR 则转写为文本再走对话，否则优雅降级。"""
-        pipeline = app_components.handler.pipeline
-        reader = await request.multipart()
-        audio_path = None
-        conversation_id = ""
-        user_id_override = ""
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-        async for part in reader:
-            if part.name == "audio":
-                content_type = (part.headers.get("Content-Type") or "").split(";", 1)[0].lower()
-                if content_type not in ALLOWED_AUDIO_TYPES:
-                    return web.json_response({"error": "unsupported audio type"}, status=415)
-                ext = Path(part.filename or "voice.webm").suffix or ".webm"
-                audio_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
-                size = 0
-                with open(audio_path, "wb") as f:
-                    while True:
-                        chunk = await part.read_chunk()
-                        if not chunk:
-                            break
-                        size += len(chunk)
-                        if size > MAX_AUDIO_UPLOAD_SIZE:
-                            f.close()
-                            audio_path.unlink(missing_ok=True)
-                            return web.json_response({"error": "audio too large"}, status=413)
-                        f.write(chunk)
-            elif part.name == "conversation_id":
-                conversation_id = (await part.text()).strip()
-            elif part.name == "user_id":
-                user_id_override = (await part.text()).strip()
-
-        if audio_path is None:
-            return web.json_response({"error": "no audio"}, status=400)
-
-        try:
-            resolved_user_id, _conv, bound_persona_id = _resolve_user_id_from_conversation(
-                conversation_id, app_components,
-            )
-        except _ConversationNotFound as e:
-            return web.json_response(
-                {"error": f"conversation not found: {e}"}, status=404
-            )
-        # S6.1: identity is authoritative — a client-form user_id may not override
-        # the conversation-bound identity; reject any mismatch.
-        forged = _guard_client_identity(user_id_override, resolved_user_id, where="/api/upload")
-        if forged is not None:
-            return forged
-        user_id = resolved_user_id
-        persona_id = bound_persona_id or DEFAULT_PERSONA_ID
-        scope_id = _memory_scope_from_conversation(
-            _conv, app_components, resolved_user_id, persona_id,
+        # ---- PawzoChat/微信式流程：立即返回，后台识别 ----
+        # 1) 立刻启动视觉识别（用户打字期间并行跑）
+        vision_prompt = (
+            "请客观描述这张图片的内容：画面里有什么、是什么场景、"
+            "有什么值得注意的细节。只描述事实，不要加表情、语气和评价。"
         )
+        desc_task = asyncio.create_task(
+            vision.process(str(image_path), vision_prompt)
+        )
+        entry = {
+            "url": image_url,
+            "path": str(image_path),
+            "desc_task": desc_task,
+            "ts": asyncio.get_event_loop().time(),
+            "user_id": user_id,
+            "persona_id": persona_id,
+            "history_uid": history_user_id,
+            "scope_id": scope_id,
+        }
+        # 2) 同 scope 已有未聚合图片 → 立即按"只发图"处理旧的（多图连发各回各的）
+        old = pending_images.pop(scope_id, None)
+        if old is not None:
+            asyncio.create_task(_consume_pending_image(old, text=""))
+        pending_images[scope_id] = entry
 
-        # S8.3: faster-whisper load + transcribe are blocking — run them off
-        # the event loop so chat/SSE/wechat stay responsive while ASR works.
-        text = await asyncio.to_thread(_try_transcribe, audio_path)
-        if not text:
-            return web.json_response(
-                {"error": "语音转写未配置", "need_asr": True}, status=400
-            )
-        try:
-            reply, _ = await pipeline.process(
-                user_id, text, persona_id,
-                **_scope_kwargs(pipeline, scope_id),
-            )
-            return web.json_response({"transcript": text, "reply": reply})
-        except Exception as e:
-            logger.error(f"WebUI voice error: {e}")
-            return web.json_response({"error": str(e)}, status=500)
+        # 3) 看门任务：去抖窗口内没有文字来认领 → 自动按"只发图"处理。
+        #    窗口与前端去抖对齐（max(8, 去抖延迟+3)）：前端图片已加入去抖
+        #    序列，文字可能把窗口推得比 8 秒更久，看门不能抢先。
+        _deb = float(
+            (getattr(app_components, "advanced_config", {}) or {}).get("debounce_seconds", 3) or 3
+        )
+        _watchdog_delay = max(8.0, _deb + 3.0)
+
+        async def _watchdog():
+            await asyncio.sleep(_watchdog_delay)
+            if pending_images.get(scope_id) is entry:
+                pending_images.pop(scope_id, None)
+                await _consume_pending_image(entry, text="")
+
+        asyncio.create_task(_watchdog())
+        logger.info(
+            f"WebUI image accepted: {image_url} (watchdog {_watchdog_delay:.0f}s)"
+        )
+        return web.json_response({"ok": True, "image_url": image_url})
 

@@ -154,6 +154,102 @@ def _check_dependencies() -> bool:
     return True
 
 
+# ========== 环境自检（doctor）==========
+
+def _doctor() -> int:
+    """环境自检：非专业用户一键排查。返回 0=通过，1=有阻塞问题。
+
+    覆盖：Python 版本 / 依赖 / .env / 数据目录可写 / 端口占用 / 模型配置。
+    """
+    import socket
+    import sys
+
+    problems: list[str] = []
+    warnings: list[str] = []
+    ok: list[str] = []
+
+    # 1. Python 版本
+    v = sys.version_info
+    if v >= (3, 11):
+        ok.append(f"Python {v.major}.{v.minor}.{v.micro}")
+    else:
+        problems.append(
+            f"Python 版本过旧（{v.major}.{v.minor}），需要 3.11+，"
+            "去 python.org 下载安装（勾选 Add to PATH）"
+        )
+
+    # 2. 关键依赖
+    missing = []
+    for mod_name, pkg_name in DEPENDENCIES:
+        try:
+            __import__(mod_name)
+        except ImportError:
+            missing.append(pkg_name)
+    if missing:
+        problems.append(f"缺少依赖：{'、'.join(missing)}\n       修复：.venv\\Scripts\\python.exe -m pip install -r requirements.txt")
+    else:
+        ok.append(f"依赖完整（{len(DEPENDENCIES)} 个关键包）")
+
+    # 3. .env
+    if (ROOT / ".env").exists():
+        ok.append(".env 配置文件存在")
+    else:
+        warnings.append("还没有 .env 配置文件 —— 首次使用请先运行：python main.py setup")
+
+    # 4. 数据目录可写
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        probe = DATA_DIR / ".doctor_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        ok.append("数据目录可写")
+    except OSError as e:
+        problems.append(f"数据目录不可写（{DATA_DIR}）：{e}")
+
+    # 5. 8000 端口占用
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        occupied = sock.connect_ex(("127.0.0.1", 8000)) == 0
+    finally:
+        sock.close()
+    if occupied:
+        warnings.append(
+            "8000 端口已有服务在监听 —— 可能旧进程没退干净，"
+            "网页能打开就不用管；打不开就重启电脑或结束旧的 python 进程"
+        )
+    else:
+        ok.append("8000 端口空闲")
+
+    # 6. 模型配置
+    try:
+        settings = json.loads((CONFIG_DIR / "settings.json").read_text(encoding="utf-8"))
+        if settings.get("models"):
+            ok.append(f"模型已配置（{len(settings['models'])} 个提供商）")
+        else:
+            warnings.append("尚未配置对话模型 —— 打开网页端 → 设置 → 模型设置，选服务商填 Key 即可")
+    except Exception as e:
+        warnings.append(f"settings.json 读取失败：{e}")
+
+    print()
+    print("=" * 52)
+    print("  慕 · 环境自检")
+    print("=" * 52)
+    for item in ok:
+        print(f"  ✅ {item}")
+    for item in warnings:
+        print(f"  ⚠️  {item}")
+    for item in problems:
+        print(f"  ❌ {item}")
+    print()
+
+    if problems:
+        print("  有阻塞问题需要先解决，按上面 ❌ 项的提示修复后重试。\n")
+        return 1
+    print("  环境没问题，可以直接启动（python main.py web）。\n")
+    return 0
+
+
 # ========== 微信配置检测 ==========
 
 def _has_wechat_config() -> bool:
@@ -186,18 +282,17 @@ def main():
     parser = argparse.ArgumentParser(description="慕")
     parser.add_argument(
         "command", nargs="?", default="run",
-        choices=["setup", "run", "web", "wechat", "import-skill", "import-chat", "restore"],
-        help="setup=配置向导, run=启动（默认）, web=网页端, wechat=配置微信, import-skill=导入人设, import-chat=导入聊天记录, restore=恢复备份",
+        choices=["setup", "run", "web", "wechat", "restore", "doctor"],
+        help="setup=配置向导, run=启动（默认）, web=网页端, wechat=配置微信, restore=恢复备份, doctor=环境自检",
     )
     parser.add_argument(
         "path", nargs="?",
-        help="import-skill 或 import-chat 时的文件路径",
-    )
-    parser.add_argument(
-        "--name", "-n", default="",
-        help="import-chat 时目标发言者的名字",
+        help="restore 时的备份文件路径",
     )
     args = parser.parse_args()
+
+    if args.command == "doctor":
+        sys.exit(_doctor())
 
     if args.command == "setup":
         from setup_wizard import run_setup
@@ -213,14 +308,6 @@ def main():
 
     if args.command == "wechat":
         _setup_wechat()
-        return
-
-    if args.command == "import-skill":
-        _import_skill_cli(args.path)
-        return
-
-    if args.command == "import-chat":
-        _import_chat_cli(args.path, args.name)
         return
 
     if args.command == "restore":
@@ -302,40 +389,6 @@ def _setup_wechat():
     """配置微信 — 委托给 setup_wechat.py 统一入口"""
     from setup_wechat import run_wechat_setup
     run_wechat_setup()
-
-
-# ========== 导入 ex-skill 人设 ==========
-
-def _import_skill_cli(path_arg: str | None):
-    """独立的 ex-skill 人设导入命令（需要 LLM 已配置）"""
-    from import_exskill import run_import
-    run_import(path_arg)
-
-
-# ========== 导入聊天记录 ==========
-
-def _import_chat_cli(chat_path: str | None, target_name: str):
-    """从聊天记录导入人设、风格和记忆"""
-    import asyncio
-    from import_chat import run_import
-
-    if not chat_path:
-        print("\n  用法: python main.py import-chat <聊天记录文件> --name <目标名字>")
-        print('  示例: python main.py import-chat chat.txt --name 张三')
-        return
-
-    if not target_name:
-        target_name = input("请输入目标发言者的名字: ").strip()
-        if not target_name:
-            print("  ❌ 必须指定目标名字")
-            return
-
-    try:
-        asyncio.run(run_import(chat_path, target_name))
-    except KeyboardInterrupt:
-        print("\n\n  已取消\n")
-    except Exception as e:
-        print(f"\n  ❌ 导入失败: {e}")
 
 
 def _restore_backup_cli(path_arg: str | None):

@@ -11,7 +11,6 @@
 - POST /api/settings     写入设置并热更新到运行中的实例
 - POST /api/chat         流式对话（SSE）
 - POST /api/upload/image 图片上传 + 识别
-- POST /api/upload/voice 语音上传（可选 ASR，未配置则优雅降级）
 - GET  /api/memory             记忆列表（分页 + 重要度过滤）
 - GET  /api/memory/{id}        单条记忆详情
 - GET  /api/life_summary       人生摘要列表
@@ -89,9 +88,7 @@ AVATAR_DIR = ROOT / "data" / "avatars"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 WECHAT_CREDS_DIR = ROOT / "data" / "credentials"
 MAX_IMAGE_UPLOAD_SIZE = 10 * 1024 * 1024
-MAX_AUDIO_UPLOAD_SIZE = 16 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/wav", "audio/mpeg", "audio/mp4"}
 
 PERSONA_ONBOARDING_DEFAULTS = {
     "system_prompt": "你是一个真实、自然、有自己生活的聊天伙伴。用纯文字和对方聊天，保持角色一致，先回应对方最在意的内容，再自然延伸话题。",
@@ -809,45 +806,6 @@ def _affection_stage(level: float) -> str:
 
 
 
-# ── TTS / Whisper 语音合成辅助（原 server.py 尾部，被 voice 与 upload/voice 共用）──
-_whisper_model = None
-_whisper_model_lock = threading.Lock()
-
-def _get_whisper_model():
-    """Load the optional local ASR model once per process.
-
-    Loading Whisper for every voice request made the WebUI appear frozen for
-    several seconds and repeatedly consumed memory. The model remains an
-    optional fallback because browser speech recognition is the zero-install
-    path for portable builds.
-    """
-    global _whisper_model
-    if _whisper_model is not None:
-        return _whisper_model
-    try:
-        from faster_whisper import WhisperModel  # type: ignore
-    except Exception:
-        return None
-    with _whisper_model_lock:
-        if _whisper_model is None:
-            model_name = os.getenv("MU_WHISPER_MODEL") or os.getenv("CC_WHISPER_MODEL", "base")
-            _whisper_model = WhisperModel(model_name, device="cpu", compute_type="int8")
-    return _whisper_model
-
-
-def _try_transcribe(audio_path: Path) -> str | None:
-    """Try optional faster-whisper transcription; return None when unavailable."""
-    try:
-        model = _get_whisper_model()
-        if model is None:
-            return None
-        segments, _info = model.transcribe(str(audio_path), language="zh")
-        return "".join(seg.text for seg in segments).strip() or None
-    except Exception as e:
-        logger.warning(f"WebUI ASR failed: {e}")
-        return None
-
-
 # ===== TTS 语音回复 =====
 
 TTS_AUDIO_DIR = DATA_DIR / "tts_audio"
@@ -972,9 +930,7 @@ __all__ = [
     "SETTINGS_PATH",
     "WECHAT_CREDS_DIR",
     "MAX_IMAGE_UPLOAD_SIZE",
-    "MAX_AUDIO_UPLOAD_SIZE",
     "ALLOWED_IMAGE_TYPES",
-    "ALLOWED_AUDIO_TYPES",
     "PERSONA_ONBOARDING_DEFAULTS",
     "WEB_USER_ID",
     "_WECHAT_ACCOUNT_ID_RE",
@@ -1029,10 +985,6 @@ __all__ = [
     "migrate_legacy_web_user",
     "_MOOD_LABELS",
     "_affection_stage",
-    "_whisper_model",
-    "_whisper_model_lock",
-    "_get_whisper_model",
-    "_try_transcribe",
     "TTS_AUDIO_DIR",
     "_tts_store",
     "_tts_manager",

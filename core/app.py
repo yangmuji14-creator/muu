@@ -174,7 +174,7 @@ class ComponentBuilder:
         )
 
         # 从 persona_loader 获取人设名
-        persona_name = "小雨"
+        persona_name = "慕"
         if persona_loader:
             try:
                 persona = persona_loader.get(DEFAULT_PERSONA_ID)
@@ -345,6 +345,25 @@ def _build_wechat_adapters(advanced_config: dict) -> list["WeChatAdapter"]:
     return result
 
 
+def _image_url_from_path(image_path: str) -> str:
+    """把 data/attachments/ 下的图片路径转成 /attachments 静态 URL。
+
+    不在 attachments 目录（如旧版 wechat_images）返回 ""，调用方据此跳过
+    图片字段——历史兼容，不给 Web 端一个 404 的 <img>。
+    """
+    if not image_path:
+        return ""
+    try:
+        from core.config import DATA_DIR
+
+        p = Path(image_path).resolve()
+        base = (DATA_DIR / "attachments").resolve()
+        rel = p.relative_to(base)
+        return f"/attachments/{rel.as_posix()}"
+    except (ValueError, OSError, ImportError):
+        return ""
+
+
 def make_message_handler(app, pipeline, debounce):
     """构造外部平台消息处理闭包。
 
@@ -416,11 +435,46 @@ def make_message_handler(app, pipeline, debounce):
         else:
             user_id = message.user_id
 
+        # 语音消息：落库（Web 端语音条可听）+ 友好回复。转写（ASR）已移除，
+        # 如需语音转文字可在此接入。iLink SDK 的 msg.save() 会 AES 解密音频。
+        if message.metadata.get("is_voice"):
+            voice_path = message.metadata.get("voice_path", "")
+            history = getattr(app, "chat_history", None)
+            history_uid = scope_id or user_id
+            voice_url = _image_url_from_path(voice_path)  # 同一 attachments 静态机制
+            try:
+                if history is not None:
+                    history.add_message(
+                        history_uid, "user", "[语音]",
+                        platform="wechat",
+                        persona_id=resolved_persona_id,
+                        voice=voice_url or None,
+                    )
+                    reply = "收到你的语音啦~（我暂时还听不了语音内容，打字给我看呀）"
+                    history.add_message(
+                        history_uid, "assistant", reply,
+                        platform="wechat",
+                        persona_id=resolved_persona_id,
+                    )
+                    try:
+                        from core.runtime.event_bus import publish_history_changed
+                        publish_history_changed(history_uid, platform="wechat")
+                    except Exception:
+                        pass
+                    return reply
+                return "收到语音了~"
+            except Exception as e:
+                logger.error(f"WeChat voice handling failed: {e}")
+                return "语音接收失败了，请稍后再试~"
+
         # 图片消息：直接走 Vision Pipeline，不走去抖
         if message.metadata.get("is_image"):
             image_path = message.metadata.get("image_path", "")
             if image_path and app.vision_manager:
                 try:
+                    # 图片静态 URL（供 Web 端渲染真实图片）：适配器已把图片
+                    # 存到 data/attachments/ 下的才能推导出 URL。
+                    image_url = _image_url_from_path(image_path)
                     # 取得图片附文（用户发送图片时附带的话）
                     image_text = message.metadata.get("image_text", "") or ""
                     # 视觉识别：只要求纯事实描述，语气由主模型添加
@@ -431,14 +485,38 @@ def make_message_handler(app, pipeline, debounce):
                     vision_result = await app.vision_manager.process(
                         image_path, vision_prompt
                     )
+                    history = getattr(app, "chat_history", None)
+                    history_uid = scope_id or user_id
+                    clean_desc = app.vision_manager.single_line_description(vision_result)
                     if app.vision_manager.main_is_multimodal:
+                        # 多模态直答：pipeline 不经过，历史需手动落库
+                        # （此前漏落库，图片对话在 Web 端历史里完全消失）
+                        if history is not None:
+                            history.add_message(
+                                history_uid, "user",
+                                image_text or "[图片]",
+                                platform="wechat",
+                                persona_id=resolved_persona_id,
+                                image=image_url or None,
+                            )
+                            history.add_message(
+                                history_uid, "assistant", vision_result,
+                                platform="wechat",
+                                persona_id=resolved_persona_id,
+                            )
+                        try:
+                            from core.runtime.event_bus import publish_history_changed
+                            publish_history_changed(history_uid, platform="wechat")
+                        except Exception:
+                            pass
                         return vision_result
                     else:
                         # 降级模式：视觉描述 + 用户文字 → 主模型生成回复
-                        enhanced = app.vision_manager.build_enhanced_message(
-                            vision_result, image_text
-                        )
-                        pipeline_kwargs = {}
+                        # 存储与显示分离：content=用户真实输入，描述走 image_desc
+                        pipeline_kwargs = {
+                            "image": image_url or None,
+                            "image_desc": clean_desc,
+                        }
                         if scope_id:
                             try:
                                 pipeline_parameters = inspect.signature(
@@ -449,7 +527,7 @@ def make_message_handler(app, pipeline, debounce):
                             if "scope_id" in pipeline_parameters:
                                 pipeline_kwargs["scope_id"] = scope_id
                         reply, _ = await pipeline.process(
-                            user_id, enhanced, resolved_persona_id,
+                            user_id, image_text or "[图片]", resolved_persona_id,
                             **pipeline_kwargs,
                         )
                         return reply
@@ -539,7 +617,7 @@ async def run_with_adapters(app: AppComponents, platforms: list[str]) -> None:
     )
     cli_scope_id = build_memory_scope_uid(user_id, cli_persona_id, "cli")
     persona = app.persona_loader.get(cli_persona_id)
-    persona_name = persona.name if persona else "小雨"
+    persona_name = persona.name if persona else "慕"
 
     # 会话统计
     stats = SessionStats()

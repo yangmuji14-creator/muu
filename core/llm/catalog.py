@@ -30,7 +30,6 @@ PROVIDER_CATALOG: tuple[ProviderSpec, ...] = (
     ProviderSpec("zhipu", "智谱 GLM", "GLM-4V-Flash 支持视觉，有免费额度", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash", "ZHIPU_API_KEY"),
     ProviderSpec("kimi", "Kimi", "月之暗面，长上下文对话", "https://api.moonshot.cn/v1", "kimi-latest", "KIMI_API_KEY"),
     ProviderSpec("moonshot", "Moonshot VL", "Kimi 同厂，VL 版本支持视觉", "https://api.moonshot.cn/v1", "moonshot-v1-8k", "MOONSHOT_API_KEY"),
-    ProviderSpec("mimo", "小米 MiMo", "V2.5 系列，多模态 + 深度思考", "https://api.xiaomimimo.com/v1", "mimo-v2.5-pro", "MIMO_API_KEY"),
     ProviderSpec("doubao", "豆包 (字节)", "字节跳动，Vision 版本支持图片", "https://ark.cn-beijing.volces.com/api/v3", "doubao-1.5-pro-32k", "DOUBAO_API_KEY"),
     ProviderSpec("baichuan", "百川", "Baichuan 系列，国产大模型", "https://api.baichuan-ai.com/v1", "baichuan4", "BAICHUAN_API_KEY"),
     ProviderSpec("minimax", "MiniMax", "海螺 AI，abab 系列", "https://api.minimax.chat/v1", "abab6.5s-chat", "MINIMAX_API_KEY"),
