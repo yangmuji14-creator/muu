@@ -10,9 +10,15 @@
 const JSON_HEADERS = { accept: 'application/json', 'content-type': 'application/json' };
 
 async function request(resource, options = {}) {
+  // FormData (multipart) 时不能带 content-type —— 浏览器需要自动生成
+  // 含 boundary 的 multipart/form-data 头，强制 JSON 头会让后端解析失败
+  // (AssertionError: multipart/* content type expected)，上传全部报 500。
+  const isForm = options.body instanceof FormData;
   const res = await fetch(resource, {
-    headers: { ...JSON_HEADERS, ...(options.headers || {}) },
     ...options,
+    headers: isForm
+      ? { accept: 'application/json', ...(options.headers || {}) }
+      : { ...JSON_HEADERS, ...(options.headers || {}) },
   });
   let data = null;
   try {
@@ -94,12 +100,4 @@ export async function uploadImage(file, { caption = '', conversation_id } = {}) 
   if (caption) form.append('caption', caption);
   if (conversation_id) form.append('conversation_id', conversation_id);
   return request('/api/upload/image', { method: 'POST', body: form });
-}
-
-// POST /api/upload/voice 字段 audio(+conversation_id) -> {transcript, reply}
-export async function uploadVoice(file, { conversation_id } = {}) {
-  const form = new FormData();
-  form.append('audio', file);
-  if (conversation_id) form.append('conversation_id', conversation_id);
-  return request('/api/upload/voice', { method: 'POST', body: form });
 }

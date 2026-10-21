@@ -80,6 +80,28 @@ def timestamp() -> str:
     return datetime.now().strftime("%H:%M")
 
 
+def inject_image_descriptions(messages: list[dict]) -> list[dict]:
+    """组装 prompt 前，把带 image_desc 的用户消息增强为含图片描述的内容。
+
+    存储与显示分离：落库 content 是用户真实输入（caption），界面只显示它；
+    但 LLM 需要知道图片内容 —— 在这里注入描述。同时剥掉 image/image_desc
+    等 UI 字段（_llm_message 也会清洗，这里提前处理避免污染下游）。
+    """
+    out = []
+    for m in messages:
+        desc = m.get("image_desc")
+        if desc and m.get("role") == "user":
+            content = str(m.get("content") or "").strip() or "[图片]"
+            m = {
+                **m,
+                "content": f"{content}（对方发了一张图片，图片内容：{desc}）",
+            }
+        if "image" in m or "image_desc" in m:
+            m = {k: v for k, v in m.items() if k not in ("image", "image_desc")}
+        out.append(m)
+    return out
+
+
 def get_llm_error_message(error: Exception) -> str:
     """将 LLM 异常转为用户友好的中文消息"""
     error_str = str(error).lower()
@@ -205,6 +227,10 @@ class ChatPipeline:
         on_event: Callable[[str, dict], None] | None = None,
         sticker: dict | None = None,
         scope_id: str | None = None,
+        image: str | None = None,
+        image_desc: str | None = None,
+        image_path: str | None = None,
+        attach_image: bool = False,
     ) -> tuple[str, int]:
         """处理一条用户消息
 
@@ -246,6 +272,7 @@ class ChatPipeline:
                     persona_id=persona_id,
                     account_id=parsed_uid["account_id"],
                     sticker=sticker,
+                    image=image,
                 )
             messages = self._chat_history.get_messages(memory_user_id)
             time_context = get_time_context()
@@ -284,9 +311,13 @@ class ChatPipeline:
                 persona_id=persona_id,
                 account_id=parsed_uid["account_id"],
                 sticker=sticker,
+                image=image,
+                image_desc=image_desc,
             )
 
-        messages = self._chat_history.get_messages(memory_user_id)
+        messages = inject_image_descriptions(
+            self._chat_history.get_messages(memory_user_id)
+        )
 
         # Topic/identity extraction is local and can proceed while enrichment runs.
         if not skip_user_message and self._topic_tracker:
@@ -313,6 +344,41 @@ class ChatPipeline:
         self._last_system_prompt = "\n\n".join(
             (stable_prompt, prompt_context.dynamic_context)
         )
+
+        # ---- 原生图片直连（PawzoChat 式，一次调用）----
+        # attach_image=True（调用方已判定主模型勾了「能看图」）时，把图片本体
+        # 作为 image_url 内容块直接塞进最后一条 user 消息 —— 模型看着真图
+        # 用人设语气回复，不再"先等描述 → 再拿描述回复"两段串行。
+        # 视觉描述由路由层后台补写历史（chat_history.update_image_desc），
+        # 供之后轮次注入上下文。
+        if attach_image and image_path:
+            try:
+                from core.multimodal.vision import encode_image
+
+                data_url, _ = encode_image(image_path)
+                attached = False
+                for m in reversed(request_messages):
+                    if isinstance(m, dict) and m.get("role") == "user":
+                        text_part = str(m.get("content") or "")
+                        m["content"] = [
+                            {"type": "text", "text": text_part},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ]
+                        attached = True
+                        break
+                if attached:
+                    logger.info("Native image attached to main LLM call (one-shot vision)")
+            except Exception as e:
+                # 本地编码失败极罕见（文件被删）。明确告诉模型看不到，防幻觉。
+                logger.error(f"Native image attach failed: {e}")
+                for m in reversed(request_messages):
+                    if isinstance(m, dict) and m.get("role") == "user":
+                        c = m.get("content")
+                        if isinstance(c, str) and "[图片]" in c:
+                            m["content"] = c.replace(
+                                "[图片]", "（对方发了一张图片，但加载失败了）"
+                            )
+                        break
 
         # LLM 调用（含工具循环 + 错误隔离）
         async def _generate_reply() -> str:
@@ -410,6 +476,15 @@ class ChatPipeline:
             account_id=parsed_uid["account_id"],
             sticker=sticker_meta,
         )
+        # SSE 实时推送：本轮对话已完整落库，通知该 scope 的所有在线端
+        # （web 前端 EventSource 收到后立即刷新，替代固定轮询）。
+        # 任何失败都不能影响主流程。
+        try:
+            from core.runtime.event_bus import publish_history_changed
+            publish_history_changed(scope_id or "", platform=parsed_uid["platform"])
+            logger.debug(f"event_bus: published history_changed key={scope_id or ''!r}")
+        except Exception as e:
+            logger.debug(f"event_bus publish skipped: {e}")
         # /regen（skip_user_message=True）不重复进短期记忆、不重复提取：
         # 同一条用户消息在原 turn 已记过，重走会重复入库并提前触发总结（review P2-3）。
         if not skip_user_message:

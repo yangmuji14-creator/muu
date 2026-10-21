@@ -10,7 +10,6 @@
     listPersonas,
     listStickers,
     uploadImage,
-    uploadVoice,
   } from '../lib/chatApi.js';
   import { chatStream } from '../lib/chatStream.js';
   import { monitorApi } from '../lib/monitorApi.js';
@@ -60,14 +59,33 @@
   let modelChecking = $state(false);
 
   let showStickerPanel = $state(false);
-  let showImagePanel = $state(false);
-  let pickedImage = $state(null); // {file, url}
-  let imageCaption = $state('');
   let uploading = $state(false);
+  let previewImage = $state(null); // 点击气泡图片时的全屏预览 URL
+  let voicePlayingUrl = $state(null); // 正在播放的语音条
+  let voiceDurations = $state({});    // url -> 时长秒（metadata 加载后填充）
+  let voiceAudio = null;
 
-  let recording = $state(false);
-  let recorder = null;
-  let recordChunks = [];
+  /** 微信式语音条：点击播放/暂停 */
+  function toggleVoice(url) {
+    if (voicePlayingUrl === url) {
+      voiceAudio?.pause();
+      voiceAudio = null;
+      voicePlayingUrl = null;
+      return;
+    }
+    voiceAudio?.pause();
+    voiceAudio = new Audio(url);
+    voiceAudio.onended = () => {
+      voicePlayingUrl = null;
+      voiceAudio = null;
+    };
+    voiceAudio.onerror = () => {
+      voicePlayingUrl = null;
+      voiceAudio = null;
+    };
+    voiceAudio.play().catch(() => (voicePlayingUrl = null));
+    voicePlayingUrl = url;
+  }
 
   // 会话抽屉 (移动端
   let listOpen = $state(false);
@@ -89,8 +107,10 @@
   // 与微信侧 DebounceManager 同构，且读同一个设置项「去抖延迟（秒）」：
   // 发出消息后先等 debounceSecs 秒，期间再发就重置计时；
   // 计时到 → 这段时间的多条消息**合并成一轮**提交（用 \n 拼接）。
+  // 图片也在序列里（PawzoChat/微信式）：上传秒回后入队，与文字共用同一
+  // 窗口；窗口内发的文字提交时由服务端认领 pending 图片，聚合成图+文一轮。
   // 回复生成中收到的消息则入队，等这一轮结束立即提交（不再二次等待）。
-  let pendingQueue = $state([]); // [{content, streamContent, sticker?}]
+  let pendingQueue = $state([]); // [{content, streamContent, sticker?, imageOnly?, msgRef}]
   let debounceTimer = null;
   let debounceSecs = $state(3);   // 由 /api/settings 的 debounce_seconds 覆盖
   let debouncing = $state(false); // 正在等待合并窗口
@@ -106,7 +126,12 @@
 
   /** 把一条消息放进待提交队列，并（重新）启动去抖计时 */
   function enqueue(item) {
-    pendingQueue = [...pendingQueue, item];
+    // PawzoChat 式顺序保证：消息自带到达时间戳，提交时按时间戳排序。
+    // 即使队列因任何未知原因乱序（实测出现过一次），合并顺序也能恢复真实时序。
+    pendingQueue = [...pendingQueue, { ...item, createdAt: Date.now() }];
+    // 顺序指纹：定位「分段连发合并乱序」——enqueue 序 vs 提交序对照
+    console.debug('[queue] enqueue', JSON.stringify(item.streamContent ?? item.content),
+      '-> queue:', JSON.stringify(pendingQueue.map((q) => q.streamContent ?? q.content)));
     if (sending) return; // 正在生成：不另起计时，交给 finishStreaming 立即提交
     clearDebounce();
     debouncing = true;
@@ -117,26 +142,60 @@
     }, Math.max(0, debounceSecs) * 1000);
   }
 
-  /** 提交待发队列：多条文本合并成一轮；含表情等非文本项则一次只发一条 */
+  /** 提交待发队列。
+   *  - 多条文本合并成一轮（\n 拼接）；
+   *  - 表情不与文本合并，一次只发一条（既有行为）；
+   *  - 图片项（imageOnly）不发请求：它只参与去抖计时与排序，
+   *    与文字同批时由服务端认领 pending 聚合；纯图片批次交给
+   *    服务器看门兜底（自动按只发图处理）。 */
   function submitPending() {
-    if (sending || !pendingQueue.length) return;
+    if (sending) return; // 生成中：交给 finishStreaming 立即提交
+    if (uploading) {
+      // 图片还在上传：推迟提交，传完再发（避免文字抢在图片入队前跑掉）
+      clearDebounce();
+      debouncing = true;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        debouncing = false;
+        submitPending();
+      }, 600);
+      return;
+    }
+    if (!pendingQueue.length) return;
     clearDebounce();
-    const [first, ...rest] = pendingQueue;
-    const mergeable = !first.sticker && rest.every((it) => !it.sticker);
-    const batch = mergeable ? pendingQueue : [first];
-    pendingQueue = mergeable ? [] : rest;
-    const merged = batch.map((it) => it.streamContent ?? it.content).join('\n');
-    if (batch.length > 1) {
-      // 多条合并成一条：气泡也同步合并，保证与服务端落库一致。
-      // 按消息对象引用删除（review P2-8）：此前按"末尾 N 条"的位置假设切，
-      // 生成中穿插图片/语音时会把不属于队列的气泡一并删掉。
-      const queuedRefs = new Set(batch.map((it) => it.msgRef).filter(Boolean));
-      const keep = queuedRefs.size === batch.length
+    // 表情不合并：一次只消费队首一条（既有行为）
+    if (pendingQueue.some((it) => it.sticker)) {
+      const first = pendingQueue[0];
+      pendingQueue = pendingQueue.slice(1);
+      if (first.sticker) {
+        streamChat({ content: first.streamContent ?? first.content, sticker: first.sticker });
+      } else {
+        if (!first.imageOnly) {
+          streamChat({ content: first.streamContent ?? first.content });
+        }
+        // 图片项不发请求（服务器看门兜底）；后面还有就继续消费
+        if (pendingQueue.length) submitPending();
+      }
+      return;
+    }
+    const batch = [...pendingQueue].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+    pendingQueue = [];
+    const textItems = batch.filter((it) => !it.imageOnly);
+    const hasImage = batch.some((it) => it.imageOnly);
+    const merged = textItems.map((it) => it.streamContent ?? it.content).join('\n');
+    console.debug('[queue] submit', JSON.stringify(merged), 'image:', hasImage, 'left:', pendingQueue.length);
+    if (!merged.trim()) return; // 纯图片批次：不发请求，看门兜底；图片气泡保留
+    if (textItems.length > 1) {
+      // 多条文本合并成一条：只合并文本气泡；图片气泡保留（服务端会落一条
+      // 带图消息，同步历史后按 blocks 渲染图行+文行，视觉一致）。
+      // 按消息对象引用删除（review P2-8）。
+      const queuedRefs = new Set(textItems.map((it) => it.msgRef).filter(Boolean));
+      const keep = queuedRefs.size === textItems.length
         ? messages.filter((m) => !queuedRefs.has(m))
-        : messages.slice(0, messages.length - batch.length);
+        : messages.slice(0, messages.length - textItems.length);
       messages = [...keep, { role: 'user', content: merged, timestamp: nowISO() }];
     }
-    streamChat({ content: merged, sticker: first.sticker });
+    streamChat({ content: merged });
   }
   let personaOfActive = $derived(activeConv?.persona_id ?? null);
   let activePersona = $derived(personas.find((p) => p.id === personaOfActive) ?? null);
@@ -164,6 +223,9 @@
     let alive = true;
     loadAll();
     checkModelHealth();
+    // 微信等外部渠道的消息 → Web 端准实时同步：轻量轮询历史，
+    // 仅在空闲（未在生成/去抖/排队）且页面可见时拉取
+    const syncTimer = setInterval(syncHistory, 5000);
     // 读「去抖延迟（秒）」：与微信侧共用同一设置项
     (async () => {
       try {
@@ -179,6 +241,9 @@
       alive = false;
       clearDebounce();
       unmountAbort.abort();
+      clearInterval(syncTimer);
+      evtSource?.close();
+      evtSource = null;
     };
     async function loadAll() {
       const results = await Promise.allSettled([listConversations(), listPersonas(), listStickers()]);
@@ -189,6 +254,49 @@
       if (stickerR.status === 'fulfilled') stickerGroups = stickerR.value;
     }
   });
+
+  let syncing = false;
+  /** 轮询同步：服务器消息数变多（微信侧新消息）时整体刷新本地列表。
+   *  force=true（SSE 触发）时跳过去抖/排队守卫——外部渠道消息可在本地排队期间到达。 */
+  async function syncHistory(force = false) {
+    if (!activeConvId || sending || syncing || loadingHistory) return;
+    if (!force && (debouncing || pendingQueue.length)) return;
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    syncing = true;
+    try {
+      const list = await fetchHistory(activeConvId);
+      if (sending) return; // 拉取期间本地开始了生成：不覆盖流式消息
+      if (list.length > messages.length) {
+        const nearBottom =
+          !messagesEl ||
+          messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 160;
+        messages = list;
+        if (nearBottom) jumpToBottom();
+      }
+    } catch {
+      /* 静默：下一轮再试 */
+    } finally {
+      syncing = false;
+    }
+  }
+
+  // ---- SSE 实时事件流（主通道）+ 5s 轮询（兜底）----
+  let evtSource = null;
+  function openEventStream(id) {
+    evtSource?.close();
+    evtSource = null;
+    if (!id || typeof EventSource === 'undefined') return;
+    try {
+      evtSource = new EventSource(`/api/events?conversation_id=${encodeURIComponent(id)}`);
+      evtSource.onmessage = (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d.type === 'history_changed') syncHistory(true);
+        } catch { /* 忽略坏帧 */ }
+      };
+      // EventSource 断线自动重连；彻底失败时轮询兜底
+    } catch { /* 老浏览器无 SSE：轮询兜底 */ }
+  }
 
   // 新消息 -> 滚到底部
   $effect(() => {
@@ -227,6 +335,7 @@
     clearDebounce();
     pendingQueue = []; // 切换会话时丢弃未发出的排队消息，避免串到别的会话
     if (isMobile) listOpen = false;
+    openEventStream(id);
     messages = [];
     loadingHistory = true;
     const seq = ++loadSeq;
@@ -319,10 +428,45 @@
     enqueue({ content: text, streamContent: text, msgRef });
   }
 
-  function pushUserMessage(content, sticker) {
-    const msg = { role: 'user', content, timestamp: nowISO(), ...(sticker ? { sticker } : {}) };
+  function pushUserMessage(content, sticker, extra) {
+    const msg = {
+      role: 'user',
+      content,
+      timestamp: nowISO(),
+      ...(sticker ? { sticker } : {}),
+      ...(extra || {}),
+    };
     messages = [...messages, msg];
     return msg;
+  }
+
+  /** 旧版图片消息的元文本清洗（只影响显示，不改落库数据）：
+   *  '对方同时说：「xx」。对方发了一张图片：描述…' → 'xx'
+   *  '对方发了一张图片：描述…' → '[图片]'。 */
+  function cleanLegacyImageText(t) {
+    if (!t) return t;
+    const m = String(t).match(/^对方同时说：「([\s\S]*?)」。\s*对方发了一张图片：/);
+    if (m) return m[1];
+    if (/^对方发了一张图片：/.test(t)) return '[图片]';
+    return t;
+  }
+
+  /** 消息 → content blocks（PawzoChat 式渲染输入）。
+   *  服务器新消息自带 blocks；本地乐观消息/旧字段消息用 legacy 兜底组装。 */
+  function blocksOf(m) {
+    if (Array.isArray(m.blocks) && m.blocks.length) return m.blocks;
+    const out = [];
+    if (m.image) out.push({ type: 'image', url: m.image });
+    if (m.sticker) out.push({ type: 'emoji', ...m.sticker });
+    const t = String(m.content || '');
+    const placeholder =
+      (m.image && t.trim() === '[图片]') ||
+      (m.sticker && t.trim() === '[表情]') ||
+      (m.voice && t.trim() === '[语音]');
+    if (t.trim() && !placeholder) out.push({ type: 'text', text: t });
+    if (m.voice_url) out.push({ type: 'voice', url: m.voice_url });
+    if (!out.length && t) out.push({ type: 'text', text: t });
+    return out;
   }
 
   function streamChat({ content, sticker } = {}) {
@@ -440,100 +584,50 @@
     }
   }
 
-  // ---------- 图片上传 ----------
-  function pickImageFile(ev) {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    const url = URL.createObjectURL(f);
-    pickedImage = { file: f, url };
-    imageCaption = '';
-    showImagePanel = true;
+  // ---------- 图片上传（PawzoChat/微信式：选图即发，秒回上屏，支持多选） ----------
+  async function pickImageFile(ev) {
+    const files = Array.from(ev.target.files || []);
     ev.target.value = '';
+    for (const f of files) {
+      await sendImageFile(f);
+    }
   }
 
-  async function sendImage() {
-    if (!pickedImage) return;
+  /** 图片立即上屏并上传（后端秒回）→ 加入去抖序列与文字同窗；
+   *  窗口内发文字 → 服务端认领聚合成图+文一轮；纯图 → 服务器看门兜底。 */
+  async function sendImageFile(file) {
     if (!activeConvId) {
       showError('请先选择一个会话');
       return;
     }
-    const file = pickedImage.file;
-    const url = pickedImage.url;
+    const url = URL.createObjectURL(file);
     uploading = true;
+    // 图片气泡先上屏（本地预览），上传完成后换成服务端 URL
+    const localMsg = pushUserMessage('[图片]', null, { image: url });
     try {
-      const { reply } = await uploadImage(file, {
-        caption: imageCaption,
+      const data = await uploadImage(file, {
         conversation_id: activeConvId,
       });
-      pushUserMessage('[发送了一张图片]' + (imageCaption ? ` ${imageCaption}` : ''));
-      messages = [...messages, { role: 'assistant', content: reply ?? '', timestamp: nowISO() }];
+      const serverUrl = data?.image_url;
+      if (serverUrl) {
+        messages = messages.map((m) => (m === localMsg ? { ...m, image: serverUrl } : m));
+        // 图片加入去抖序列（PawzoChat/微信式）：入队即重置计时，与文字
+        // 共用同一窗口；窗口内发的文字提交时服务端认领这张图聚合成一轮。
+        enqueue({ content: '[图片]', streamContent: '[图片]', imageOnly: true, msgRef: localMsg });
+      }
     } catch (e) {
+      // 上传失败：撤掉本地预览气泡，避免和服务器历史对不上
+      messages = messages.filter((m) => m !== localMsg);
       showError(e.message);
     } finally {
       uploading = false;
-      pickedImage = null;
-      showImagePanel = false;
-      imageCaption = '';
-      if (url) URL.revokeObjectURL(url);
+      if (url && !serverUrlKept(url)) URL.revokeObjectURL(url);
     }
   }
 
-  // ---------- 语音上传 (MediaRecorder -> webm) ----------
-  async function toggleRecord() {
-    if (recording) {
-      stopRecord();
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showError('当前浏览器不支持录音');
-      return;
-    }
-    try {
-      const streamRef = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recorder = new MediaRecorder(streamRef);
-      recordChunks = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) recordChunks.push(e.data);
-      };
-      recorder.onstop = () => {
-        streamRef.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(recordChunks, { type: 'audio/webm' });
-        uploadRecorded(blob);
-      };
-      recorder.start();
-      recording = true;
-    } catch (e) {
-      showError('无法访问麦克风：' + e.message);
-    }
-  }
-
-  function stopRecord() {
-    try {
-      recorder?.stop();
-    } catch {
-      /* ignore */
-    }
-    recorder = null;
-    recording = false;
-  }
-
-  async function uploadRecorded(blob) {
-    if (!activeConvId) {
-      showError('请先选择一个会话');
-      return;
-    }
-    uploading = true;
-    try {
-      const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
-      const { transcript, reply } = await uploadVoice(file, { conversation_id: activeConvId });
-      if (transcript) pushUserMessage(transcript);
-      if (reply !== undefined)
-        messages = [...messages, { role: 'assistant', content: reply ?? '', timestamp: nowISO() }];
-    } catch (e) {
-      showError(e.message);
-    } finally {
-      uploading = false;
-    }
+  /** 服务器已接管图片 URL 后本地 objectURL 才可释放 */
+  function serverUrlKept(url) {
+    return messages.some((m) => m.image === url);
   }
 
   // ---------- 贴纸 ----------
@@ -774,6 +868,30 @@
           {#each messages as m, i (i)}
             {@const isUser = m.role === 'user'}
             {@const isStreaming = m.streaming === true}
+            {@const blocks = blocksOf(m)}
+            {@const imgBlocks = blocks.filter((b) => b.type === 'image')}
+            {@const restBlocks = blocks.filter((b) => b.type !== 'image')}
+            {@const splitImage = isUser && imgBlocks.length > 0 && restBlocks.some((b) => b.type === 'text')}
+            {#if splitImage}
+              <!-- 图片单独成一条消息（微信式：先发图、再发字），不附属文字气泡 -->
+              <div class="bubble-row self">
+                <div class="bubble-col">
+                  {#each imgBlocks as b}
+                    <div class="image-bubble">
+                      <img
+                        class="chat-image"
+                        src={b.url}
+                        alt="图片"
+                        loading="lazy"
+                        onclick={() => (previewImage = b.url)}
+                        title="点击查看大图"
+                      />
+                    </div>
+                  {/each}
+                  <span class="bubble-time">{formatTime(m.timestamp)}</span>
+                </div>
+              </div>
+            {/if}
             <div class="bubble-row {isUser ? 'self' : 'friend'}">
               {#if !isUser && !isStreaming}
                 <span class="av">{initialOf(activePersona?.name ?? activeConv?.persona_name ?? 'AI')}</span>
@@ -798,10 +916,8 @@
                     <div class="reasoning-body">{m.reasoning}</div>
                   </details>
                 {/if}
-                {#if m.sticker}
-                  <div class="sticker-bubble">
-                    <img class="sticker-img" src={m.sticker.url || stickerUrl(m.sticker.pack, m.sticker.emotion, m.sticker.filename)} alt="贴纸" loading="lazy" />
-                  </div>
+                {#if m.platform === 'wechat'}
+                  <span class="src-badge">via 微信</span>
                 {/if}
                 {#if m.configError && !isUser && !isStreaming}
                   <ConfigNotice
@@ -813,13 +929,46 @@
                     actionLabel="去设置配置"
                     onAction={gotoModelSettings}
                   />
-                {:else if m.content}
-                  <div class="bubble {isUser ? 'bubble-user' : 'bubble-ai'} {isStreaming ? 'is-streaming' : ''}">
-                    <div class="bubble-text">{m.content}{#if isStreaming}<span class="caret"></span>{/if}</div>
-                  </div>
-                {/if}
-                {#if m.voice_url}
-                  <audio class="voice-player" controls preload="none" src={m.voice_url}></audio>
+                {:else}
+                  {#if !splitImage}
+                    {#each imgBlocks as b}
+                      <div class="image-bubble">
+                        <img
+                          class="chat-image"
+                          src={b.url}
+                          alt="图片"
+                          loading="lazy"
+                          onclick={() => (previewImage = b.url)}
+                          title="点击查看大图"
+                        />
+                      </div>
+                    {/each}
+                  {/if}
+                  {#each restBlocks as b}
+                    {#if b.type === 'emoji'}
+                      <div class="sticker-bubble">
+                        <img class="sticker-img" src={b.url || stickerUrl(b.pack, b.emotion, b.filename)} alt="贴纸" loading="lazy" />
+                      </div>
+                    {:else if b.type === 'voice'}
+                      <!-- 微信风格语音条：点击播放，宽度随时长递增 -->
+                      <button
+                        type="button"
+                        class="bubble {isUser ? 'bubble-user' : 'bubble-ai'} voice-bar"
+                        class:playing={voicePlayingUrl === b.url}
+                        style="width: {Math.min(220, 84 + Math.round(voiceDurations[b.url] || 1) * 6)}px"
+                        onclick={() => toggleVoice(b.url)}
+                        title="点击播放"
+                      >
+                        <svg class="voice-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                        <span class="voice-dur">{voiceDurations[b.url] ? `${Math.round(voiceDurations[b.url])}″` : '语音'}</span>
+                      </button>
+                      <audio preload="metadata" src={b.url} hidden onloadedmetadata={(e) => (voiceDurations[b.url] = e.currentTarget.duration || 1)}></audio>
+                    {:else if b.text}
+                      <div class="bubble {isUser ? 'bubble-user' : 'bubble-ai'} {isStreaming ? 'is-streaming' : ''}">
+                        <div class="bubble-text">{cleanLegacyImageText(b.text)}{#if isStreaming}<span class="caret"></span>{/if}</div>
+                      </div>
+                    {/if}
+                  {/each}
                 {/if}
                 <span class="bubble-time">{formatTime(m.timestamp)}</span>
               </div>
@@ -878,50 +1027,22 @@
           </div>
         {/if}
 
-        {#if showImagePanel && pickedImage}
-          <div class="panel sheet">
-            <div class="sheet-head"><span>发送图片</span></div>
-            <div class="image-preview-wrap">
-              <img class="image-preview" src={pickedImage.url} alt="预览" />
-              <button class="icon-btn remove" onclick={() => { if (pickedImage?.url) URL.revokeObjectURL(pickedImage.url); pickedImage = null; showImagePanel = false; imageCaption = ''; }} aria-label="移除">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div class="caption-row">
-              <input class="caption-input" bind:value={imageCaption} placeholder="补充说明（可选）" maxlength="200" />
-              <button class="send-small" onclick={sendImage} disabled={uploading} title="发送图片">
-                {uploading ? '发送中…' : '发送'}
-              </button>
-            </div>
-          </div>
-        {/if}
-
         <div class="composer">
-          <label class="act-btn" title="图片">
-            <input type="file" accept="image/*" hidden onchange={pickImageFile} />
+          <label class="act-btn" title="图片" class:busy={uploading}>
+            <input type="file" accept="image/*" multiple hidden onchange={pickImageFile} />
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
           </label>
 
-          <button class="act-btn" title="语音" onclick={toggleRecord} class:recording={recording}>
-            {#if recording}
-              <span class="rec-dot"></span>
-            {:else}
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-            {/if}
-          </button>
-
-          <button class="act-btn" title="贴纸" onclick={() => { showStickerPanel = !showStickerPanel; showImagePanel = false; }}>
+          <button class="act-btn" title="贴纸" onclick={() => { showStickerPanel = !showStickerPanel; }}>
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 12h-6a3 3 0 0 0-3 3v6"/><circle cx="9" cy="10" r="0.5"/><circle cx="14" cy="8" r="0.5"/></svg>
           </button>
 
           <input
             class="text-input"
             bind:value={input}
-            placeholder={recording
-              ? '录音中…松开结束'
-              : (sending
-                  ? (pendingQueue.length ? `回复中…已排队 ${pendingQueue.length} 条` : '回复中…继续输入会排队')
-                  : '输入消息…')}
+            placeholder={sending
+              ? (pendingQueue.length ? `回复中…已排队 ${pendingQueue.length} 条` : '回复中…继续输入会排队')
+              : '输入消息…'}
             onkeydown={(e) => { if (e.key === 'Enter' && canSend) send(); }}
             disabled={uploading}
           />
@@ -1000,6 +1121,13 @@
         <span class="convs-menu-ico" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`}</span>
         删除会话
       </button>
+    </div>
+  {/if}
+
+  {#if previewImage}
+    <!-- 全屏图片预览（PawzoChat 式 openImagePreview）：点图查看大图，点任意处关闭 -->
+    <div class="img-preview-overlay" role="dialog" aria-label="图片预览" onclick={() => (previewImage = null)}>
+      <img class="img-preview-full" src={previewImage} alt="图片预览" />
     </div>
   {/if}
 </div>
@@ -1464,6 +1592,42 @@
   .sticker-bubble {
     max-width: 150px;
   }
+  .image-bubble {
+    max-width: min(260px, 78%);
+  }
+  .chat-image {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+    cursor: zoom-in;
+  }
+  .src-badge {
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    opacity: 0.75;
+    margin: 2px 4px;
+    user-select: none;
+  }
+  .img-preview-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    background: rgba(0, 0, 0, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+  }
+  .img-preview-full {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+  }
   .sticker-img {
     width: 100%;
     max-width: 150px;
@@ -1472,6 +1636,31 @@
   .voice-player {
     max-width: 260px;
     height: 34px;
+  }
+  /* 微信风格语音条 */
+  .voice-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 14px;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+  }
+  .voice-bar .voice-icon {
+    flex: none;
+  }
+  .voice-bar .voice-dur {
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+  .voice-bar.playing .voice-icon {
+    animation: voice-pulse 0.8s ease-in-out infinite alternate;
+  }
+  @keyframes voice-pulse {
+    from { transform: scale(1); opacity: 1; }
+    to { transform: scale(1.25); opacity: 0.6; }
   }
 
   /* 深度思考：作为 assistant 气泡列的第一个子项，显示在该条回复上方 */
@@ -1683,16 +1872,9 @@
     background: var(--row-hover);
     color: var(--text-1);
   }
-  .act-btn.recording {
-    background: var(--error);
-    color: #fff;
-  }
-  .rec-dot {
-    width: 16px;
-    height: 16px;
-    border-radius: var(--radius-xs);
-    background: #fff;
-    animation: caret-blink 1s steps(1) infinite;
+  .act-btn.busy {
+    opacity: 0.45;
+    pointer-events: none;
   }
   .text-input {
     flex: 1;

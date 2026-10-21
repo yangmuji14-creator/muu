@@ -1,10 +1,10 @@
 {
   "providers": [
     {
-      "name": "mimo-v2.5-tts",
+      "name": "my-tts",
       "type": "openai",
-      "base_url": "https://api.xiaomimimo.com/v1",
-      "model": "mimo-v2.5-tts",
+      "base_url": "https://api.openai.com/v1",
+      "model": "tts-1",
       "voice": "alloy",
       "enabled": true,
       "api_key": ""

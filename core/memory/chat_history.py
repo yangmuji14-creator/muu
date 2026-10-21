@@ -190,6 +190,9 @@ class ChatHistoryStorage:
         persona_id: str = "",
         account_id: str = "",
         sticker: dict[str, Any] | None = None,
+        image: str | None = None,
+        image_desc: str | None = None,
+        voice: str | None = None,
     ) -> None:
         """添加一条消息并持久化
 
@@ -228,11 +231,48 @@ class ChatHistoryStorage:
                 key: sticker[key] for key in ("pack", "emotion", "filename", "url")
                 if sticker.get(key) is not None
             }
+        if image:
+            # 图片附件（web 上传 / 微信图片）：存可访问的相对 URL（/attachments/...），
+            # 内容本身在 data/attachments/ 下，前端 <img src> 直接渲染。
+            msg["image"] = image
+        if image_desc:
+            # 视觉模型对图片的描述：只给 LLM 看（组装 prompt 时注入 content），
+            # 不进用户界面 —— 界面显示的是用户真实输入（content）+ 图片本身。
+            msg["image_desc"] = image_desc
+        if voice:
+            # 语音附件（微信入站语音 / TTS 回复）：可播放的相对 URL（/attachments/...）
+            msg["voice"] = voice
         data["messages"].append(msg)
 
         # 落盘裁剪：默认不裁剪（None）。只有显式配置了正上限才会裁。
         if self._max_stored is not None and len(data["messages"]) > self._max_stored:
             data["messages"] = data["messages"][-self._max_stored:]
+
+        self.save(user_id)
+
+    def update_image_desc(self, user_id: str, image: str, desc: str) -> bool:
+        """补写最近一条匹配图片的 user 消息的 image_desc（原生直连路径用）。
+
+        直连时回复不等视觉描述（图片本体直接进主调用），描述任务在后台
+        完成后用本方法回填历史——之后轮次的 prompt 仍能通过
+        inject_image_descriptions 知道这张旧图是什么。
+
+        Returns:
+            是否找到并更新了消息
+        """
+        if not image or not str(desc or "").strip():
+            return False
+        data = self.load(user_id)
+        for msg in reversed(data["messages"]):
+            if (
+                msg.get("role") == "user"
+                and msg.get("image") == image
+                and not msg.get("image_desc")
+            ):
+                msg["image_desc"] = str(desc).strip()
+                self.save(user_id)
+                return True
+        return False
 
         self.save(user_id)
 

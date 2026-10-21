@@ -386,6 +386,18 @@ class WeChatAdapter(BaseAdapter):
 
         self._bot.on_image(_handle_image)
 
+        def _handle_voice(msg) -> None:
+            """处理语音消息：下载解密 → 落库（Web 语音条可听）→ 友好回复"""
+            future = asyncio.run_coroutine_threadsafe(
+                self._on_voice_message(msg), loop
+            )
+            def _on_done(f):
+                try: f.result()
+                except Exception as e: logger.error(f"WeChat voice handler: {e}")
+            future.add_done_callback(_on_done)
+
+        self._bot.on_voice(_handle_voice)
+
         # dispatch probe 期间暂存的消息（避免丢失）
         # 必须在 on_text/on_image 注册之后、bot_thread 启动之前执行，
         # 这样 handler 已就绪，且不会与 bot.run() 的 dispatch 竞争。
@@ -522,6 +534,63 @@ class WeChatAdapter(BaseAdapter):
         self._task = asyncio.create_task(self._poll_messages())
         logger.info(f"WeChat[{self.account_id}] relogin: adapter restarted")
 
+    async def _on_voice_message(self, msg) -> None:
+        """处理微信语音消息：下载解密音频 → 落库（Web 语音条可听）→ 友好回复。
+
+        对齐 weixin-ilink SDK 能力（on_voice + save() AES 解密）。
+        语音转文字（ASR）已移除，此处只做「能收到、能播放」。
+        """
+        user_id = f"wechat::{self.account_id}::{msg.from_user}"
+        raw_user = msg.from_user
+        logger.info(f"WeChat[{self.account_id}] voice from {raw_user}")
+
+        voice_dir = DATA_DIR / "attachments" / "wechat" / "voices"
+        voice_dir.mkdir(parents=True, exist_ok=True)
+        voice_path = str(voice_dir / f"{raw_user}_{msg.message_id}.mp3")
+
+        try:
+            loop = asyncio.get_running_loop()
+            if hasattr(msg, "save"):
+                await loop.run_in_executor(None, lambda: msg.save(voice_path))
+            elif hasattr(msg, "download"):
+                data = await loop.run_in_executor(None, msg.download)
+                if data:
+                    Path(voice_path).write_bytes(data)
+                else:
+                    raise ValueError("voice download returned empty")
+            else:
+                logger.warning("WeChat voice: no save/download method")
+                return
+        except Exception as e:
+            logger.error(f"WeChat voice save failed: {e}")
+            try:
+                await loop.run_in_executor(
+                    None, lambda: msg.reply_text("语音接收失败了~")
+                )
+            except Exception:
+                pass
+            return
+
+        # 走统一 handler（core/app.py 的 is_voice 分支负责落库+回复+SSE）
+        if self._handler:
+            meta = {
+                "from_user": msg.from_user,
+                "is_voice": True,
+                "voice_path": voice_path,
+            }
+            try:
+                message = AdapterMessage(
+                    user_id=user_id,
+                    content="[语音]",
+                    message_id=str(msg.message_id),
+                    platform="wechat",
+                    timestamp="",
+                    metadata=meta,
+                )
+                await self._handler(message)
+            except Exception as e:
+                logger.error(f"WeChat voice handler: {e}")
+
     async def _on_image_message(self, msg) -> None:
         """处理微信图片消息
 
@@ -532,8 +601,8 @@ class WeChatAdapter(BaseAdapter):
         raw_user = msg.from_user
         logger.info(f"WeChat[{self.account_id}] image from {raw_user}")
 
-        # 1. 下载图片
-        image_dir = DATA_DIR / "wechat_images"
+        # 1. 下载图片（存到 attachments 下，WebUI 通过 /attachments 静态展示）
+        image_dir = DATA_DIR / "attachments" / "wechat"
         image_dir.mkdir(parents=True, exist_ok=True)
         image_path = str(image_dir / f"{raw_user}_{msg.message_id}.jpg")
 
@@ -686,6 +755,29 @@ class WeChatAdapter(BaseAdapter):
 
         分段长度从 config/settings.json 读取（默认 16 字）。
         """
+        # [语音]/[voice] 标记：TTS 合成 → 以音频文件发送。
+        # （iLink 通道会丢弃 bot 方向的 VOICE 消息——SDK 源码明示——
+        #   所以按 PawzoChat 同款做法：语音作为音频文件发。）
+        # 剩余文字照常分段；TTS 未配置/失败则降级纯文本。
+        if reply.startswith("[语音]") or reply.startswith("[voice]"):
+            text = reply.split("]", 1)[1].strip()
+            voice_file = await self._synthesize_tts_file(text or "嗯")
+            if voice_file:
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self._bot.send_file(
+                            to=msg.from_user,
+                            path=voice_file,
+                            file_name="语音消息.mp3",
+                        ),
+                    )
+                except Exception as e:
+                    logger.error(f"WeChat send voice file failed: {e}")
+            if not text:
+                return
+            reply = text
+
         # 读取配置的分段长度
         max_len = 16  # 默认
         try:
@@ -721,6 +813,24 @@ class WeChatAdapter(BaseAdapter):
         except Exception:
             # 分段失败 → 直接发
             await loop.run_in_executor(None, lambda: msg.reply_text(reply))
+
+    async def _synthesize_tts_file(self, text: str) -> str | None:
+        """TTS 合成 → mp3 临时文件；未配置/失败返回 None（调用方降级纯文本）。"""
+        try:
+            from webui.tts import TTSManager, TTSStore  # 架构过渡：TTS 暂居 webui 层
+            manager = TTSManager(TTSStore(CONFIG_DIR))
+            data = await manager.synthesize(text)
+            out = DATA_DIR / "attachments" / "wechat" / "tts"
+            out.mkdir(parents=True, exist_ok=True)
+            path = out / f"tts_{int(time.time() * 1000)}.mp3"
+            path.write_bytes(data)
+            olds = sorted(out.glob("tts_*.mp3"))
+            for old in olds[:-50]:  # 只留最近 50 个，防堆积
+                old.unlink(missing_ok=True)
+            return str(path)
+        except Exception as e:
+            logger.warning(f"WeChat TTS synth skipped: {e}")
+            return None
 
     async def _on_inbound_message(self, msg) -> None:
         """将 weixin-ilink 消息转换为 AdapterMessage 并回调

@@ -34,7 +34,7 @@ muu = "main:main"
 
 [tool.setuptools]
 include-package-data = true
-py-modules = ["main", "setup_wizard", "setup_wechat", "import_chat", "import_exskill"]
+py-modules = ["main", "setup_wizard", "setup_wechat"]
 
 [tool.setuptools.packages.find]
 where = ["."]

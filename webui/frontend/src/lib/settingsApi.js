@@ -67,10 +67,11 @@ export const modelApi = {
   // 设置某个模型的多模态声明: 'auto' | 'yes' | 'no'
   setMultimodal: (model, value) =>
     req('/api/model/multimodal', { method: 'POST', ...jsonBody({ model, multimodal: value }) }),
-  // 角色分配: chat(语言) / vision(图片识别) / video(视频识别)
+  // 角色分配: chat(语言) / vision(图片识别) / tts(语音)
+  // key = 提供商条目 key（跨厂商分配时后端据此写对条目/切 default_model）
   roles: () => req('/api/model/roles'),
-  setRole: (role, model_name, base_url = '') =>
-    req('/api/model/role', { method: 'POST', ...jsonBody({ role, model_name, base_url }) }),
+  setRole: (role, model_name, key = '') =>
+    req('/api/model/role', { method: 'POST', ...jsonBody({ role, model_name, key }) }),
 };
 
 // ---- 内置服务商预设 (bootstrap catalog) ----

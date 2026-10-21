@@ -3,13 +3,13 @@
 检测 AI 回复中的人设崩塌（character break）现象：
 - 使用通用的 AI 语气（"作为AI"、"我是语言模型" 等）
 - 切换到服务化语调（"有什么我可以帮你的"）
-- 角色名与 AI 自我指代混用（"小雨" + "作为AI"）
+- 角色名与 AI 自我指代混用（"慕" + "作为AI"）
 
 纯规则驱动，不调用 LLM。
 只检测不修改，不改变 reply 文本。
 
 用法:
-    detector = CharacterBreakDetector(persona_name="小雨")
+    detector = CharacterBreakDetector(persona_name="慕")
     result = detector.check(reply, user_message)
     if result.is_break:
         print(f"触发词: {result.trigger_phrase}, 置信度: {result.confidence}")
@@ -78,10 +78,10 @@ class CharacterBreakDetector:
     仅当 detector.enabled=True 时生效。
 
     Attributes:
-        persona_name: 人设角色名（默认 "小雨"）
+        persona_name: 人设角色名（默认 "慕"）
     """
 
-    def __init__(self, persona_name: str = "小雨", enabled: bool = True):
+    def __init__(self, persona_name: str = "慕", enabled: bool = True):
         self._persona_name = persona_name
         self._enabled = enabled
 
@@ -154,7 +154,7 @@ class CharacterBreakDetector:
     def _check_character_name_switch(self, reply: str) -> CharacterBreakResult:
         """检测角色名与 AI 自我指代混合
 
-        当回复中同时出现角色名（如 "小雨"）和通用 AI 语气时，
+        当回复中同时出现角色名（如 "慕"）和通用 AI 语气时，
         说明模型将角色与自身割裂看待，属于人设崩塌。
         """
         persona_name = self._persona_name

@@ -26,105 +26,68 @@ from typing import Any
 from loguru import logger
 
 
-# 已知支持图片的多模态模型（持续更新）
-# 匹配方式：model_name.lower() 包含这些字符串即判定为多模态
-MULTIMODAL_PATTERNS = (
-    # OpenAI
-    "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
-    "o1", "o3", "o4-mini",
-    # Anthropic
-    "claude-3", "claude-3-5", "claude-4",
-    # Google
-    "gemini-1.5", "gemini-2.0", "gemini-2.5", "gemini-3",
-    "gemini-pro-vision", "gemini-flash",
-    # Qwen / 通义千问
-    "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
-    # GLM / 智谱
-    "glm-4v", "cogview", "cogvideox",
-    # 开源模型
-    "llava", "bakllava", "llama-3.2-vision", "llama-v", "pixtral",
-    "internvl", "internlm-xcomposer", "minicpm-v", "cogvlm",
-    # 小米 MiMo
-    "mimo-v2.5", "mimo-v2",
-    # 公司
-    "doubao-vision", "doubao-1.5-vision",
-    # 百川
-    "baichuan-vl",
-    # 零一万物
-    "yi-vision", "yi-vl",
-    # DeepSeek（注意：DeepSeek-VL2 支持视觉，但 DeepSeek-V3/Chat 不支持）
-    "deepseek-vl",
-    # 其他
-    "step-1v", "step-1o-vision", "hunyuan-vision", "minimax-vl",
-    "kimi-vl", "moonshot-vl",
-)
-
-# 明确不支持的模型（避免误判）
-NOT_MULTIMODAL = (
-    "deepseek-chat", "deepseek-reasoner", "deepseek-v3",
-    "gpt-3.5", "gpt-3.5-turbo",
-    "claude-2", "claude-instant",
-    "mimo-v2.5-pro",  # MiMo Pro 是纯文本，只有 V2.5 支持多模态
-)
+# 模型是否支持图片，由用户在设置页勾选（models.<key>.multimodal = "yes"/"no"），
+# 不再按模型名字猜 —— 旧的 MULTIMODAL_PATTERNS/NOT_MULTIMODAL 启发式已删除：
+# 厂商上新比代码快（deepseek-flash 上线视觉时这张表就漏了），猜错要么白发
+# 图片请求、要么把图硬塞给纯文本模型造成幻觉。
 
 
-def is_multimodal_model(model_name: str) -> bool:
-    """检测模型是否支持图片输入
+def _compress_image(image_path: str | Path, long_edge: int = 1280, quality: int = 85) -> tuple[bytes, str]:
+    """把图片压缩为适合发给视觉模型的 JPEG 字节（显著加快上传与识别）。
 
-    检测顺序：
-    1. 先查 litellm model_cost 中的 input_cost_per_image 标记
-    2. 匹配已知多模态模型列表
-    3. 排除明确不支持的模型
-
-    Returns:
-        True 如果模型支持图片
+    长边压到 long_edge、转 JPEG（透明通道先铺白底）。PIL 不可用或图片
+    本身很小时原样返回。失败时降级为原始文件字节。
     """
-    if not model_name:
-        return False
-
-    model_lower = model_name.lower()
-
-    # 1. 排除明确不支持的模型
-    for pattern in NOT_MULTIMODAL:
-        if pattern in model_lower:
-            return False
-
-    # 2. 检查 litellm model info（有 input_cost_per_image 说明支持）
+    path = Path(image_path)
+    raw = path.read_bytes()
     try:
-        import litellm
-        info = litellm.get_model_info(model_name, ignore_HF_hub=True)
-        if info and isinstance(info, dict):
-            if info.get("input_cost_per_image") or info.get("input_cost_per_image_token"):
-                return True
-            if info.get("supports_vision") or info.get("supports_vision", False):
-                return True
-    except Exception:
-        pass
+        from io import BytesIO
 
-    # 3. 匹配已知多模态模型
-    for pattern in MULTIMODAL_PATTERNS:
-        if pattern.lower() in model_lower:
-            return True
+        from PIL import Image
 
-    return False
+        with Image.open(path) as im:
+            im.load()
+            if im.mode in ("RGBA", "LA", "P"):
+                im = im.convert("RGBA")
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                bg.paste(im, mask=im.split()[-1])
+                im = bg
+            elif im.mode != "RGB":
+                im = im.convert("RGB")
+            w, h = im.size
+            scale = long_edge / max(w, h)
+            if scale < 1:
+                im = im.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+            data = buf.getvalue()
+        # 只有确实变小才用压缩结果
+        return (data, "image/jpeg") if len(data) < len(raw) else (raw, _guess_mime(path))
+    except Exception as e:
+        logger.debug(f"Image compress skipped: {e}")
+        return raw, _guess_mime(path)
 
 
-def encode_image(image_path: str | Path) -> tuple[str, str]:
-    """将图片编码为 base64 data URL
+def _guess_mime(path: Path) -> str:
+    mime_type, _ = mimetypes.guess_type(str(path))
+    return mime_type if mime_type and mime_type.startswith("image/") else "image/png"
+
+
+def encode_image(image_path: str | Path, *, compress: bool = True) -> tuple[str, str]:
+    """将图片编码为 base64 data URL（默认先压缩，加速传输与识别）
 
     Returns:
         (data_url, mime_type)
     """
     path = Path(image_path)
-    mime_type, _ = mimetypes.guess_type(str(path))
-    if not mime_type or not mime_type.startswith("image/"):
-        mime_type = "image/png"  # 默认
+    if compress:
+        data, mime_type = _compress_image(path)
+    else:
+        data = path.read_bytes()
+        mime_type = _guess_mime(path)
 
-    with open(path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("utf-8")
-
-    data_url = f"data:{mime_type};base64,{encoded}"
-    return data_url, mime_type
+    encoded = base64.b64encode(data).decode("utf-8")
+    return f"data:{mime_type};base64,{encoded}", mime_type
 
 
 class VisionManager:
@@ -180,21 +143,24 @@ class VisionManager:
 
     @property
     def image_chain(self) -> str:
-        """当前图片处理链路的人类可读描述（供设置页展示）"""
+        """当前图片流程的一句话说明（设置页展示，把「何时走哪条路」讲清楚）"""
         direct = self.main_is_multimodal
         fallback = self._vision_enabled
-        vname = self._vision_config.get("model_name") or "未配置"
+        vname = self._vision_config.get("model_name") or "未设置"
+        mname = str(getattr(self._main_model, "model_name", "") or "语言模型")
 
         if self._image_mode == "direct":
-            return "图片直接发给主模型（强制直连，跳过中间层）"
+            return f"图片直接发给语言模型（{mname}）看，一次调用出结果（已强制直连，备用识别不启用）"
         if self._image_mode == "vision":
-            return (f"图片先由 {vname} 识别，再把描述交给主模型（强制视觉链路）"
-                    if fallback else "强制走视觉链路，但尚未配置视觉模型")
+            return (f"图片先由 {vname} 转成文字描述，描述再交给语言模型（已强制备用识别）"
+                    if fallback else "已强制备用识别，但还没有设置识别模型")
         if direct:
-            return "图片直接发给主模型（主模型支持多模态，跳过中间层，最快）"
+            return (f"图片直接发给语言模型（{mname} 已勾选「多模态」），一次调用最快；"
+                    f"备用识别不启用")
         if fallback:
-            return f"图片先由 {vname} 识别，再把描述交给主模型（慢一层但不挑主模型）"
-        return "主模型不支持多模态，且未配置视觉模型 —— 当前无法识别图片"
+            return (f"语言模型（{mname}）没勾「多模态」→ 图片先由 {vname} 转成文字描述，"
+                    f"描述再交给语言模型（两次调用，备用识别）")
+        return "当前识别不了图片：给语言模型勾上「多模态」，或把某个模型设为「识别」（备用）"
 
     def update_config(
         self,
@@ -250,22 +216,68 @@ class VisionManager:
         # 路径A：主模型支持多模态 → 直接发送（最快，跳过中间层）
         if direct_ok:
             logger.info(f"Vision: using main model (multimodal) for {image_path}")
-            return await self._direct_vision(image_path, user_text)
-
-        # 路径B：使用独立的视觉模型识别后交给主模型
-        if fallback_ok:
+            result = await self._direct_vision(image_path, user_text)
+        elif fallback_ok:
             logger.info(f"Vision: using fallback model for {image_path}")
-            return await self._fallback_vision(image_path, user_text)
+            result = await self._fallback_vision(image_path, user_text)
+        else:
+            # 都不行
+            logger.warning(f"Vision: no model available for {image_path}")
+            return ("[图片识别未配置] 当前模型不支持图片识别，且未配置视觉降级模型。\n"
+                    "请在「设置 → 模型设置」中选择主模型是否多模态，或配置视觉降级模型。")
 
-        # 都不行
-        logger.warning(f"Vision: no model available for {image_path}")
-        return ("[图片识别未配置] 当前模型不支持图片识别，且未配置视觉降级模型。\n"
-                "请在「设置 → 模型设置」中选择主模型是否多模态，或配置视觉降级模型。")
+        # ⚠️ 空描述必须视为失败：推理类视觉模型在 max_tokens 太小时会把预算
+        # 全耗在 reasoning 上返回空 content（HANDOFF 已踩坑记录）。若把空串
+        # 当描述继续传给主模型，主模型会顺着聊天语境**幻觉编造**图片内容
+        # （2026-10-17 实测：两人的图被说成"纯棕色"）。
+        if not str(result or "").strip():
+            logger.error(f"Vision returned EMPTY description for {image_path}")
+            return "[图片识别失败] 视觉模型没有返回内容，请重试或更换视觉模型。"
+        return result
 
     # ── 路径A：直传 ──
 
+    async def _openai_vision_call(
+        self, model_name: str, base_url: str, api_key: str, messages: list,
+    ) -> str:
+        """OpenAI 兼容格式发图片（直连/备用两条路线共用）。
+
+        ⚠️ 不要走 litellm 的 `deepseek/` 等厂商专属前缀路由：1.91.3 实测
+        会把 image_url 内容块丢掉（模型回复"没收到图片附件"）；
+        `openai/` 前缀 + base_url 或原生 openai client 都正常。
+        """
+        import os
+
+        actual_base = base_url or "https://api.openai.com/v1"
+        actual_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            AsyncOpenAI = None
+
+        if AsyncOpenAI is not None:
+            client = AsyncOpenAI(api_key=actual_key, base_url=actual_base)
+            response = await client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=2000,
+            )
+            return response.choices[0].message.content
+
+        # 旧版本 openai 库降级：litellm openai/ 前缀（同样保留图片内容块）
+        import litellm
+        response = await litellm.acompletion(
+            model=f"openai/{model_name}",
+            messages=messages,
+            api_key=actual_key,
+            api_base=actual_base,
+            max_tokens=2000,
+        )
+        return response.choices[0].message.content
+
     async def _direct_vision(self, image_path: str | Path, user_text: str) -> str:
-        """将图片直接发送给多模态主模型"""
+        """将图片直接发送给多模态主模型（勾了「能看图」的语言模型）"""
         data_url, mime_type = encode_image(image_path)
 
         messages = [{
@@ -277,19 +289,26 @@ class VisionManager:
         }]
 
         try:
+            # 主模型 wrapper 自带 model_name / api_key / base_url 时，
+            # 一律走 OpenAI 兼容直连（见 _openai_vision_call 的 litellm 警告）
+            model_name = str(getattr(self._main_model, "model_name", "") or "")
+            api_key = str(getattr(self._main_model, "api_key", "") or "")
+            base_url = str(getattr(self._main_model, "base_url", "") or "")
+            if model_name and api_key:
+                return await self._openai_vision_call(model_name, base_url, api_key, messages)
+
+            # 兜底：无密钥属性的 wrapper 走统一 chat 接口
             if hasattr(self._main_model, "chat"):
                 response = await self._main_model.chat(messages=messages)
                 return response.content if hasattr(response, "content") else str(response)
-            else:
-                # 使用 litellm 直接调用
-                import litellm
-                model_name = getattr(self._main_model, "model_name", "gpt-4o")
-                response = await litellm.acompletion(
-                    model=model_name,
-                    messages=messages,
-                    max_tokens=1000,
-                )
-                return response.choices[0].message.content
+
+            import litellm
+            response = await litellm.acompletion(
+                model=model_name or "gpt-4o",
+                messages=messages,
+                max_tokens=2000,
+            )
+            return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Direct vision failed: {e}")
             if self._vision_enabled:
@@ -299,11 +318,10 @@ class VisionManager:
     # ── 路径B：降级 ──
 
     async def _fallback_vision(self, image_path: str | Path, user_text: str) -> str:
-        """使用独立视觉模型获取描述"""
+        """备用路线：用独立视觉模型把图片转成文字描述"""
         data_url, mime_type = encode_image(image_path)
 
         vision_cfg = self._vision_config
-        provider = vision_cfg.get("provider", "openai")
         model_name = vision_cfg.get("model_name", "gpt-4o")
         base_url = vision_cfg.get("base_url", "")
         api_key = vision_cfg.get("api_key", "")
@@ -317,104 +335,54 @@ class VisionManager:
         }]
 
         try:
-            import os
-
-            # 用独立 OpenAI client 调用，彻底隔离 API key
-            try:
-                from openai import AsyncOpenAI
-            except ImportError:
-                from openai import OpenAI as _OpenAI
-                AsyncOpenAI = None
-
-            actual_base = base_url or "https://api.openai.com/v1"
-            actual_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-
-            if AsyncOpenAI:
-                client = AsyncOpenAI(api_key=actual_key, base_url=actual_base)
-                response = await client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    max_tokens=1000,
-                )
-                description = response.choices[0].message.content
-            else:
-                # 降级到 litellm（旧版本 openai 库）
-                import litellm
-                response = await litellm.acompletion(
-                    model=f"openai/{model_name}",
-                    messages=messages,
-                    api_key=actual_key,
-                    api_base=actual_base,
-                    max_tokens=1000,
-                )
-                description = response.choices[0].message.content
-
+            description = await self._openai_vision_call(model_name, base_url, api_key, messages)
             logger.debug(f"Fallback vision result ({len(description)} chars)")
 
-            # 暴力恢复环境变量 + litellm 状态
-            try:
-                import litellm
-                litellm.api_key = None
-                litellm.api_base = None
-            except Exception:
-                pass
-
-            # 重新加载 .env（强制覆盖）
-            import os as _os
-            try:
-                from dotenv import load_dotenv
-                load_dotenv(override=True)
-            except Exception:
-                pass
-
-            # 兜底：如果 DEEPSEEK_API_KEY 还是空的，从文件直接读
-            if not _os.environ.get("DEEPSEEK_API_KEY"):
-                _env_path = _os.path.join(_os.path.dirname(__file__), "..", "..", ".env")
-                if _os.path.exists(_env_path):
-                    with open(_env_path) as _f:
-                        for _line in _f:
-                            _line = _line.strip()
-                            if _line.startswith("DEEPSEEK_API_KEY=") and not _line.startswith("#"):
-                                _os.environ["DEEPSEEK_API_KEY"] = _line.split("=", 1)[1].strip()
-                                break
+            # 密钥经显式传参（api_key=），不依赖环境变量，也无需恢复任何
+            # 全局状态。旧版本这里有一段 load_dotenv(override=True) + 手工
+            # 回读 .env 的补丁（MiMo 密钥污染 bug 的遗迹），会把 .env 占位符
+            # 重新灌回环境变量（resolve 优先级修复前的 401 复发源），已删除。
 
             return f"[图片描述] {description}"
 
-        except ImportError:
-            logger.error("openai package not available for vision fallback")
-            return "[图片识别失败: openai 未安装，请 pip install openai]"
         except Exception as e:
             logger.error(f"Fallback vision failed: {e}")
             return f"[图片识别失败: {e}]"
 
     # ── 辅助：为 Pipeline 构造带图片描述的增强消息 ──
 
+    @staticmethod
+    def single_line_description(vision_result: str) -> str:
+        """把视觉模型输出规整为单行纯描述（供 image_desc 字段/上下文注入）。
+
+        换行折叠为空格；剥掉 _fallback_vision 加的 [图片描述] 内部前缀。
+        """
+        desc = " ".join(str(vision_result or "").split())
+        if desc.startswith("[图片描述]"):
+            desc = desc[len("[图片描述]"):].strip()  # 内部标记，不进对话上下文
+        return desc
+
     def build_enhanced_message(
         self,
         vision_result: str,
         user_text: str,
     ) -> str:
-        """将视觉模型的输出和用户文本组合为增强消息
+        """将视觉模型的输出和用户文本组合为增强消息（CLI /img 路径用）。
 
-        路径B 使用此方法：视觉描述 + 用户文字 → 发送给文本模型
+        ⚠️ 必须输出单行：pipeline.format_multi_message 会按换行把消息拆成
+        [消息1]/[消息2]... 并全部落库。这里若多行，描述的每一行、甚至
+        "请用角色自然回应"之类的指令行都会被当成独立消息吃掉大量上下文
+        （2026-10-17 用户实测：一张图被拆成 16 条"消息"）。
 
-        Args:
-            vision_result: 视觉模型返回的图片描述
-            user_text: 用户发送图片时附带的文字
+        Web/微信路径已改走 pipeline 的 image_desc 注入机制（存储/显示分离），
+        不再经过本方法。
 
         Returns:
-            组合后的消息文本
+            单行组合消息
         """
-        # 附文作为聊天上下文
-        user_part = ""
+        desc = self.single_line_description(vision_result)
+        parts = []
         if user_text:
-            user_part = f'对方同时说：「{user_text}」\n\n'
-
-        return (
-            f'{user_part}'
-            f'对方发了一张图片。图片内容：\n'
-            f'{vision_result}\n\n'
-            f'请用你的角色身份自然地回应——'
-            f'像在微信上看到朋友发的照片一样，'
-            f'评论内容、表达感受，说人话。'
-        )
+            parts.append(f'对方同时说：「{user_text}」')
+        parts.append(f'对方发了一张图片：{desc}')
+        return "。".join(p for p in parts if p)

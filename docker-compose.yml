@@ -16,7 +16,6 @@ services:
       TONGYI_API_KEY: ${TONGYI_API_KEY:-}
       KIMI_API_KEY: ${KIMI_API_KEY:-}
       ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
-      MIMO_API_KEY: ${MIMO_API_KEY:-}
     volumes:
       - ./config:/app/config
       - ./data:/app/data

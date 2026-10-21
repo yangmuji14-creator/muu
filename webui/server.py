@@ -81,6 +81,10 @@ def _make_app(app_components):
     aio_app.add_routes(routes)
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)
     aio_app.router.add_static("/avatars", AVATAR_DIR, name="avatars")
+    # 聊天图片附件（web 上传 / 微信接收）：历史消息的 image 字段指向这里
+    ATTACHMENTS_DIR = DATA_DIR / "attachments"
+    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    aio_app.router.add_static("/attachments", ATTACHMENTS_DIR, name="attachments")
     if STATIC_DIR.exists():
         aio_app.router.add_static("/static/", STATIC_DIR, name="static")
 

@@ -76,7 +76,6 @@ class LLMRegistry:
             "qwen": "TONGYI_API_KEY",
             "kimi": "KIMI_API_KEY",
             "zhipu": "ZHIPU_API_KEY",
-            "mimo": "MIMO_API_KEY",
             "doubao": "OPENAI_API_KEY",
             "baichuan": "OPENAI_API_KEY",
             "minimax": "OPENAI_API_KEY",
@@ -120,6 +119,27 @@ class LLMRegistry:
     def register(self, name: str, llm: BaseLLM) -> None:
         """手动注册一个模型实例"""
         self._models[name] = llm
+
+    def reload_entry(self, name: str, cfg: dict) -> BaseLLM | None:
+        """按最新配置重建一个模型实例并设为默认（角色热切换用）。
+
+        ⚠️ 跨厂商切换时只改旧实例的 model_name 是错的：旧 wrapper 带着旧
+        厂商的 base_url 与 api_key，会把新模型名发给旧厂商
+        （2026-10-18 实测：mimo wrapper + deepseek-flash → "Unsupported model"）。
+        必须重建 wrapper。调用方负责把 pipeline / vision / adapters 等
+        持有旧实例的组件同步换到返回的新实例上。
+
+        Returns:
+            新实例（条目无有效密钥等导致注册失败时为 None）
+        """
+        before = self._models.get(name)
+        self._register_from_config(name, cfg)
+        after = self._models.get(name)
+        if after is None or after is before:
+            return None
+        self._default_model = name
+        logger.info(f"Registry reloaded entry '{name}' -> {after.model_name} (hot)")
+        return after
 
     def get(self, name: str | None = None) -> BaseLLM:
         """获取模型实例，默认返回 default_model"""

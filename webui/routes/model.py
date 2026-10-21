@@ -149,6 +149,16 @@ def register(routes, app_components):
             api_key = (body.get("api_key") or "").strip()
             if not key:
                 return web.json_response({"error": "key required"}, status=400)
+            # 预设厂商：Base URL / provider 可自动补（前端只要求填 API Key + 选模型）
+            if not base_url or not provider:
+                from core.llm.catalog import get_provider_spec
+
+                spec = get_provider_spec(key) or get_provider_spec(provider)
+                if spec is not None:
+                    if not base_url:
+                        base_url = spec.base_url
+                    if not provider:
+                        provider = spec.provider
             if not provider:
                 return web.json_response({"error": "provider required"}, status=400)
             if not model_name:
@@ -183,6 +193,7 @@ def register(routes, app_components):
                 )
             settings = _load_settings()
             models = settings.setdefault("models", {})
+            first_provider = not models
             if key in models:
                 return web.json_response(
                     {"error": "model key already exists"}, status=400
@@ -209,12 +220,30 @@ def register(routes, app_components):
                 model_config, model_secret_ref(key), manager=_secret_manager()
             )
             models[key] = model_config
+            # 第一个提供商自动成为当前模型（冷启动免二次配置）
+            if first_provider and not settings.get("default_model"):
+                settings["default_model"] = key
             _save_settings(settings)
             logger.info(
                 f"WebUI model provider added: key={key} provider={provider} "
                 f"model_name={model_name}"
             )
-            return web.json_response({"ok": True, "key": key})
+            # 热加载注册表：新加的提供商立即可用，无需重启（对齐 bootstrap/complete 行为）
+            restart_required = False
+            registry = getattr(app_components, "registry", None)
+            if registry is not None and hasattr(registry, "load_config"):
+                try:
+                    registry.load_config(SETTINGS_PATH)
+                    handler = getattr(app_components, "handler", None)
+                    if handler is not None and hasattr(handler, "activate_default_model"):
+                        handler.activate_default_model()
+                    vision = getattr(app_components, "vision_manager", None)
+                    if vision is not None and hasattr(vision, "update_main_model"):
+                        vision.update_main_model(registry.get())
+                except Exception as e:
+                    logger.warning(f"provider add registry reload failed: {e}")
+                    restart_required = True
+            return web.json_response({"ok": True, "key": key, "restart_required": restart_required})
         except Exception as e:
             logger.error(f"WebUI add_model_provider error: {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -415,21 +444,27 @@ def register(routes, app_components):
                     }
             except Exception as e:
                 logger.warning(f"/api/model/roles tts failed: {e}")
+            vision = getattr(app_components, "vision_manager", None)
             return web.json_response({
                 "chat": {
                     "key": current,
                     "model_name": str(chat_cfg.get("model_name") or ""),
                     "base_url": str(chat_cfg.get("base_url") or ""),
+                    "multimodal": str(chat_cfg.get("multimodal") or "no") == "yes",
                 },
                 "vision": _brief(adv.get("vision_model")),
                 "video": _brief(adv.get("video_model")),
                 "tts": tts_active,
+                # 图片流程一句话说明（何时直连/何时备用，见 VisionManager.image_chain）
+                "image_chain": str(getattr(vision, "image_chain", "") or "") if vision is not None else "",
                 "pool": [
                     {
                         "key": key,
                         "model_name": str(cfg.get("model_name") or ""),
                         "base_url": str(cfg.get("base_url") or ""),
                         "is_current": key == current,
+                        # 「能看图」勾选状态（用户显式声明，不再按模型名猜）
+                        "multimodal": str(cfg.get("multimodal") or "no") == "yes",
                     }
                     for key, cfg in models.items()
                     if isinstance(cfg, dict)
@@ -456,43 +491,134 @@ def register(routes, app_components):
         model_name = str(body.get("model_name") or "").strip()
         if role not in ("chat", "vision", "video", "tts"):
             return web.json_response({"error": "role 只支持 chat / vision / video / tts"}, status=400)
-        if not model_name:
-            return web.json_response({"error": "model_name required"}, status=400)
+        if not model_name and role == "chat":
+            return web.json_response(
+                {"error": "语言模型不能取消——必须保留一个，请点击其它模型切换"}, status=400
+            )
         try:
             settings = _load_settings()
+
+            # 取消分配（model_name 为空，仅 vision / video / tts）
+            if not model_name:
+                adv = settings.setdefault("advanced", {})
+                if role == "tts":
+                    store = _tts_store()
+                    provs = store.load_providers()
+                    enabled = next((p for p in provs if p.enabled), None)
+                    if enabled is None:
+                        return web.json_response({"error": "当前没有启用的语音服务商"}, status=400)
+                    provs = [p for p in provs if p.name != enabled.name]
+                    store.save_providers(provs)
+                    logger.info(f"WebUI 语音模型取消分配（移除 {enabled.name}）")
+                    return web.json_response({
+                        "ok": True, "role": "tts", "model_name": "",
+                        "message": "已取消语音合成模型",
+                    })
+                field = "vision_model" if role == "vision" else "video_model"
+                adv.pop(field, None)
+                _save_settings(settings)
+                if role == "vision":
+                    if isinstance(getattr(app_components, "advanced_config", None), dict):
+                        app_components.advanced_config["vision_model"] = {}
+                    vision = getattr(app_components, "vision_manager", None)
+                    if vision is not None and hasattr(vision, "update_config"):
+                        vision.update_config({})
+                label = "备用识别模型" if role == "vision" else "视频识别模型"
+                logger.info(f"WebUI {label}已取消分配")
+                return web.json_response({
+                    "ok": True, "role": role, "model_name": "",
+                    "message": f"已取消{label}",
+                })
+
             models = settings.get("models")
             if not isinstance(models, dict) or not models:
                 return web.json_response({"error": "还没有配置任何提供商"}, status=400)
             default_model = settings.get("default_model")
-            template = models.get(default_model) if isinstance(models.get(default_model), dict) else None
-            if template is None:
-                template = next((v for v in models.values() if isinstance(v, dict)), {})
-            current_key = default_model if isinstance(models.get(default_model), dict) else next(iter(models))
+            # body.key：指定操作哪个提供商条目（跨厂商分配时不写错条目），
+            # 缺省回退当前默认条目（旧客户端兼容）。
+            target_key = str(body.get("key") or "").strip()
+            if not target_key or not isinstance(models.get(target_key), dict):
+                target_key = default_model if isinstance(models.get(default_model), dict) else next(iter(models))
+            template = models[target_key]
+            current_key = target_key
 
             if role == "chat":
-                models[current_key]["model_name"] = model_name
+                # 语言模型 = default_model 条目指向的模型。跨厂商分配时
+                # 必须同时切 default_model，否则会把新模型名写进旧条目
+                # （旧条目的 api_key/base_url 配不上这个模型名）。
+                if target_key != default_model:
+                    settings["default_model"] = target_key
+                models[target_key]["model_name"] = model_name
+                # default_model 缺失/失效时补上（冷启动：先加提供商再分配语言模型）
+                if not settings.get("default_model") or settings.get("default_model") not in models:
+                    settings["default_model"] = target_key
                 _save_settings(settings)
                 # 热切换：同一个 LLM 实例改 model_name 即可生效（_build_model_id 每次请求现算）。
                 # 同一 provider 内换模型（如 Flash ↔ Pro）不需要重启服务。
                 hot = False
                 try:
                     registry = getattr(app_components, "registry", None)
-                    llm = registry.get() if registry is not None else None
-                    if llm is not None and hasattr(llm, "model_name"):
-                        llm.model_name = model_name
-                        hot = True
-                        vision = getattr(app_components, "vision_manager", None)
-                        if vision is not None and hasattr(vision, "update_main_model"):
-                            vision.update_main_model(llm)
+                    if registry is not None and hasattr(registry, "reload_entry"):
+                        # 重建 wrapper（provider/base_url/api_key 都可能是另一家的；
+                        # 只改 model_name 会拿旧厂商的 client 发新模型名 → Unsupported model）
+                        new_llm = registry.reload_entry(target_key, models[target_key])
+                        if new_llm is not None:
+                            hot = True
+                            # 同步所有持有旧实例的组件
+                            _handler = getattr(app_components, "handler", None)
+                            _pipeline = getattr(_handler, "pipeline", None)
+                            if _pipeline is not None and hasattr(_pipeline, "_llm"):
+                                _pipeline._llm = new_llm
+                            vision = getattr(app_components, "vision_manager", None)
+                            if vision is not None:
+                                if hasattr(vision, "update_main_model"):
+                                    vision.update_main_model(new_llm)
+                                # 换模型必须同步换「多模态」声明——旧声明属于上一个模型
+                                if hasattr(vision, "set_multimodal_declared"):
+                                    vision.set_multimodal_declared(
+                                        str(models[target_key].get("multimodal") or "no")
+                                    )
+                            _am = getattr(app_components, "adapter_manager", None)
+                            for _ad in (getattr(_am, "_adapters", None) or {}).values():
+                                try:
+                                    _ad._main_model = new_llm
+                                except Exception:
+                                    pass
                 except Exception as e:
                     logger.warning(f"hot switch main model failed: {e}")
-                logger.info(f"WebUI 语言模型 -> {model_name}（{current_key}，{'已热切换' if hot else '重启后生效'}）")
+                if not hot:
+                    # 兜底：旧 registry 或 reload 失败（如密钥缺失）。**只允许
+                    # 原地改 model_name 当且仅当目标条目与当前实例同厂商同
+                    # base_url**——否则就是今天修掉的跨厂商 bug：拿旧厂商的
+                    # client 发新模型名 → "Unsupported model"。这种情况宁可
+                    # 标记重启生效，也不要把实例改坏。
+                    try:
+                        registry = getattr(app_components, "registry", None)
+                        llm = registry.get() if registry is not None else None
+                        same_target = (
+                            llm is not None
+                            and str(getattr(llm, "base_url", "") or "").rstrip("/")
+                            == str(models[target_key].get("base_url") or "").rstrip("/")
+                        )
+                        if same_target and hasattr(llm, "model_name"):
+                            llm.model_name = model_name
+                            hot = True
+                        elif llm is not None:
+                            logger.warning(
+                                "hot switch skipped: target provider/base_url differs "
+                                "and reload unavailable; restart required"
+                            )
+                    except Exception as e:
+                        logger.warning(f"hot switch main model (legacy) failed: {e}")
+                logger.info(f"WebUI 语言模型 -> {model_name}（{target_key}，{'已热切换' if hot else '重启后生效'}）")
+                vision = getattr(app_components, "vision_manager", None)
                 return web.json_response({
                     "ok": True,
                     "role": "chat",
-                    "key": current_key,
+                    "key": target_key,
                     "model_name": model_name,
                     "hot_switched": hot,
+                    "image_chain": str(getattr(vision, "image_chain", "") or "") if vision is not None else "",
                     "message": f"语言模型已切换为 {model_name}" + ("，立即生效" if hot else "（重启后生效）"),
                 })
 
@@ -582,12 +708,14 @@ def register(routes, app_components):
                     vision.update_config(runtime_entry)
             else:
                 logger.info(f"WebUI 视频识别模型 -> {model_name}（暂未接入识别链路）")
+            vision = getattr(app_components, "vision_manager", None)
             return web.json_response({
                 "ok": True,
                 "role": role,
                 "model_name": model_name,
                 "base_url": base_url,
-                "message": "视频识别模型已保存（识别链路尚未接入）" if role == "video" else "图片识别模型已保存",
+                "image_chain": str(getattr(vision, "image_chain", "") or "") if vision is not None else "",
+                "message": "视频识别模型已保存（识别链路尚未接入）" if role == "video" else "备用识别模型已保存",
             })
         except Exception as e:
             logger.error(f"WebUI set_model_role error: {e}")
@@ -610,16 +738,50 @@ def register(routes, app_components):
                 )
             removed = models[model_key]
             reference = str(removed.get("api_key_ref") or "") if isinstance(removed, dict) else ""
+            was_default = settings.get("default_model") == model_key
+            removed_provider = str(removed.get("provider") or "") if isinstance(removed, dict) else ""
             del models[model_key]
-            if settings.get("default_model") == model_key:
+            if was_default:
                 settings["default_model"] = next(iter(models))
+
+            # 清理指向被删条目的视觉/视频配置：否则 advanced.vision_model 还挂着
+            # 已删的 base_url + 已删的密钥引用 → 发图静默 401，设置页仍显示"已配置"。
+            adv = settings.setdefault("advanced", {})
+            removed_name = str(removed.get("model_name") or "") if isinstance(removed, dict) else ""
+            cleaned_roles = []
+            for field in ("vision_model", "video_model"):
+                cfg = adv.get(field)
+                if not isinstance(cfg, dict) or not cfg:
+                    continue
+                ref = str(cfg.get("api_key_ref") or "")
+                same_ref = bool(reference) and ref == reference
+                same_entry = (
+                    bool(removed_name)
+                    and str(cfg.get("model_name") or "") == removed_name
+                    and str(cfg.get("provider") or "") == removed_provider
+                )
+                if same_ref or same_entry:
+                    adv.pop(field, None)
+                    cleaned_roles.append(field)
+
             _save_settings(settings)
             if reference:
                 _secret_manager().delete(reference)
+            # 热更新视觉管理器（清空后走"未配置识别"提示，而不是 401）
+            if "vision_model" in cleaned_roles:
+                vision = getattr(app_components, "vision_manager", None)
+                if vision is not None:
+                    if hasattr(vision, "update_config"):
+                        vision.update_config({})
+                    if isinstance(getattr(app_components, "advanced_config", None), dict):
+                        app_components.advanced_config.pop("vision_model", None)
             logger.info(f"WebUI model provider deleted: key={model_key}")
             return web.json_response({
                 "ok": True,
                 "current": settings.get("default_model"),
+                # 删掉的是当前默认模型 → 运行时仍持有旧实例，需重启才切干净
+                "restart_required": was_default,
+                "cleaned_roles": cleaned_roles,
             })
         except Exception as e:
             logger.error(f"WebUI delete_model_provider error: {e}")
