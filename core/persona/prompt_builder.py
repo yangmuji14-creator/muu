@@ -175,7 +175,12 @@ def _build_identity(p) -> str:
     if hobbies:
         names = []
         for h in hobbies[:4]:
-            names.append(h.get("name", "") if isinstance(h, dict) else str(h))
+            # 空名要丢掉：`{"name": ""}` 原样 join 会拼出「你喜欢跑步、画画、、游泳。」
+            # 若整串都空则变成「你喜欢、。」，既白占 prompt 又误导模型。
+            item = h.get("name", "") if isinstance(h, dict) else str(h)
+            item = (item or "").strip()
+            if item:
+                names.append(item)
         if names:
             lines.append(f"你喜欢{'、'.join(names)}。")
     if getattr(p, "music_taste", ""):
@@ -207,6 +212,12 @@ def _build_identity(p) -> str:
         lines.append(f"你叫对方「{nickname}」。")
 
     # 情感模式
+    #
+    # 两套 key 并存，各自渲染成独立的一句，**互不吞并**：
+    #   结构化三键（依恋类型 / 压力反应 / 爱的语言）—— 值是不完整的短语，
+    #     要靠模板补主语和谓语，所以拼成 "依恋类型是X，压力大时会Y"。
+    #   情感表达 —— 值本身是一句完整的话（性格标签翻译出来的草稿就是这种），
+    #     直接原样成句，套模板会变成 "压力大时会善于安抚对方情绪" 这种病句。
     emo = getattr(p, "emotional_patterns", None)
     if emo and isinstance(emo, dict):
         parts = []
@@ -218,6 +229,9 @@ def _build_identity(p) -> str:
             parts.append(f"表达爱的方式是{emo['爱的语言']}")
         if parts:
             lines.append("情感上，" + "，".join(parts) + "。")
+        free = emo.get("情感表达")
+        if isinstance(free, str) and free.strip():
+            lines.append(f"情绪上，你{free.strip().rstrip('。')}。")
 
     return "".join(lines)
 
@@ -258,6 +272,10 @@ def _build_relationship(p, dynamic_level=None) -> str:
             bp.append(f"你需要{rel_behavior['边界需求']}")
         if bp:
             parts.append("，" + "，".join(bp) + "。")
+        # 相处模式：同样是一句完整的话（标签草稿），不套 "有矛盾时你会" 模板
+        free = rel_behavior.get("相处模式")
+        if isinstance(free, str) and free.strip():
+            parts.append(f"相处上，你{free.strip().rstrip('。')}。")
 
     pet_names = getattr(p, "pet_names", [])
     if pet_names:

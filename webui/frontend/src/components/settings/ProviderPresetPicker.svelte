@@ -128,6 +128,6 @@
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
-    padding: 1px var(--space-2);
+    padding: var(--hair) var(--space-2);
   }
 </style>

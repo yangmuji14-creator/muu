@@ -72,7 +72,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--optical-2);
   }
   .n-title {
     font-weight: 600;

@@ -88,6 +88,10 @@ def read_json(path: str | Path, *, default: Any = None) -> Any:
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
+    # UnicodeDecodeError 是 ValueError 的子类、不是 OSError 的子类：
+    # 半个字被写坏（断电、磁盘满、编辑器按 GBK 存过）时文件依然存在、
+    # 也读得开，只是解不出字符串，早先这只捕 JSONDecodeError + OSError
+    # 会让整个调用方崩在这行 —— 安全读取就该连解码失败一起兜住。
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError) as e:
         logger.warning(f"Failed to read JSON {path}: {e}")
         return default

@@ -38,7 +38,6 @@
 
 ### 🔌 能力扩展
 - **MCP 扩展**：支持任意 MCP 服务器（System/Web/Weather 等内置，可自定义服务器、命令、参数），开箱即用
-- **插件系统**：加载自定义插件
 - **语音合成**（TTS）：多语音服务商，网页端可调用音频合成
 - **贴纸系统**：内置贴纸包，可导入
 
@@ -102,7 +101,7 @@ python main.py web        # 网页端，默认 http://127.0.0.1:8000
 - **对话**：与各人格身份聊天，支持图片/语音上传
 - **记忆**：长期记忆与人生总结管理
 - **联系人 / 朋友圈**：社交模块
-- **设置**：模型、人设、对话、外观、微信、朋友圈自动发布、语音（TTS）、MCP 扩展、插件、数据备份、监控等
+- **设置**：模型、人设、对话、外观、微信、朋友圈自动发布、语音（TTS）、MCP 扩展、工具与能力、数据备份、监控等
 
 ### MCP 扩展
 网页端「设置 → MCP 扩展」可管理 MCP 服务器：
@@ -149,7 +148,7 @@ core/          核心逻辑（brain 认知 / chat 对话 / emotion 情绪 / llm 
                 security 安全 / social 社交 / storage 存储 / tools 工具）
 mcp_servers/   内置 MCP 服务器脚本（system / web / weather）
 adapters/      适配器（微信等消息通道）
-plugins/       插件
+tools/         运维脚本（如 embedding 模型下载器）
 webui/         网页端（frontend/ Svelte 前端 + routes/ 按域拆分的后端路由）
 main.py        统一入口（CLI / Web / 微信）
 ```

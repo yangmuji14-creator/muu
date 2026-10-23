@@ -68,6 +68,49 @@ def _secret_counts(settings: dict, manager: Any) -> tuple[int, int, int]:
     return protected, plaintext, missing
 
 
+def _memory_check(memory_manager: Any) -> dict:
+    """检查记忆系统的语义检索是否真的在工作。
+
+    这是最容易「看起来正常、实际残废」的一环：嵌入模型加载失败时
+    记忆召回会静默降级成关键词匹配，接口不报错、页面不报错，
+    只有检索质量变差 —— 因此必须由诊断显式暴露。
+    """
+    if memory_manager is None:
+        return _check("memory", "记忆系统", "warn", "记忆系统未初始化")
+
+    status = {}
+    try:
+        status = memory_manager.embedding_status()
+    except Exception as e:  # pragma: no cover - 诊断不能自爆
+        return _check("memory", "记忆系统", "warn", f"记忆状态读取失败：{e}")
+
+    total = sum(item["memories"] for item in status.get("indexed_by_user", {}).values())
+    indexed = sum(item["indexed"] for item in status.get("indexed_by_user", {}).values())
+    details = {
+        "embedding_ready": status.get("ready", False),
+        "model_source": status.get("model_source", ""),
+        "dimension": status.get("dimension", 0),
+        "memories": total,
+        "indexed": indexed,
+    }
+
+    if not status.get("ready"):
+        error = (status.get("error") or "").strip()
+        hint = "语义记忆未启用，当前按关键词召回"
+        if error:
+            hint = f"{hint}；原因：{error[:160]}"
+        return _check("memory", "记忆系统", "warn", hint, **details)
+
+    if total and indexed < total:
+        return _check(
+            "memory", "记忆系统", "warn",
+            f"有 {total - indexed} 条记忆尚未建立向量索引，语义检索会漏掉它们",
+            **details,
+        )
+
+    return _check("memory", "记忆系统", "ok", f"语义记忆已启用（{indexed}/{total} 条已索引）", **details)
+
+
 def sanitize_settings(value: Any, key: str = "") -> Any:
     """Recursively redact credentials while preserving useful structure."""
     lowered = key.lower()
@@ -147,6 +190,8 @@ def run_diagnostics(
         f"已连接 {connected} 个 MCP 服务" if connected else "当前没有已连接的 MCP 服务",
         connected=connected,
     ))
+
+    checks.append(_memory_check(getattr(app_components, "memory_mgr", None)))
 
     counts = {status: sum(item["status"] == status for item in checks) for status in ("ok", "warn", "error")}
     overall = "error" if counts["error"] else "warn" if counts["warn"] else "ok"

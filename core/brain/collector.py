@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from core.emotion.mood import MoodEngine
     from core.dialogue.thinker import DialogueThinker
     from core.memory.open_loop import OpenLoopEngine
-    from core.memory.identity import IdentityLayer, IdentityStorage
+    from core.memory.identity import IdentityLayer
     from core.memory.life_summary import LifeSummaryEngine
     from core.dialogue.topic_tracker import TopicTracker
     from core.memory.chat_history import ChatHistoryStorage

@@ -121,6 +121,11 @@ class MemoryDecaySystem:
 
         综合置信度、重要度、时效性、忘性。
         权重越高，越容易被检索到。
+
+        .. note::
+           当前 `MemoryManager._hybrid_rank_prompt` 用的是另一套混合评分
+           （语义 0.5 + 重要度 0.3 + 时效 0.2），没有调用这里。这个方法
+           留给「纯元数据排序」的场景（无嵌入器时的离线排序、将来的重排层）。
         """
         if memory.archived or memory.is_superseded:
             return 0.0
@@ -172,6 +177,13 @@ class MemoryDecaySystem:
 
     def process_memories(self, memories: list[Memory]) -> list[Memory]:
         """批量处理记忆：更新 forget_score + 归档
+
+        .. note::
+           当前主链路**不用这个方法** —— `MemoryManager._cleanup_old_memories`
+           自己遍历一遍，在同一次循环里同时算 `forget_score` 和调
+           `should_archive`/`archive_memory`（它还额外管「超过 max_memories
+           时按分数裁剪」）。这里保留是因为它是这套衰减系统对外最直观的一层封装，
+           单元测试与将来的离线批处理脚本可以直接调。
 
         Args:
             memories: 用户的所有记忆

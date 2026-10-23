@@ -71,13 +71,22 @@
   .app-overlay {
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: var(--z-modal);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--overlay);
+    background: var(--glass-0);
     padding: var(--space-4);
   }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .app-overlay {
+      -webkit-backdrop-filter: blur(var(--glass-blur-0));
+      backdrop-filter: blur(var(--glass-blur-0));
+    }
+  }
+  /* 模态: glass-3 (最高一档)。这是全站唯一允许"厚玻璃"的表面 ——
+     它离用户注意力最近, 也最需要"从页面里浮起来"的物理感。
+     兜底: 不支持 backdrop-filter 时是实心 --surface。 */
   .app-modal {
     width: 100%;
     max-width: 380px;
@@ -86,10 +95,28 @@
     flex-direction: column;
     gap: var(--space-3);
     background: var(--surface);
-    border: 1px solid var(--card-border);
-    border-radius: var(--card-radius);
-    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--glass-border-2);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-4);
     animation: app-pop .18s ease-out;
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .app-modal {
+      background: var(--glass-3);
+      -webkit-backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
+      backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
+      box-shadow: var(--glass-highlight), var(--shadow-4);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .app-modal {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .app-modal { animation: none; }
   }
   @keyframes app-pop {
     from { opacity: 0; transform: scale(.96) translateY(4px); }
@@ -176,7 +203,7 @@
   .app-btn-ghost:hover { background: var(--btn-outline-hover); }
   .app-btn-danger {
     background: var(--error);
-    color: #fff;
+    color: var(--on-accent);
   }
   .app-btn-danger:hover { filter: brightness(1.08); }
 </style>

@@ -203,14 +203,14 @@
 
 <style>
   .tools-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .tool-chip { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+  .tool-chip { display: flex; flex-direction: column; gap: var(--optical-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
   .tool-name { font-weight: 600; font-size: var(--text-xs); color: var(--text-1); }
   .tool-desc { font-size: var(--text-xs); color: var(--text-3); max-width: 220px; }
 
   /* 窄屏: 操作区折到下一行并收紧间距, 避免按钮挤出卡片被裁切 */
   @media (max-width: 560px) {
     .card-row { flex-wrap: wrap; align-items: flex-start; }
-    .row-actions.wrap { flex: 1 1 100%; justify-content: flex-start; gap: 6px; }
-    .row-actions.wrap .btn-outline.sm { padding: 0 8px; }
+    .row-actions.wrap { flex: 1 1 100%; justify-content: flex-start; gap: var(--optical-6); }
+    .row-actions.wrap .btn-outline.sm { padding: 0 var(--space-2); }
   }
 </style>

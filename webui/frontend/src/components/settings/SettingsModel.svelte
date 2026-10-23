@@ -79,11 +79,17 @@
         if (r.ok) {
           model = r.data || {};
           const avail = Array.isArray(r.data?.available) ? r.data.available : [];
-          if (avail.length && typeof avail[0] === 'object') {
+          const provs = Array.isArray(r.data?.providers) ? r.data.providers : [];
+          if (provs.length) {
+            // 优先用 providers：带 base_url / multimodal，能直接渲染「已添加」列表
+            providers = provs;
+            model.available = provs.map((a) => a.key);
+          } else if (avail.length && typeof avail[0] === 'object') {
             providers = avail;
             model.available = avail.map((a) => a.key ?? a.model_name ?? a.provider);
           } else {
-            providers = avail.map((k) => ({ key: k, provider: k, model_name: k, base_url: r.data?.base_url }));
+            providers = avail.map((k) => ({ key: k, provider: k, model_name: k, base_url: '' }));
+            model.available = avail;
           }
         } else notify(errMsg(r, '加载模型配置失败'), 'error');
       } catch (e) { notify(errMsg(e, '加载模型配置失败'), 'error'); }
@@ -306,11 +312,16 @@
       if (r.ok) {
         model = r.data || {};
         const avail = Array.isArray(r.data?.available) ? r.data.available : [];
-        if (avail.length && typeof avail[0] === 'object') {
+        const provs = Array.isArray(r.data?.providers) ? r.data.providers : [];
+        if (provs.length) {
+          providers = provs;
+          model.available = provs.map((a) => a.key);
+        } else if (avail.length && typeof avail[0] === 'object') {
           providers = avail;
           model.available = avail.map((a) => a.key ?? a.model_name ?? a.provider);
         } else {
-          providers = avail.map((k) => ({ key: k, provider: k, model_name: k, base_url: r.data?.base_url }));
+          providers = avail.map((k) => ({ key: k, provider: k, model_name: k, base_url: '' }));
+          model.available = avail;
         }
       }
     } catch { /* ignore */ }
@@ -767,11 +778,19 @@
     color: var(--text-3);
   }
 
-  /* ---- 选择服务商：卡片 + 内联展开 ---- */
+  /* ---- 选择服务商：卡片 + 内联展开 ----
+     原来 12 张卡挤在 220px 网格里, 每张内部是「名称 14px + key 12px +
+     描述 12px」三行同权重的小字, 一屏 12 个方块看不出主次, 也不知道
+     点下去是什么。现在:
+       ① 网格放宽到 240px 最小宽, 一屏 3 列, 每张卡有足够宽度放一行描述
+       ② 卡片标题 13px/500, key 走 11px 等宽字, 描述 11px 两行截断 ——
+          名称是主体, key 与描述是附注, 三层重量区分开
+       ③ 卡片左侧留 2px 竖线, 展开时变冷蓝, 与 card-row 的 hover 语言一致
+       ④ 展开区与卡片同宽同边 (border-top:none), 视觉上确实是「卡片就地长出来」*/
   .preset-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+    gap: var(--space-2);
   }
   .preset-item {
     display: flex;
@@ -779,31 +798,38 @@
     gap: 0;
   }
   .preset-item .inline-form {
-    border: 1px solid var(--accent);
+    border: 1px solid var(--accent-line);
     border-top: none;
     border-radius: 0 0 var(--radius-sm) var(--radius-sm);
     padding: var(--space-3);
     background: var(--surface-2);
   }
   .preset-card {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--optical-3);
     width: 100%;
     padding: var(--space-3);
     border: 1px solid var(--border);
+    border-left: 2px solid var(--border-strong);
     border-radius: var(--radius-sm);
-    background: var(--surface-1);
+    background: var(--surface);
     color: var(--text-1);
     cursor: pointer;
     text-align: left;
-    transition: border-color var(--transition), background var(--transition);
+    transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
   }
-  .preset-card:hover { border-color: var(--accent); }
+  .preset-card:hover {
+    border-color: var(--border-strong);
+    border-left-color: var(--accent);
+    background: var(--surface-2);
+  }
   .preset-card.on {
-    border-color: var(--accent);
+    border-color: var(--accent-line);
+    border-left-color: var(--accent);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    background: var(--tint);
+    background: var(--accent-wash);
   }
   .pc-head {
     display: flex;
@@ -811,20 +837,37 @@
     justify-content: space-between;
     gap: var(--space-2);
   }
-  .pc-label { font-weight: 600; font-size: var(--text-sm); }
-  .pc-key { font-size: var(--text-xs); color: var(--text-3); }
+  .pc-label {
+    font-weight: 500;
+    font-size: var(--text-13);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-1);
+  }
+  .pc-key {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+  }
   .pc-desc {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-2);
-    line-height: 1.5;
+    line-height: 1.55;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .pc-meta {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    min-height: 18px;
+    min-height: 0;
+    margin-top: var(--optical-2);
   }
-  .inline-form { margin-bottom: var(--space-2); }
+  .inline-form { margin-bottom: 0; }
   .inline-form .pull-bar { margin: var(--space-2) 0; }
   .inline-form .form-actions { margin-top: var(--space-3); }
 
@@ -865,14 +908,14 @@
     transition: background var(--transition);
   }
   .pick-row:hover { background: var(--surface-2); }
-  .pick-row.on { background: var(--tint); }
+  .pick-row.on { background: var(--accent-wash); border-left: 2px solid var(--accent); padding-left: var(--optical-6); }
 
   .adv-details {
     margin-bottom: var(--space-3);
   }
   .adv-details summary {
     cursor: pointer;
-    font-size: var(--text-sm);
+    font-size: var(--text-13);
     color: var(--text-2);
     margin-bottom: var(--space-3);
     user-select: none;
@@ -892,7 +935,8 @@
     border-bottom: 1px solid var(--border);
   }
   .pool-name {
-    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
     color: var(--text-1);
     word-break: break-all;
   }

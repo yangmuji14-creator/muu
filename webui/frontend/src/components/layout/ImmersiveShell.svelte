@@ -130,38 +130,46 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    height: 32px;
+    height: 34px;
     padding: 0 var(--space-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-strong);
     background: var(--surface);
   }
   .imm-dot {
     flex: none;
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: var(--radius-full);
     background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-wash);
   }
   .imm-name {
     font-size: var(--text-xs);
+    letter-spacing: 0.04em;
     color: var(--text-1);
     font-weight: 500;
   }
-  .imm-sep { font-size: var(--text-xs); color: var(--text-3); }
-  .imm-meta { font-size: var(--text-xs); color: var(--text-3); }
+  .imm-sep { font-size: var(--text-xs); color: var(--border-strong); }
+  .imm-meta {
+    font-size: var(--text-2xs);
+    letter-spacing: 0.02em;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
   .imm-btn {
     margin-left: auto;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 22px;
+    width: 26px;
+    height: 24px;
     border: none;
     background: transparent;
     color: var(--text-2);
     cursor: pointer;
     border-radius: var(--radius-xs);
+    transition: background var(--transition), color var(--transition);
   }
   .imm-btn:hover { background: var(--row-hover); color: var(--text-1); }
 
@@ -174,45 +182,76 @@
     overflow-x: hidden;
   }
 
+  /* scrim: 只压暗 + 极轻模糊, 不放文字。模糊是给底下内容"退后一层"的信号,
+     2px 足够, 再多会让人以为页面失焦。 */
   .imm-scrim {
     position: fixed;
     inset: 0;
-    z-index: 40;
-    background: var(--overlay);
+    z-index: var(--z-scrim);
+    background: var(--glass-0);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .imm-scrim {
+      -webkit-backdrop-filter: blur(var(--glass-blur-0));
+      backdrop-filter: blur(var(--glass-blur-0));
+    }
   }
 
+  /* 抽屉: glass-2 (sheet 档)。原来是不透明 --bg + 硬编码暖黑阴影,
+     抽屉和主内容之间只靠一条线区分, 看起来像"页面被切掉一块"。
+     玻璃让底下的页面透出来 —— 这恰好是抽屉要表达的"我盖在上面,
+     但没离开这一页"。 */
   .imm-drawer {
     position: fixed;
     top: 0;
     right: 0;
     bottom: 0;
-    z-index: 41;
+    z-index: var(--z-drawer);
     width: min(300px, 86vw);
     display: flex;
     flex-direction: column;
-    background: var(--bg);
-    border-left: 1px solid var(--border);
+    /* 兜底: 不支持 backdrop-filter 时不透明 */
+    background: var(--surface);
+    border-left: 1px solid var(--glass-border-2);
     overflow: hidden;
+    box-shadow: var(--shadow-3);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .imm-drawer {
+      background: var(--glass-2);
+      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      box-shadow: var(--glass-highlight), var(--shadow-3);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .imm-drawer {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
   .imm-drawer-head {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
+    height: calc(var(--topbar-h) + 4px);
+    padding: 0 var(--space-4);
     border-bottom: 1px solid var(--border);
   }
   .imm-close {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     border: none;
     background: transparent;
     color: var(--text-3);
     cursor: pointer;
     border-radius: var(--radius-xs);
+    transition: background var(--transition), color var(--transition);
   }
   .imm-close:hover { background: var(--row-hover); color: var(--text-1); }
 
@@ -226,23 +265,24 @@
   .imm-tab {
     display: flex;
     align-items: center;
-    height: 30px;
+    height: 32px;
     padding: 0 var(--space-4);
     border: none;
     border-left: 2px solid transparent;
     background: transparent;
     font-family: inherit;
-    font-size: var(--text-sm);
-    color: var(--text-3);
+    font-size: var(--text-13);
+    letter-spacing: 0.005em;
+    color: var(--text-2);
     text-align: left;
     cursor: pointer;
-    transition: color var(--transition), background var(--transition);
+    transition: color var(--transition), background var(--transition), border-color var(--transition);
   }
-  .imm-tab:hover { background: var(--row-hover); color: var(--text-2); }
+  .imm-tab:hover { background: var(--row-hover); color: var(--text-1); }
   .imm-tab.on {
     color: var(--accent);
     font-weight: 500;
-    background: var(--surface-2);
+    background: var(--accent-wash);
     border-left-color: var(--accent);
   }
 
@@ -255,26 +295,31 @@
   .imm-sub {
     display: flex;
     align-items: center;
-    height: 26px;
-    padding: 0 var(--space-4) 0 38px;
+    height: 27px;
+    padding: 0 var(--space-4) 0 32px;
     border: none;
     border-left: 2px solid transparent;
     background: transparent;
     font-family: inherit;
     font-size: var(--text-xs);
-    color: var(--text-3);
+    letter-spacing: 0.01em;
+    color: var(--text-2);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: color var(--transition), background var(--transition);
+    transition: color var(--transition), background var(--transition), border-color var(--transition);
   }
-  .imm-sub:hover { background: var(--row-hover); color: var(--text-2); }
-  .imm-sub.on { color: var(--accent); font-weight: 500; }
+  .imm-sub:hover { background: var(--row-hover); color: var(--text-1); }
+  .imm-sub.on {
+    color: var(--accent);
+    font-weight: 500;
+    border-left-color: var(--accent-line);
+  }
   .imm-sub-sep {
     height: 1px;
-    margin: var(--space-1) var(--space-4) var(--space-1) 38px;
+    margin: var(--space-1) var(--space-4) var(--space-1) 32px;
     background: var(--border);
   }
 </style>

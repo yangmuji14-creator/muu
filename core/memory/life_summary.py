@@ -44,6 +44,10 @@ def _coerce_str_list(value) -> list[str]:
         items = [str(v).strip() for v in value if str(v).strip()]
         # set 无序：排序保证输出确定性
         return sorted(items) if isinstance(value, set) else items
+    if isinstance(value, dict):
+        # 直接传 dict（不是 JSON 文本）：取 values。落到下面的 str() 分支会
+        # 得到 `["x': 1", "'y': 2"]` 这种被 Python repr 切碎的垃圾。
+        return [str(v).strip() for v in value.values() if str(v).strip()]
     text = str(value).strip()
     if not text or text in ("[]", "{}", "null", "None"):
         return []
@@ -59,7 +63,7 @@ def _coerce_str_list(value) -> list[str]:
             return [str(v).strip() for v in data if str(v).strip()]
         if isinstance(data, dict):
             return [str(v).strip() for v in data.values() if str(v).strip()]
-        return [text]
+        return [text]  # pragma: no cover - 以 [/{ 开头的合法 JSON 只会是 list/dict
     return [s.strip() for s in text.split(",") if s.strip()]
 
 

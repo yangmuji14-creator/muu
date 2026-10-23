@@ -193,7 +193,7 @@
   .diag-toggle { border: none; background: transparent; color: var(--text-3); transform: rotate(0deg); transition: transform var(--transition); flex: none; }
   .diag-toggle.on { transform: rotate(90deg); }
   .diag-check-msg { margin: var(--space-2) 0 0; font-size: var(--text-sm); color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
-  .payload { margin: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.78rem; overflow: auto; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 240px; }
+  .payload { margin: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); overflow: auto; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 240px; }
   .payload.compact { max-height: 200px; margin-top: var(--space-2); }
 
   .ops-list { display: flex; flex-direction: column; gap: var(--space-1); }

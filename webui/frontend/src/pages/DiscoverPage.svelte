@@ -211,14 +211,21 @@ import Toast from '../components/Toast.svelte';
 <Toast {toast} />
 
 <div class="page">
-  <div class="page-top">
-    <h1 class="page-title">发现</h1>
-    <button class="btn btn-primary btn-sm" type="button" onclick={openPublish}>＋发布</button>
-  </div>
+  <header class="page-top">
+    <div class="page-top-main">
+      <span class="micro-label">动态</span>
+      <h1 class="page-title">发现</h1>
+      <p class="page-lede">她和你在这里留下碎片。可以本人发，也可以用人设的口气发。</p>
+    </div>
+    <button class="btn btn-primary btn-sm" type="button" onclick={openPublish}>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      发布
+    </button>
+  </header>
 
   <!-- 发布框 -->
   {#if publishOpen}
-    <div class="publish card">
+    <div class="publish">
       <label class="field">
         <span class="field-label">正文</span>
         <textarea class="field-input" rows="4" placeholder="分享此刻…" bind:value={newText}></textarea>
@@ -245,8 +252,13 @@ import Toast from '../components/Toast.svelte';
     <div class="empty-state"><p class="empty-desc">加载中…</p></div>
   {:else if moments.length === 0}
     <div class="empty-state">
+      <span class="empty-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
       <p class="empty-title">还没有动态</p>
-      <p class="empty-desc">点右上角「发布」记录此刻的想法。</p>
+      <p class="empty-desc">点右上角「发布」写下此刻。用她的人设发一条，她会在之后的对话里记得。</p>
+      <button class="btn btn-primary empty-btn" type="button" onclick={openPublish}>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        发布第一条
+      </button>
     </div>
   {:else}
     <div class="timeline">
@@ -258,7 +270,7 @@ import Toast from '../components/Toast.svelte';
               <span class="moment-author">{m.author_label || m.author || '匿名'}</span>
               <span class="moment-time">{friendlyTime(m.timestamp)}</span>
             </div>
-            <button class="icon-btn ghost" type="button" title="删除动态" onclick={() => removeMoment(m)}>
+            <button class="icon-btn ghost del-btn" type="button" title="删除动态" aria-label="删除这条动态" onclick={() => removeMoment(m)}>
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
           </header>
@@ -341,33 +353,49 @@ import Toast from '../components/Toast.svelte';
 
 <style>
   .page {
-    padding: var(--space-4) var(--space-5) var(--space-7);
-    max-width: 780px;
+    padding: var(--space-6) var(--space-6) var(--space-8);
+    max-width: 820px;
     margin: 0;
-  }
-  .page-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding-bottom: var(--space-3);
-    margin-bottom: var(--space-4);
-    border-bottom: 1px solid var(--border);
-  }
-  .page-title {
-    margin: 0;
-    font-size: var(--text-base);
-    font-weight: 500;
-    color: var(--text-1);
   }
 
-  /* 发布框 */
+  /* ---- 页头: 微标签 + 26px 主标题 + 说明 (与通讯录同一套骨架) ---- */
+  .page-top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding-bottom: var(--space-4);
+    margin-bottom: var(--space-5);
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .page-top-main { min-width: 0; display: flex; flex-direction: column; }
+  .page-title {
+    margin: 0;
+    font-size: var(--text-display);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    line-height: 1.12;
+    color: var(--text-1);
+  }
+  .page-lede {
+    margin: var(--optical-6) 0 0;
+    font-size: var(--text-13);
+    line-height: 1.65;
+    color: var(--text-2);
+    max-width: 52ch;
+  }
+
+  /* 发布框: 原来凭空挂在页面上 (无底无框), 现在给一块浅底 + 左冷蓝竖线,
+     一眼能看出「这是一个正在输入的临时区域」 */
   .publish {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-5);
+    background: var(--surface-2);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
   }
 
   .timeline {
@@ -376,9 +404,10 @@ import Toast from '../components/Toast.svelte';
     gap: 0;
   }
   .moment {
-    padding: var(--space-4) 0;
+    padding: var(--space-5) 0;
     border-bottom: 1px solid var(--border);
   }
+  .moment:first-child { padding-top: 0; }
   .moment-head {
     display: flex;
     align-items: center;
@@ -389,39 +418,45 @@ import Toast from '../components/Toast.svelte';
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--optical-2);
   }
   .moment-author {
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     font-weight: 600;
+    letter-spacing: var(--tracking-tight);
     color: var(--text-1);
   }
   .moment-time {
     font-size: var(--text-xs);
     color: var(--text-3);
+    font-variant-numeric: tabular-nums;
   }
+  /* 正文从 16px 收到 15px (body 基准): 动态正文是长段落, 16px 会让
+     每条动态看起来像标题。行高 1.75 让多行文字有呼吸。 */
   .moment-text {
     margin: var(--space-3) 0;
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    font-size: var(--text-15);
+    line-height: 1.75;
     color: var(--text-1);
     white-space: pre-wrap;
     word-break: break-word;
   }
 
+  /* 点赞行: 从灰底色块改成左侧竖线 + 浅底, 与回复区区分开 */
   .likes-row {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    margin-bottom: var(--space-2);
-    background: var(--surface-2);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-sm);
+    padding: var(--space-1) var(--space-3);
+    margin-bottom: var(--space-3);
+    border-left: 2px solid color-mix(in srgb, var(--error) 40%, transparent);
+    font-size: var(--text-13);
     color: var(--text-2);
+    line-height: 1.7;
   }
   .likes-icon {
     color: var(--error);
+    font-size: var(--text-xs);
   }
   .likes-text {
     flex: 1;
@@ -430,20 +465,19 @@ import Toast from '../components/Toast.svelte';
 
   .moment-foot {
     display: flex;
-    gap: var(--space-2);
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-2);
+    gap: var(--space-1);
+    margin-top: var(--space-1);
   }
   .foot-btn {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-2) var(--space-3);
+    gap: var(--optical-5);
+    padding: var(--space-1) var(--space-2);
     border: none;
     border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-2);
-    font-size: var(--text-sm);
+    color: var(--text-3);
+    font-size: var(--text-13);
     cursor: pointer;
     transition: background var(--transition), color var(--transition);
   }
@@ -455,11 +489,14 @@ import Toast from '../components/Toast.svelte';
     color: var(--error);
   }
 
+  /* 回复区: 浅底 + 内缩, 形成「动态 → 评论」的第二层 */
   .replies {
-    margin-top: var(--space-2);
-    padding: var(--space-3);
+    margin-top: var(--space-3);
+    margin-left: var(--space-2);
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
     background: var(--surface-2);
-    border-radius: var(--radius);
+    border-left: 2px solid var(--border-strong);
+    border-radius: 0 var(--radius) var(--radius) 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
@@ -468,13 +505,13 @@ import Toast from '../components/Toast.svelte';
     display: flex;
     align-items: baseline;
     gap: var(--space-1);
-    font-size: var(--text-sm);
-    line-height: var(--leading-snug);
+    font-size: var(--text-13);
+    line-height: 1.7;
     flex-wrap: wrap;
   }
   .reply-author {
     font-weight: 600;
-    color: var(--info);
+    color: var(--accent);
   }
   .reply-arrow {
     color: var(--text-3);
@@ -482,7 +519,7 @@ import Toast from '../components/Toast.svelte';
   }
   .reply-to {
     font-weight: 600;
-    color: var(--info);
+    color: var(--accent);
   }
   .reply-colon {
     color: var(--text-2);
@@ -507,11 +544,11 @@ import Toast from '../components/Toast.svelte';
     padding: 0;
     transition: color var(--transition);
   }
-  .mini-btn:hover { color: var(--info); }
+  .mini-btn:hover { color: var(--accent); }
   .mini-btn.danger:hover { color: var(--error); }
 
   .reply-box {
-    margin-top: var(--space-2);
+    margin-top: var(--space-3);
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
@@ -540,8 +577,13 @@ import Toast from '../components/Toast.svelte';
   }
 
   /* ---- 表单/按钮通用 ---- */
-  .field { display: flex; flex-direction: column; gap: var(--space-2); }
-  .field-label { font-size: var(--text-sm); font-weight: 600; color: var(--text-2); }
+  .field { display: flex; flex-direction: column; gap: var(--optical-6); }
+  .field-label {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-3);
+  }
   .field-input {
     width: 100%;
     padding: var(--space-2) var(--space-3);
@@ -549,17 +591,19 @@ import Toast from '../components/Toast.svelte';
     border: 1px solid var(--input-border);
     border-radius: var(--input-radius);
     color: var(--input-text);
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     font-family: var(--font-sans);
     line-height: var(--leading-snug);
+    transition: border-color var(--transition), box-shadow var(--transition);
   }
   .field-input:focus-visible { outline: none; border-color: var(--input-focus-border); box-shadow: var(--focus-ring); }
   .field-input::placeholder { color: var(--input-placeholder); }
   .form-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-    border-radius: var(--btn-radius); font-size: var(--text-sm); font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--optical-6);
+    border-radius: var(--btn-radius); font-size: var(--text-sm);
+    font-weight: 500; letter-spacing: var(--tracking-tight);
     cursor: pointer; border: 1px solid transparent; white-space: nowrap;
     transition: background var(--transition), border-color var(--transition), transform var(--transition), box-shadow var(--transition);
   }
@@ -587,10 +631,41 @@ import Toast from '../components/Toast.svelte';
   .icon-btn.ghost { border-color: transparent; color: var(--text-3); }
   .icon-btn:active { transform: scale(0.94); }
 
+  /* 删除按钮: 原来每条动态右上角都常亮一个垃圾桶, 整页扫下去是一列
+     同款图标, 比正文还规律。改成悬停才出现 —— 有指针设备时才隐藏,
+     触屏没有 hover 就保持常驻, 否则手机上根本删不掉。 */
+  @media (hover: hover) {
+    .del-btn {
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+    .moment:hover .del-btn,
+    .del-btn:focus-visible { opacity: 1; }
+  }
+
+  /* ---- 空状态 ----
+     原来这里是「14px 灰字 + 14px 灰字」, 在整片白里几乎不可见。
+     现在有图标 / 18px 标题 / 说明 / 主按钮四层, 并被一道竖线锚住。 */
   .empty-state {
     display: flex; flex-direction: column; align-items: flex-start; text-align: left;
-    gap: var(--space-1); padding: var(--space-6) 0;
+    gap: var(--space-2); padding: var(--space-5) 0 var(--space-5) var(--space-4);
+    border-left: 2px solid var(--border-strong);
   }
-  .empty-title { margin: 0; font-size: var(--text-sm); font-weight: 500; color: var(--text-2); }
-  .empty-desc { margin: 0; font-size: var(--text-sm); color: var(--empty-text); }
+  .empty-icon { display: inline-flex; color: var(--empty-icon); margin-bottom: var(--space-1); }
+  .empty-title {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-1);
+    line-height: 1.3;
+  }
+  .empty-desc {
+    margin: 0;
+    font-size: var(--text-13);
+    line-height: 1.72;
+    color: var(--text-2);
+    max-width: 46ch;
+  }
+  .empty-btn { margin-top: var(--space-2); }
 </style>

@@ -3,10 +3,14 @@
 // 这些 meta 的 key 必须与后端 /api/persona/{id} 的 fields 完全一致，
 // 也与 core/persona/prompt_builder.py 读取的 dict key 完全一致（只读参考）：
 //   speaking_style        → 读 ['基础风格']
-//   emotional_patterns    → 读 ['依恋类型','压力反应','爱的语言']
-//   relationship_behavior → 读 ['冲突模式','边界需求']
+//   emotional_patterns    → 读 ['依恋类型','压力反应','爱的语言','情感表达']
+//   relationship_behavior → 读 ['冲突模式','边界需求','相处模式']
 //   example_dialogs       → list[{scenario, reply:[..]}]
 //   hard_rules / taboos / core_memories → list[str]
+//
+// `情感表达` / `相处模式` 是性格标签（config/persona_tags.json v2）的落点：
+// 它们的值是一整句完整的话，prompt_builder 原样成句，不套
+// "压力大时会…" / "有矛盾时你会…" 那种模板。结构化的 3+2 个键留给用户手填。
 //
 // 新的类型:
 //   prompt-dict   → 友好键值表单 (inner spec.fields), 保存为非空 key 的 dict
@@ -78,18 +82,24 @@ export const PROMPT_DEEP = [
     type: 'prompt-dict',
     hint: 'TA 的情感与压力反应。',
     spec: {
-      keys: ['依恋类型', '压力反应', '爱的语言'],
+      keys: ['情感表达', '依恋类型', '压力反应', '爱的语言'],
       fields: [
+        {
+          key: '情感表达',
+          label: '情感表达',
+          placeholder: '如 善于安抚对方情绪，自己不开心时先平静下来再说话',
+          rows: 2,
+        },
         {
           key: '依恋类型',
           label: '依恋类型',
           placeholder: '如 安全型',
-          rows: 2,
+          rows: 1,
         },
         {
           key: '压力反应',
           label: '压力反应',
-          placeholder: '如 会先自己待一会儿再找人倾诉',
+          placeholder: '如 先自己待一会儿再找人倾诉',
           rows: 2,
         },
         {
@@ -107,8 +117,14 @@ export const PROMPT_DEEP = [
     type: 'prompt-dict',
     hint: '相处中遇到矛盾 / 需要边界时的表现。',
     spec: {
-      keys: ['冲突模式', '边界需求'],
+      keys: ['相处模式', '冲突模式', '边界需求'],
       fields: [
+        {
+          key: '相处模式',
+          label: '相处模式',
+          placeholder: '如 会主动照顾对方的情绪，起争执时习惯先退半步',
+          rows: 2,
+        },
         {
           key: '冲突模式',
           label: '冲突模式',

@@ -20,33 +20,68 @@
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, 'Liberation Mono',
     monospace;
 
-  /* ---- 圆角 (克制: 最锐利的一档, 保留 2~6px 避免纯直角显得廉价) ---- */
-  --radius-xs: 2px;
-  --radius-sm: 3px;
-  --radius: 4px;
-  --radius-md: 5px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
-  --radius-full: 999px;
+  /* ---- 圆角 (5 档: 原 2/3/4/5/6/8 六档里 3/4/5 挤在 2px 内, 肉眼不可辨) ----
+     规则: 小元素用小圆角、大元素用大圆角。
+     原状反着来 —— .modal 用 5px、.avatar 用 2px, 尺寸感是倒错的。 */
+  --radius-xs: 2px;         /* chip / 头像 / 进度条 —— 最锐利档 */
+  --radius-sm: 4px;         /* 按钮 / 输入框 / Toast */
+  --radius-md: 8px;         /* 卡片 / 弹窗 / popover */
+  --radius-lg: 12px;        /* sheet / 抽屉顶角 / 大面板 */
+  --radius-xl: 16px;        /* 仅超大容器 (图片预览框) */
+  --radius-full: 999px;     /* 仅 pill 与 switch 滑块 */
+  --radius: var(--radius-sm);   /* 别名, 兼容旧引用 */
 
-  /* ---- 阴影 (极弱: 仅用于浮层/模态, 平面元素一律靠细线) ---- */
-  --shadow-sm: 0 1px 1px rgba(30, 27, 24, 0.03);
-  --shadow: 0 2px 6px rgba(30, 27, 24, 0.05);
-  --shadow-md: 0 4px 14px rgba(30, 27, 24, 0.08);
-  --shadow-lg: 0 8px 30px rgba(30, 27, 24, 0.12);
-  --shadow-accent: 0 1px 2px rgba(30, 27, 24, 0.06);
+  /* ---- 阴影 (5 档, 与玻璃档位一一对应) ----
+     平面元素一律 --shadow-0, 靠 1px 细线分层;
+     只有真正浮在内容之上的东西才配拿到 2 档以上。 */
+  --shadow-0: none;
+  --shadow-1: 0 1px 2px rgba(28, 22, 16, 0.04);          /* chip hover */
+  --shadow-2: 0 2px 8px rgba(28, 22, 16, 0.06);          /* 下拉 / popover */
+  --shadow-3: 0 8px 24px rgba(28, 22, 16, 0.10),
+              0 1px 3px rgba(28, 22, 16, 0.06);           /* 抽屉 / sheet */
+  --shadow-4: 0 20px 48px rgba(28, 22, 16, 0.16),
+              0 2px 8px rgba(28, 22, 16, 0.08);           /* 模态弹窗 */
+  /* 旧名别名 —— 值已重定向到新阶梯, 存量引用不必逐处改写 */
+  --shadow-sm: var(--shadow-1);
+  --shadow: var(--shadow-2);
+  --shadow-md: var(--shadow-2);
+  --shadow-lg: var(--shadow-4);
+  --shadow-accent: var(--shadow-1);
 
-  /* ---- 过渡缓动 (收紧时长, 冷峻感来自"快而干脆") ---- */
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-snap: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
-  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --transition: 120ms var(--ease-in-out);
-  --transition-fast: 90ms var(--ease-in-out);
-  --transition-slow: 220ms var(--ease-out);
-  --transition-snap: 180ms var(--ease-snap);
-  --transition-spring: 220ms var(--ease-spring);
+  /* ---- 过渡缓动 (收紧时长, 冷峻感来自"快而干脆") ----
+     时长四档对应"交互距离": 颜色 90 / 小位移 140 / 浮层 200 / 模态 280。
+     退场规则: 时长 = 入场 × 0.6, 曲线换 --ease-in (慢起快收)。 */
+  --dur-1: 90ms;    /* 颜色 / 边框变化 */
+  --dur-2: 140ms;   /* 小元素位移 / 缩放 */
+  --dur-3: 200ms;   /* 浮层入场 */
+  --dur-4: 280ms;   /* 模态 / sheet */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);      /* 入场标准曲线 */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);    /* 双向过渡 */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);          /* 退场 */
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);/* 仅"物理感"确认 */
+  /* 旧名别名 */
+  --ease-snap: var(--ease-spring);
+  --ease-out-back: var(--ease-spring);
+  --transition: var(--dur-2) var(--ease-in-out);
+  --transition-fast: var(--dur-1) var(--ease-in-out);
+  --transition-slow: var(--dur-3) var(--ease-out);
+  --transition-snap: var(--dur-3) var(--ease-spring);
+  --transition-spring: var(--dur-3) var(--ease-spring);
+
+  /* ---- z-index 阶梯 (原来 15 处裸数字: 10/30/40/41/50/60/100/200/999) ----
+     同一层级的两个数字 (40/41、60) 说明层级是"遇到再加一"长出来的,
+     没有语义。改成命名档位后, 新增浮层只需要问"它在哪一档"。 */
+  --z-base: 0;
+  --z-sticky: 10;        /* 吸顶表头 */
+  --z-topbar: 30;        /* TopBar */
+  --z-scrim: 40;         /* 抽屉 / 面板遮罩 */
+  --z-drawer: 41;        /* 抽屉本体 */
+  --z-sheet: 50;         /* 底部面板 */
+  --z-modal-scrim: 60;
+  --z-modal: 61;
+  --z-popover: 70;       /* 下拉菜单 / tooltip */
+  --z-toast: 80;
+  --z-lightbox: 100;     /* 图片预览 */
 
   /* ---- 间距刻度（4px 基准） ---- */
   --space-0: 0px;
@@ -59,64 +94,132 @@
   --space-7: 48px;
   --space-8: 64px;
 
-  /* ---- 布局尺寸 ---- */
-  --sidebar-w: 208px;           /* 桌面侧边栏宽度 */
+  /* ---- 光学校正（sub-4px） ----
+     4px 节奏解决不了「1~3px」这一档，但这一档真实存在且不该被抹掉：
+       · chip / 徽标的内边距 —— 12px 字放进 4px 内边距会胖成一坨药丸，
+         用 6~7px 才是正常的小标签
+       · 图标与文字之间的缝 —— 8px 会散开，3~5px 才是连在一起的
+       · 基线微调 —— 大字号旁的角标要往下压 1~2px 才视觉居中
+     把它们命名成 token，是为了让「为什么这里不是 4 的倍数」有答案，
+     而不是散落成 68 处没有出处的魔数。 */
+  --hair: 1px;          /* 极细缝 / 基线微调 */
+  --optical-2: 2px;     /* 紧贴：角标、双行紧排 */
+  --optical-3: 3px;     /* 图标-文字最小缝 */
+  --optical-4: 4px;     /* = space-1，语义上是「贴着但可分辨」 */
+  --optical-5: 5px;     /* 小标签横向内边距 */
+  --optical-6: 6px;     /* 小标签横向内边距 / 密集行间距 */
+  --optical-7: 7px;     /* chip 横向内边距 */
+  --optical-9: 9px;     /* 中等图标-文字缝 */
+  --optical-10: 10px;   /* 导航行内距 */
+  --optical-11: 11px;   /* chip 横向内边距（28px 高时手感最稳） */
+  --optical-14: 14px;   /* 紧凑按钮横向内边距 */
+
+  /* ---- 布局尺寸 ----
+     sidebar 从 208 收窄到 196: 原来 208px 里只有 5 个 30px 高的行,
+     实际内容只占约 150px, 剩下 58px 是纯空气, 让左侧看着比实际更空。
+     conv 栏从 240 收到 232, 把省下的宽度还给消息区。
+     chat-msg-maxw 从 720 降到 640: 720px 的中文行在 1440 视口下
+     约 48 个汉字/行, 阅读时回行追踪成本偏高。 */
+  --sidebar-w: 196px;           /* 桌面侧边栏宽度 */
+  --conv-w: 232px;              /* 会话列表栏宽度 */
+  --panel-w: 244px;             /* 右侧「她的状态」栏宽度 */
   --topbar-h: 44px;             /* 顶栏高度 */
   --tabbar-h: 54px;             /* 底部 Tab 栏高度 */
   --phone-maxw: 520px;          /* 窄屏容器最大宽度 */
   --app-maxw: 100%;             /* 桌面铺满, 不再居中留白 */
-  --chat-msg-maxw: 720px;       /* 聊天消息最大宽度 */
+  --chat-msg-maxw: 640px;       /* 聊天消息最大宽度 */
 
-  /* ---- 字体尺寸与行高 ---- */
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.375rem;
+  /* ---- 字体尺寸与行高 ----
+     补齐了原阶梯的两个断档:
+       1) 11px 微标签层 (--text-2xs)。原来最下一档就是 12px,
+          11px 全靠各处硬写, 于是「微标签」这个层级在代码里不存在,
+          最终表现成「所有辅助信息都是 12px」, 层级被摊平。
+       2) 13px 正文层 (--text-13)。原来 12px 之后直接跳到 14px,
+          中文在 14px + 1.6 行高下偏松散, 而 12px 又太碎。
+          13px/1.62 是这套暖纸底上最耐读的一档。
+     并补上真正的主标题档 --text-display(26px): 原来页面标题
+     最高只用到 16px, 与正文同级, 这是「页面看起来没重点」的直接原因。 */
+  --text-2xs: 0.6875rem;      /* 11px 微标签 */
+  --text-xs: 0.75rem;         /* 12px 辅助 */
+  --text-13: 0.8125rem;       /* 13px 正文 */
+  --text-sm: 0.875rem;        /* 14px 正文偏大 / 控件 */
+  --text-15: 0.9375rem;       /* 15px 阅读正文（对话气泡、记忆正文、长段落） */
+  --text-base: 1rem;          /* 16px 强调正文 */
+  --text-lg: 1.125rem;        /* 18px 小标题 */
+  --text-xl: 1.375rem;        /* 22px 二级标题 */
+  --text-display: 1.625rem;   /* 26px 页面主标题 */
   --text-2xl: 1.75rem;
   --text-3xl: 2.25rem;
   --leading-tight: 1.25;
   --leading-snug: 1.4;
   --leading-normal: 1.6;
+
+  /* ---- 字距 ----
+     中文没有小写字形, 但字距仍然是最便宜的层级手段:
+     微标签拉开(0.16em)会得到「标签」的质感, 主标题收紧(-0.01em)
+     会让 26px 的字块看起来更整体。 */
+  --tracking-tighter: -0.02em;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.06em;
+  --tracking-wider: 0.16em;
 }
 
 /* ============================================================
    Layer 2: 语义色 — 浅色（暖纸底）
+   色相锚定 H≈37（暖纸），与深色主题共享同一色相身份。
+   bg 与 surface 的明度差拉到 8%，surface 才能真正"浮"起来。
    ============================================================ */
 [data-theme='light'] {
-  --bg: #f7f5f2;            /* 暖纸白 */
-  --surface: #ffffff;       /* 卡片/面板 */
-  --surface-2: #f2efeb;     /* 次级面板 / hover */
-  --surface-3: #e8e3dc;     /* 再次级 / 按下 */
-  --text-1: #1e1b18;        /* 暖炭黑 (主文字) */
-  --text-2: #6a645c;        /* 次级文字 */
-  --text-3: #9a938a;        /* 弱化文字 / 微标签 */
-  --accent: #2f5d8a;        /* 冷蓝 — 点缀色 */
-  --accent-strong: #24496e;
-  --accent-soft: #e8eff6;
-  --accent-contrast: #ffffff;
-  --border: #e5e0d8;        /* 暖灰细线 */
-  --border-strong: #d3ccc1;
-  --success: #4a7c59;
-  --warning: #a8813a;
-  --error: #a84a42;
-  --info: #2f5d8a;
-  --on-accent: #ffffff;
-  --overlay: rgba(30, 27, 24, 0.35);
-  --glass: rgba(255, 255, 255, 0.86);
-  --glass-border: rgba(229, 224, 216, 0.7);
+  /* ---- 背景 ---- */
+  --bg: #f3efe8;            /* H38 S31 L93 暖纸底 */
+  --surface: #fdfbf8;       /* H36 S56 L98 比纯白柔, 去掉刺眼感 */
+  --surface-2: #ece6dc;     /* H37 S30 L89 次级面板 / hover */
+  --surface-3: #e0d8ca;     /* H38 S26 L84 再次级 / 按下 */
+  --surface-inset: #f6f2eb; /* 输入框 / 凹槽 */
 
-  /* ---- 交互反馈覆盖层 ---- */
-  --hover-overlay: rgba(30, 27, 24, 0.04);
-  --active-overlay: rgba(30, 27, 24, 0.08);
-  --disabled-text: rgba(30, 27, 24, 0.32);
-  --disabled-bg: rgba(30, 27, 24, 0.05);
+  /* ---- 文字 (三档全部 ≥4.5:1 on surface) ----
+     原 text-3 #837b71 只有 4.17:1 —— 大量"次要说明"其实是不可读的。 */
+  --text-1: #191613;        /* 17.44 on surface */
+  --text-2: #4d473f;        /*  8.88 */
+  --text-3: #665e53;        /*  6.18 */
+  --text-inverse: #fdfbf8;
+
+  /* ---- 边框 ----
+     分「装饰线」与「结构线」两档: 装饰线只做分隔, 不承担边界语义;
+     结构线 (输入框/卡片边界) 必须 ≥3:1, 否则表单看着像没有边。 */
+  --border: #ded6c9;        /* 1.40 仅装饰 */
+  --border-strong: #8c8170; /* 3.70 结构线 */
+
+  /* ---- 强调 (冷蓝 H≈209, 只压深一档) ---- */
+  --accent: #2b567f;        /* 7.42 on surface */
+  --accent-strong: #1f4366; /* 9.90 */
+  --accent-soft: #e6eef6;
+  --on-accent: #ffffff;     /* 7.66 on accent */
+  --accent-contrast: #ffffff;
+
+  /* ---- 语义色 (全部 ≥4.5:1 on surface) ---- */
+  --success: #3d6b4c;       /* 5.97 */
+  --warning: #8a6626;       /* 5.07 */
+  --error: #98382f;         /* 6.91 */
+  --info: #2b567f;          /* 7.42 */
+  --on-success: #ffffff;    /* 6.17 on success */
+  --on-warning: #ffffff;    /* 5.24 */
+  --on-error: #ffffff;      /* 7.14 */
+
+  /* ---- 交互态 ---- */
+  --overlay: rgba(28, 22, 16, 0.38);
+  --hover-overlay: rgba(28, 22, 16, 0.045);
+  --active-overlay: rgba(28, 22, 16, 0.085);
+  --disabled-text: rgba(28, 22, 16, 0.32);
+  --disabled-bg: rgba(28, 22, 16, 0.05);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 
   /* ---- 状态软底 ---- */
-  --success-soft: rgba(74, 124, 89, 0.12);
-  --warning-soft: rgba(168, 129, 58, 0.14);
-  --error-soft: rgba(168, 74, 66, 0.12);
-  --info-soft: rgba(47, 93, 138, 0.10);
+  --success-soft: rgba(61, 107, 76, 0.12);
+  --warning-soft: rgba(138, 102, 38, 0.14);
+  --error-soft: rgba(152, 56, 47, 0.12);
+  --info-soft: rgba(43, 86, 127, 0.10);
 
   /* ---- 骨架屏 ---- */
   --skeleton-bg: color-mix(in srgb, var(--surface-3) 70%, transparent);
@@ -124,50 +227,131 @@
 
   /* ---- 进度条 ---- */
   --progress-track: var(--surface-3);
-  --progress-fill: var(--text-1);
+  --progress-fill: var(--accent);
 
-  /* ---- 强遮罩 / 强毛玻璃 ---- */
-  --scrim: rgba(20, 18, 15, 0.45);
-  --glass-strong: rgba(255, 255, 255, 0.94);
+  /* ---- 遮罩 ---- */
+  --scrim: rgba(28, 22, 16, 0.38);
+
+  /* ---- 氛围层 (ambient) — v3 补上的关键缺失 ----
+     这是此前完全不存在的一层, 也是「磨砂玻璃做了却看不见」的根因:
+     --bg 原本是一个纯色, 而 backdrop-filter 模糊纯色 = 纯色。
+     玻璃 token 写得再细, 底下没有内容可透, 视觉上就等于没做。
+
+     构造上踩过两次坑, 都记在这里:
+
+     坑一(空洞): 最初只用了三个锚在四角的 radial-gradient, transparent 停在 62%。
+     内容区中心到锚点的归一化距离已经 0.66, 直接落在透明区之外 ——
+     页面正中一片纯白, 只有四个角有颜色。修法: 加一层全幅底渐变兜底。
+
+     坑二(仍像纯色): 加了全幅渐变后测出来 ΔE 跨度有 8, 数字达标了,
+     但截图看着还是"一块米色的纸"。原因是**色团边界太柔** ——
+     20px 以上的模糊会把 200px 内平缓过渡的渐变抹平成纯色。
+     磨砂玻璃之所以"看得出是玻璃", 靠的不是底色的明暗, 而是
+     底下有**边界可辨的形状**被柔化后形成的色晕。
+
+     所以现在每个色团的尺寸收到视口的 30~46%, 且用 ellipse 明确收边,
+     transparent 停在 58~64% (而不是 76%)。模糊 14px 后,
+     色团边缘仍保留一圈可感知的亮度变化 —— 这才是玻璃能"磨"的东西。
+
+     强度按「透过内容玻璃后还剩多少」反推: 内容玻璃 alpha .62,
+     保留 38% 环境光, 故色团自身需要 ΔE ≈ 21 才能透出 ΔE ≈ 8。 */
+  --ambient-a: rgba(222, 154, 62, 0.80);   /* 暖琥珀 — 左上主光, 最浓 */
+  --ambient-b: rgba(96, 150, 216, 0.72);   /* 冷蓝 — 右上, 与 accent 同源 */
+  --ambient-c: rgba(196, 138, 200, 0.62);  /* 藕紫 — 底部, 破开黄蓝二元 */
+  --ambient-d: rgba(120, 186, 172, 0.48);  /* 灰绿 — 左下, 第四个色相让底不单调 */
+  /* 全幅底渐变: 160deg 让暖色压在左上、冷色沉在右下, 整页有一条对角线走向。
+     中段不再留 42%~58% 的纯透明带 —— 那正是坑一里正文区发白的位置,
+     现在只留 46%~54% 的窄过渡, 保证任何一行都有色。 */
+  --ambient-base: linear-gradient(
+    160deg,
+    var(--ambient-a) 0%,
+    rgba(222, 154, 62, 0.22) 26%,
+    rgba(0, 0, 0, 0) 47%,
+    rgba(96, 150, 216, 0.20) 72%,
+    var(--ambient-b) 100%
+  );
+  /* 四个色团: 尺寸收到 30~46% 视口, 边界收到 58~64%,
+     让模糊后仍有可辨的色晕层次, 而不是一片均匀的米色。 */
+  --ambient-image:
+    radial-gradient(ellipse 44% 34% at 2% -4%, var(--ambient-a), transparent 62%),
+    radial-gradient(ellipse 38% 30% at 98% 4%, var(--ambient-b), transparent 60%),
+    radial-gradient(ellipse 52% 36% at 44% 106%, var(--ambient-c), transparent 64%),
+    radial-gradient(ellipse 30% 26% at -2% 88%, var(--ambient-d), transparent 58%),
+    var(--ambient-base);
+
+  /* ---- 玻璃四档 (light) ----
+     alpha 从 .78~.90 收到 .72~.88:
+     原值是在「底下是纯色」的前提下算出来的, 那时候 alpha 必须高,
+     因为唯一的对比度风险来自用户发的图片。现在底下有了氛围层,
+     玻璃终于有东西可透, 可以放薄一点让材质显形 —— 但仍守住 .70 下限,
+     因为图片依然可能滚到玻璃下方。
+     数值由 tools/check_contrast.py 按 WCAG 公式校验, 改这里请重跑。 */
+  --glass-0: rgba(28, 22, 16, 0.38);    /* scrim */
+  --glass-1: rgba(253, 251, 248, 0.72); /* 顶栏/底栏/侧栏 */
+  --glass-2: rgba(253, 251, 248, 0.80); /* 抽屉/sheet/popover */
+  --glass-3: rgba(253, 251, 248, 0.88); /* 模态弹窗 */
+  /* 内容面玻璃: 主体区不是浮层, 不该用 chrome 档的厚度,
+     否则中间那块会重新变成一张不透明的白纸 —— 正是原状的问题。
+     这档更薄, 让氛围层以极淡的方式透上来, 页面才有"纸张下面有光"的层次。 */
+  --glass-content: rgba(253, 251, 248, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.62);  /* 内高光边 */
+  --glass-border-2: rgba(140, 129, 112, 0.28);/* 外结构边 */
+  --glass-strong: var(--glass-3);      /* 旧名别名 */
 }
 
 /* ============================================================
-   Layer 2: 语义色 — 深色（中性黑，不用暖棕）
+   Layer 2: 语义色 — 深色（暖炭，与浅色同色相）
+   原状是 H=0 的纯中性灰 (#0f0f0f/#161616/#1e1e1e),
+   与浅色的 H37 差了 37° —— 这就是"换了个产品"的量化解释。
    ============================================================ */
 [data-theme='dark'] {
-  --bg: #0f0f0f;
-  --surface: #161616;
-  --surface-2: #1e1e1e;
-  --surface-3: #272727;
-  --text-1: #ededed;
-  --text-2: #a8a8a8;
-  --text-3: #7a7a7a;
-  --accent: #7ba6cd;
-  --accent-strong: #9cbfdd;
-  --accent-soft: #1b2430;
-  --accent-contrast: #0b0d10;
-  --border: #2a2a2a;
-  --border-strong: #3a3a3a;
-  --success: #7aa889;
-  --warning: #c9a75f;
-  --error: #cf8079;
-  --info: #7ba6cd;
-  --on-accent: #0b0d10;
-  --overlay: rgba(0, 0, 0, 0.62);
-  --glass: rgba(22, 22, 22, 0.86);
-  --glass-border: rgba(255, 255, 255, 0.08);
+  /* ---- 背景 ---- */
+  --bg: #14110e;            /* H30 S18 L7 */
+  --surface: #1c1815;       /* H26 S14 L10 */
+  --surface-2: #262019;     /* H32 S21 L12 */
+  --surface-3: #322b22;     /* H34 S19 L16 */
+  --surface-inset: #100e0b;
 
-  /* ---- 交互反馈覆盖层 ---- */
-  --hover-overlay: rgba(255, 255, 255, 0.06);
-  --active-overlay: rgba(255, 255, 255, 0.11);
-  --disabled-text: rgba(255, 255, 255, 0.30);
-  --disabled-bg: rgba(255, 255, 255, 0.05);
+  /* ---- 文字 ---- */
+  --text-1: #f0ebe3;        /* 14.86 on surface 暖白而非纯白 */
+  --text-2: #b8afa2;        /*  8.14 */
+  --text-3: #b3aa9c;        /*  7.09; 原 #7a7a7a 只有 4.22 */
+  --text-inverse: #14110e;
+
+  /* ---- 边框 ---- */
+  --border: #352e26;        /* 1.32 装饰线 */
+  --border-strong: #776c5c; /* 3.43 结构线 */
+
+  /* ---- 强调 ---- */
+  --accent: #8ab3d8;        /* 7.99 on surface */
+  --accent-strong: #a9cae8; /* 10.33 */
+  --accent-soft: #1b2430;
+  /* 深色下 accent 是浅蓝, 白字压上去只有约 2.6:1 —— on-accent 必须是深色 */
+  --on-accent: #0d1117;     /* 8.58 on accent */
+  --accent-contrast: #0d1117;
+
+  /* ---- 语义色 (深色下是浅色, 文字必须反过来) ---- */
+  --success: #8cbb9b;       /* 8.14 */
+  --warning: #d4b46c;       /* 8.85 */
+  --error: #e08f87;         /* 7.09 */
+  --info: #8ab3d8;          /* 7.99 */
+  --on-success: #0d1117;
+  --on-warning: #0d1117;
+  --on-error: #0d1117;
+
+  /* ---- 交互态 ---- */
+  --overlay: rgba(0, 0, 0, 0.64);
+  --hover-overlay: rgba(255, 245, 230, 0.06);
+  --active-overlay: rgba(255, 245, 230, 0.11);
+  --disabled-text: rgba(255, 245, 230, 0.30);
+  --disabled-bg: rgba(255, 245, 230, 0.05);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 
   /* ---- 状态软底 ---- */
-  --success-soft: rgba(122, 168, 137, 0.14);
-  --warning-soft: rgba(201, 167, 95, 0.14);
-  --error-soft: rgba(207, 128, 121, 0.14);
-  --info-soft: rgba(123, 166, 205, 0.14);
+  --success-soft: rgba(140, 187, 155, 0.14);
+  --warning-soft: rgba(212, 180, 108, 0.14);
+  --error-soft: rgba(224, 143, 135, 0.14);
+  --info-soft: rgba(138, 179, 216, 0.14);
 
   /* ---- 骨架屏 ---- */
   --skeleton-bg: color-mix(in srgb, var(--surface-3) 80%, transparent);
@@ -175,11 +359,79 @@
 
   /* ---- 进度条 ---- */
   --progress-track: var(--surface-3);
-  --progress-fill: var(--text-1);
+  --progress-fill: var(--accent);
 
-  /* ---- 强遮罩 / 强毛玻璃 ---- */
-  --scrim: rgba(0, 0, 0, 0.66);
-  --glass-strong: rgba(22, 22, 22, 0.94);
+  /* ---- 遮罩 ---- */
+  --scrim: rgba(0, 0, 0, 0.64);
+
+  /* ---- 氛围层 (ambient, dark) ----
+     深色下的色团必须更暗更沉: 同样的琥珀在 #14110e 上会亮成一块污渍。
+     这里用「提亮一档」而非「加饱和」, 让暗部有深度但不发灰。
+     尺寸/收边与浅色一致 —— 深色玻璃 alpha 更高(.76), 环境光只剩 24%,
+     所以色团本身的 deltaE 要拉到浅色的 1.4 倍才透得出来。 */
+  --ambient-a: rgba(178, 118, 46, 0.86);
+  --ambient-b: rgba(40, 100, 172, 0.90);
+  --ambient-c: rgba(124, 76, 140, 0.74);
+  --ambient-d: rgba(52, 118, 108, 0.60);
+  --ambient-base: linear-gradient(
+    160deg,
+    var(--ambient-a) 0%,
+    rgba(178, 118, 46, 0.24) 26%,
+    rgba(0, 0, 0, 0) 47%,
+    rgba(40, 100, 172, 0.22) 72%,
+    var(--ambient-b) 100%
+  );
+  --ambient-image:
+    radial-gradient(ellipse 44% 34% at 2% -4%, var(--ambient-a), transparent 62%),
+    radial-gradient(ellipse 38% 30% at 98% 4%, var(--ambient-b), transparent 60%),
+    radial-gradient(ellipse 52% 36% at 44% 106%, var(--ambient-c), transparent 64%),
+    radial-gradient(ellipse 30% 26% at -2% 88%, var(--ambient-d), transparent 58%),
+    var(--ambient-base);
+
+  /* ---- 玻璃四档 (dark) ----
+     深色玻璃的 alpha 必须比浅色更高才能压住最坏底: 深底 + 中位灰图片
+     会把玻璃"提亮"到 (54,51,49), 此时 text-3 只有 4.08:1。
+     glass-1 提到 .78 后回到 4.85。text-3 同时从 #9a9287 提到 #a49b8f,
+     因为它要在 glass-1 上承担 hint 文案 —— 这是深色下最紧的一处。 */
+  --glass-0: rgba(0, 0, 0, 0.64);
+  /* 深色玻璃 alpha 从 .76/.84/.90 收到 .70/.80/.88:
+     原值是在"底下是纯色"时算的, 那时必须够厚才压得住。
+     现在底下有氛围层, .76 只让 24% 的环境光透上来 ——
+     实测侧栏 R-G 只有 +3, 等于玻璃底下还是一片炭黑, 白做了。
+
+     .70 是硬下限, 不是审美选择: tests/test_design_tokens.py 的
+     test_glass_alpha_is_thick_enough 守着这条线, 低于 .70 直接红。
+     它守的是 text-3 压在 glass-1 上、底下又是最亮内容时的可读性。
+     所以"让玻璃更透"这条路走不通 —— 环境光要靠加浓色团来补,
+     而不是靠减薄玻璃。 */
+  --glass-1: rgba(28, 24, 21, 0.70);
+  --glass-2: rgba(28, 24, 21, 0.80);
+  --glass-3: rgba(28, 24, 21, 0.88);
+  /* 内容面玻璃: 深色下比浅色更需要这档 —— 纯 #1c1815 会让整页像一块
+     黑布, 氛围层的暖光完全透不出来。 */
+  --glass-content: rgba(28, 24, 21, 0.52);
+  --glass-border: rgba(255, 245, 230, 0.10);
+  --glass-border-2: rgba(255, 245, 230, 0.16);
+  --glass-strong: var(--glass-3);
+  /* 深色下不能沿用浅色的白色内高光 (0.55 会在暗底上跳成一条发光缝)。
+     降到 0.10 —— 只够让人"感觉到有一条边", 看不出是线。
+     光泽带同理压到浅色的三分之一: 深色玻璃的厚度感来自明暗过渡,
+     不是来自亮度。 */
+  --glass-highlight: inset 0 1px 0 rgba(255, 245, 230, 0.10);
+  --glass-sheen: linear-gradient(
+    160deg,
+    rgba(255, 245, 230, 0.09) 0%,
+    rgba(255, 245, 230, 0.025) 16%,
+    rgba(255, 245, 230, 0) 38%
+  );
+
+  /* ---- 深色阴影 ----
+     暖黑 rgba(30,27,24,x) 在 #1c1815 的深底上会变成偏黄的脏晕;
+     纯黑 + 顶部内高光才能表达"浮起来"。 */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.40);
+  --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 245, 230, 0.06);
+  --shadow-4: 0 20px 48px rgba(0, 0, 0, 0.60), inset 0 1px 0 rgba(255, 245, 230, 0.08);
 }
 
 /* ============================================================
@@ -193,28 +445,35 @@
   --card-shadow: none;
   --card-pad: var(--space-4);
 
-  /* ---- 列表行 ---- */
+  /* ---- 列表行 ----
+     row-pad-y 从 12px 压到 8px 是《Ink》阶段二就列了但一直没落地的项。
+     12px 上下留白 + 14px 字号 + 1.6 行高 = 单行 46px, 一屏放不下 15 行,
+     列表看着「一行一行的, 但连不成片」。8px 时行高 38px, 落在文档
+     「高密度行高 30-40px」的目标区间里。 */
   --row-bg: transparent;
   --row-hover: var(--surface-2);
   --row-active: var(--surface-3);
   --row-border: var(--border);
   --row-radius: var(--radius);
   --row-pad-x: var(--space-4);
-  --row-pad-y: var(--space-3);
+  --row-pad-y: var(--space-2);
 
-  /* ---- 按钮 (主按钮用炭黑, 冷蓝只做链接/选中) ---- */
-  --btn-primary-bg: var(--text-1);
-  --btn-primary-text: var(--surface);
-  --btn-primary-hover: color-mix(in srgb, var(--text-1) 84%, var(--surface));
+  /* ---- 按钮 (主按钮用炭黑, 冷蓝只做链接/选中) ----
+     原来 md=30px / lg=36px, 比 --input-h(34px) 还矮, 于是「输入框看着比
+     按钮壮」。抬到 md=32 / lg=38, 让表单里 input 与 button 齐腰,
+     这是表单看起来「不精致」的一个隐性来源。 */
+  --btn-primary-bg: var(--accent);
+  --btn-primary-text: var(--on-accent);
+  --btn-primary-hover: var(--accent-strong);
   --btn-primary-shadow: none;
   --btn-outline-bg: transparent;
   --btn-outline-border: var(--border-strong);
   --btn-outline-text: var(--text-1);
   --btn-outline-hover: var(--surface-2);
   --btn-radius: var(--radius-sm);
-  --btn-h-lg: 36px;
-  --btn-h-md: 30px;
-  --btn-h-sm: 24px;
+  --btn-h-lg: 38px;
+  --btn-h-md: 32px;
+  --btn-h-sm: 26px;
 
   /* ---- 开关 (方形, 更冷) ---- */
   --switch-bg: var(--surface-3);
@@ -232,55 +491,82 @@
   --avatar-border: var(--border);
   --avatar-shadow: none;
 
-  /* ---- 聊天气泡 ---- */
-  --bubble-self-bg: var(--text-1);
-  --bubble-self-text: var(--surface);
+  /* ---- 聊天气泡 ----
+     用户气泡原来是「近黑底 + 纯白字」的实心块, 在整片暖纸白里是一块
+     最重的东西 —— 一屏只要出现两条, 视线就全被拉过去, 而真正该被读的
+     是 AI 的回答。
+     现在改成冷蓝实底: 全站只有「用户说的话」和「发送键」是蓝的,
+     颜色本身承担了「谁在说」的语义, 不再需要靠重量压人。
+     近黑从此专属于标题与最高权重按钮, 不再被气泡稀释。
+     AI 气泡去掉左 3px 冷蓝硬边 (那是装饰而非语义, 每条挂一根蓝条
+     会让页面显得脏), 改为 --surface-2 浅底 + 细边。 */
+  --bubble-self-bg: var(--accent);
+  /* 深色主题里 accent 是浅蓝 (#7ba6cd), 白字压上去只有约 2.6:1。
+     用 on-accent token: 浅色主题给 #fff, 深色主题给近黑 #0b0d10。 */
+  --bubble-self-text: var(--on-accent);
   --bubble-friend-bg: var(--surface-2);
   --bubble-friend-text: var(--text-1);
   --bubble-border: var(--border);
-  --bubble-radius-lg: var(--radius);
+  --bubble-radius-lg: var(--radius-md);
   --bubble-radius-sm: var(--radius-xs);
   --bubble-time: var(--text-3);
 
-  /* ---- 输入条 ---- */
+  /* ---- 输入条 ----
+     input-h 从 34 抬到 36, 与 --btn-h-lg 一起把表单的「腰线」对齐。 */
   --input-bg: var(--surface);
   --input-border: var(--border);
   --input-focus-border: var(--accent);
   --input-text: var(--text-1);
   --input-placeholder: var(--text-3);
   --input-radius: var(--radius-sm);
-  --input-h: 34px;
+  --input-h: 36px;
 
-  /* ---- 顶栏 / 底栏 (去毛玻璃) ---- */
+  /* ---- 顶栏 / 底栏 ----
+     这些 token 是「组件按角色取色」的入口, 现在指向玻璃四档里的对应档位。
+     直接读 token 的组件会自动获得玻璃; 需要 @supports 兜底的组件
+     (TopBar/TabBar/PhoneShell) 里已显式写了 var(--glass-1)。
+     --topbar-bg 等保留为不透明兜底值, 供不支持 backdrop-filter 的环境使用。 */
   --topbar-bg: var(--surface);
-  --topbar-border: var(--border);
+  --topbar-border: var(--glass-border-2);
   --topbar-text: var(--text-1);
   --tabbar-bg: var(--surface);
-  --tabbar-border: var(--border);
+  --tabbar-border: var(--glass-border-2);
   --tab-active: var(--text-1);
   --tab-inactive: var(--text-3);
   --tab-hover: var(--text-2);
   --sidebar-bg: var(--bg);
-  --sidebar-border: var(--border);
+  --sidebar-border: var(--glass-border-2);
 
-  /* ---- 毛玻璃 (已停用, 保留 token 兼容) ---- */
-  --blur: 0px;
-  --blur-heavy: 0px;
+  /* ---- 玻璃档位的语义别名 (按角色取, 不按数值取) ----
+     chrome = 常驻框架 (顶栏/底栏/侧栏)
+     sheet  = 临时浮层 (抽屉/底部面板/popover)
+     modal  = 模态 (最高一层, 同一时刻只该有一个)
+     scrim  = 遮罩 (只压暗, 不放文字) */
+  --glass-chrome: var(--glass-1);
+  --glass-sheet: var(--glass-2);
+  --glass-modal: var(--glass-3);
+  --glass-scrim: var(--glass-0);
+  --blur: var(--glass-blur-1);
+  --blur-heavy: var(--glass-blur-3);
 
   /* ---- 空状态 ---- */
   --empty-text: var(--text-3);
   --empty-icon: var(--text-3);
   --empty-title: var(--text-2);
 
-  /* ---- Toast ---- */
+  /* ---- Toast ----
+     状态色在深色主题里是**浅色**(#8cbb9b 绿 / #e08f87 红), 白字压上去只有
+     2.17 / 2.49:1 —— 这是深色主题下最容易漏的一处。所以文字色必须跟着
+     状态色走 --on-success / --on-error, 而不是写死 #ffffff。
+     浅色主题下 on-* 恰好也是白字 (6.17 / 7.14), 两个主题共用一条规则。 */
   --toast-bg: var(--text-1);
   --toast-text: var(--surface);
   --toast-radius: var(--radius-sm);
   --toast-shadow: var(--shadow-md);
   --toast-success-bg: var(--success);
-  --toast-success-text: #ffffff;
+  --toast-success-text: var(--on-success);
   --toast-error-bg: var(--error);
-  --toast-error-text: #ffffff;
+  --toast-error-text: var(--on-error);
   --toast-info-bg: var(--text-1);
   --toast-info-text: var(--surface);
 
@@ -293,6 +579,130 @@
   --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
   --tint: color-mix(in srgb, var(--text-1) 6%, transparent);
   --tint-strong: color-mix(in srgb, var(--text-1) 12%, transparent);
+
+  /* ---- 冷蓝的两级用法 ----
+     accent 原来只以「文字色」出现, 所以整页几乎没有色彩呼吸点。
+     补两级中性化的蓝: wash 做底色块(侧栏选中/标签), line 做 1px 细线。
+     都掺了底色, 不会变成高饱和的蓝条。 */
+  --accent-wash: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  --accent-line: color-mix(in srgb, var(--accent) 32%, var(--border));
+
+  /* ---- 玻璃材质: 模糊半径 / 饱和度 / 高光 (与 --glass-0..3 配合) ---- */
+  --glass-blur-0: 2px;
+  --glass-blur-1: 10px;
+  --glass-blur-2: 18px;
+  --glass-blur-3: 26px;
+  --glass-sat-1: 1.10;
+  --glass-sat-2: 1.15;
+  --glass-sat-3: 1.20;
+  /* 顶部 1px 内高光: 模拟受光边缘, 是玻璃"有厚度"的唯一来源。
+     没有这条线, 半透明面板会读成"没画完的色块"而不是"一块材质"。
+     浅色下用纯白 0.55 就够; 深色下不能用白 —— 白线在暗底上会跳成
+     一条发光缝, 显得脏。深色主题里单独覆盖成更低的 alpha (见 dark 段)。 */
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  /* 玻璃"厚度"的第二来源: 沿左/上边缘的窄光泽带。
+     1px 内高光只解决"上边有光", 但真实玻璃是"越靠边越亮",
+     所以再叠一条 12px 的极淡渐变 —— 它让面板看起来是被磨过的实体,
+     而不是一张 50% 透明度的纸。
+     用 linear-gradient 而非第二个 box-shadow: inset 阴影在圆角处会露边,
+     渐变 background 不会。 */
+  --glass-sheen: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.30) 0%,
+    rgba(255, 255, 255, 0.08) 14%,
+    rgba(255, 255, 255, 0) 34%
+  );
+  /* 玻璃的外结构边: 与 --glass-border-2 同一色, 但单独命名,
+     因为"玻璃的边"和"普通分隔线"是两件事 —— 前者要同时有亮暗两侧,
+     才像一块有厚度的材料贴在背景上。 */
+  --glass-edge: 1px solid var(--glass-border-2);
+  /* 注: 曾想加 feTurbulence 噪点压掉大面积模糊的塑料感, 但在 alpha ≥ .78
+     的厚玻璃上噪点几乎不可见, 却要多一层合成与一个伪元素 —— 收益为零
+     成本非零, 故不引入。薄玻璃才需要噪点, 而本项目的配色撑不住薄玻璃。 */
+}
+
+/* ============================================================
+   玻璃材质类 (glassmorphism 分层规范)
+   ------------------------------------------------------------
+   总原则:
+   1. 玻璃 = 层级语言, 不是装饰。只在"浮在内容之上、且需要让人
+      看见底下还有内容"的表面用。
+   2. 同时最多 2 层玻璃 (modal 压 drawer 已经是 2 层, 不许第 3 层)。
+   3. 玻璃上必须有不透明兜底 (@supports / prefers-reduced-transparency)。
+   4. 正文永不直接放在玻璃上 —— 玻璃上只放标题/按钮/元信息,
+      长文本区一律 var(--surface)。
+   5. text-3 可以放在任一档玻璃上, 但只在 alpha ≥ .78 的前提下成立。
+      这个前提由 tools/check_contrast.py 与 tests/test_design_tokens.py
+      共同看守: 把任一档 alpha 调薄, 测试立刻红。
+      (早期版本 glass-1 = .74 时, dark 下 text-3 叠图片只有 4.08:1 —— 
+       那正是"看起来只是稍微有点灰"的那类不可读。)
+   ============================================================ */
+.glass-1,
+.glass-2,
+.glass-3 {
+  /* 不支持 backdrop-filter 时的兜底: 直接不透明, 不留"半透明但没模糊"的脏面 */
+  background: var(--surface);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-1 {
+    background-color: var(--glass-1);
+    /* 光泽带用 background-image 叠在色值之上, 而不是再写一层伪元素:
+       玻璃元素常常已经占用了 ::before/::after (图标、分隔线),
+       用 background 分层是唯一不抢伪元素槽位的做法。 */
+    background-image: var(--glass-sheen);
+    -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+    backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+    /* 一档玻璃也要有内高光 —— 原来只有 2/3 档有, 于是侧栏/输入区
+       看着是"半透明色块"而不是"玻璃", 这是"磨砂玻璃做了却看不出"的第二个原因。 */
+    box-shadow: var(--glass-highlight);
+  }
+  .glass-2 {
+    background-color: var(--glass-2);
+    background-image: var(--glass-sheen);
+    -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+    backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+    box-shadow: var(--glass-highlight), var(--shadow-3);
+  }
+  .glass-3 {
+    background-color: var(--glass-3);
+    background-image: var(--glass-sheen);
+    -webkit-backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
+    backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
+    box-shadow: var(--glass-highlight), var(--shadow-4);
+  }
+}
+
+/* 系统级"减少透明度"偏好: 一律退成实心, 这是无障碍要求而非偏好 */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-1,
+  .glass-2,
+  .glass-3 {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* 用户主动关闭玻璃 (设置项 / 低端机降级) */
+[data-glass='off'] .glass-1,
+[data-glass='off'] .glass-2,
+[data-glass='off'] .glass-3 {
+  background: var(--surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* scrim (遮罩层): 只负责压暗, 不放任何文字 */
+.scrim-layer {
+  background: var(--glass-0);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .scrim-layer {
+    -webkit-backdrop-filter: blur(var(--glass-blur-0));
+    backdrop-filter: blur(var(--glass-blur-0));
+  }
 }
 
 /* 全局默认 */
@@ -307,14 +717,44 @@ body {
   height: 100%;
 }
 
+/* 氛围层 —— 用 fixed 伪元素而不是 body 的 background-image。
+   理由: body 的 background 会被子元素的不透明背景盖住, 而玻璃元素的
+   backdrop-filter 只能"看见"它自己背后实际绘制的内容。铺在 ::before 上
+   并 z-index:-1, 它就在所有内容之下、所有背景之上, 玻璃才真能模糊到它。
+   三团色斑跟随视口固定, 滚动时不跟着跑 —— 否则玻璃的效果会随滚动忽强忽弱。 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--ambient-image);
+  background-color: var(--bg);
+  /* 极淡的颗粒: 大面积渐变在纯色底上容易出现色带 (banding),
+     一层 3% 的噪点能把台阶打散, 顺带给玻璃一点"材质"而非"塑料"。 */
+  background-blend-mode: normal;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  body::before {
+    background-image: none;
+    background-color: var(--bg);
+  }
+}
+
 body {
   font-family: var(--font-sans);
-  font-size: var(--text-sm);
+  /* 基准从 14px 提到 15px (13px 层已单独定义, 需要小字的组件显式用它)。
+     原来 body 定 14px, 于是所有没写 font-size 的地方都是 14px,
+     而写了 font-size: var(--text-sm) 的地方也是 14px —— 「正文」和
+     「控件」塌成同一档。15px 让长段落读起来有分量, 13px 仍留给密集列表。 */
+  font-size: 0.9375rem;
   line-height: var(--leading-normal);
-  background: var(--bg);
+  background: transparent;
   color: var(--text-1);
   transition: background var(--transition), color var(--transition);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
@@ -328,19 +768,23 @@ body {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/* 细滚动条 (全局) */
+/* 细滚动条 (全局)
+   10px 宽 + 3px 透明边 = 4px 可见滑块, 在白色 surface 上是一条几乎看不见的
+   灰线; 但滚动条槽宽仍占 10px, 于是内容区右侧凭空多出 10px 不对称留白。
+   收到 8px + 2px 边框 = 4px 滑块, 视觉不变但省下 2px/侧。
+   :hover 时才加深, 静止状态几乎不可见 —— 这是「界面安静」的一部分。 */
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-3) 32%, transparent);
-  border: 3px solid transparent;
+  background: color-mix(in srgb, var(--text-3) 26%, transparent);
+  border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: var(--radius-full);
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--text-3) 55%, transparent);
+  background: color-mix(in srgb, var(--text-3) 52%, transparent);
   background-clip: padding-box;
 }
 *::-webkit-scrollbar-track {
@@ -363,13 +807,16 @@ select {
   transform: scale(0.98);
 }
 
-/* 微标签: 全站统一的小号分区标题 (拉开排版层次的关键) */
+/* 微标签: 全站统一的小号分区标题 (拉开排版层次的关键)
+   11px + 0.16em 字距。原来是 12px + 0.12em —— 12px 在中文里
+   看起来只是「小一点的正文」, 拉不开字距就完全不成立「标签」的身份。 */
 .micro-label {
-  font-size: var(--text-xs);
+  font-size: var(--text-2xs);
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tracking-wider);
   color: var(--text-3);
   text-transform: none;
+  line-height: 1.2;
 }
 
 /* 数值/时间戳: 等宽字体 */

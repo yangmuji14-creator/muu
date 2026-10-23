@@ -788,8 +788,11 @@
       <aside class="conv-panel">
         <div class="panel-head">
           <span class="panel-title">会话</span>
+          {#if conversations.length > 0}
+            <span class="panel-count">{conversations.length}</span>
+          {/if}
           <button class="add-btn" onclick={() => newEmptyConversation()} title="新建会话">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
         <div class="conv-list">
@@ -809,7 +812,7 @@
             </button>
           {/each}
           {#if conversations.length === 0}
-            <div class="conv-empty">暂无会话</div>
+            <div class="conv-empty">按 + 新建，或从下方人设开始。</div>
           {/if}
         </div>
 
@@ -843,11 +846,12 @@
             <div class="welcome-mark" aria-hidden="true">
               <span class="brand-dot"></span>
             </div>
+            <span class="welcome-kicker">{activeConv ? '继续对话' : '新的开始'}</span>
             <h2 class="welcome-title">{activeConv ? displayName(activeConv) : '聊天'}</h2>
             <p class="welcome-desc">
               {#if activeConv}
                 和 {displayName(activeConv)} 打个招呼吧。可以发文字、图片或语音，也可以从左侧选择人设开启新对话。              {:else}
-                选择一个会话或从"人设"开始对话。              {/if}
+                选择一个会话，或者挑一个人设开始。所有对话都留在这台机器上。              {/if}
             </p>
             {#if personas.length > 0 && !activeConv}
               <div class="welcome-personas">
@@ -858,7 +862,10 @@
                     {:else}
                       <span class="chip-avatar chip-fallback">{initialOf(p.name)}</span>
                     {/if}
-                    <span>{p.name}</span>
+                    <span class="chip-body">
+                      <span class="chip-name">{p.name}</span>
+                      <span class="chip-go">开始对话</span>
+                    </span>
                   </button>
                 {/each}
               </div>
@@ -878,14 +885,9 @@
                 <div class="bubble-col">
                   {#each imgBlocks as b}
                     <div class="image-bubble">
-                      <img
-                        class="chat-image"
-                        src={b.url}
-                        alt="图片"
-                        loading="lazy"
-                        onclick={() => (previewImage = b.url)}
-                        title="点击查看大图"
-                      />
+                      <button class="chat-image-btn" type="button" onclick={() => (previewImage = b.url)} aria-label="查看大图">
+                        <img class="chat-image" src={b.url} alt="图片" loading="lazy" />
+                      </button>
                     </div>
                   {/each}
                   <span class="bubble-time">{formatTime(m.timestamp)}</span>
@@ -933,14 +935,9 @@
                   {#if !splitImage}
                     {#each imgBlocks as b}
                       <div class="image-bubble">
-                        <img
-                          class="chat-image"
-                          src={b.url}
-                          alt="图片"
-                          loading="lazy"
-                          onclick={() => (previewImage = b.url)}
-                          title="点击查看大图"
-                        />
+                        <button class="chat-image-btn" type="button" onclick={() => (previewImage = b.url)} aria-label="查看大图">
+                          <img class="chat-image" src={b.url} alt="图片" loading="lazy" />
+                        </button>
                       </div>
                     {/each}
                   {/if}
@@ -1125,8 +1122,20 @@
   {/if}
 
   {#if previewImage}
-    <!-- 全屏图片预览（PawzoChat 式 openImagePreview）：点图查看大图，点任意处关闭 -->
-    <div class="img-preview-overlay" role="dialog" aria-label="图片预览" onclick={() => (previewImage = null)}>
+    <!-- 全屏图片预览（PawzoChat 式 openImagePreview）：点图查看大图，点任意处/按 Esc 关闭 -->
+    <div
+      class="img-preview-overlay"
+      role="dialog"
+      aria-label="图片预览"
+      tabindex="-1"
+      onclick={() => (previewImage = null)}
+      onkeydown={(e) => {
+        if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          previewImage = null;
+        }
+      }}
+    >
       <img class="img-preview-full" src={previewImage} alt="图片预览" />
     </div>
   {/if}
@@ -1138,37 +1147,48 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    /* 透明: 内容面玻璃由 .main-area 承担, 这里再铺一层不透明 --surface
+       会把它整块盖掉, 氛围层就永远透不上来。 */
+    background: transparent;
     position: relative;
     overflow: hidden;
   }
 
   /* 沉浸模式: 消息与输入条居中限宽, 像在读一封信而不是在刷消息流 */
   .chat-page.immersive .msgs {
-    padding-left: max(var(--space-4), calc((100% - 680px) / 2));
-    padding-right: max(var(--space-4), calc((100% - 680px) / 2));
+    padding-left: max(var(--space-4), calc((100% - var(--chat-msg-maxw)) / 2));
+    padding-right: max(var(--space-4), calc((100% - var(--chat-msg-maxw)) / 2));
   }
+  /* 沉浸模式下 .composer 自己已经有 max-width + margin:auto 居中,
+     不能再叠一层 calc((100% - 680px)/2) 的左右 padding ——
+     两层限宽相乘会把输入框压成一条 26px 的窄缝(实测 immersive 桌面端)。 */
   .chat-page.immersive .composer {
-    padding-left: max(var(--space-4), calc((100% - 680px) / 2));
-    padding-right: max(var(--space-4), calc((100% - 680px) / 2));
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
   }
 
+  /* 移动端聊天页原本是「顶栏 + 48px 聊天头」两条同色白条纵向叠着, 合计 92px,
+     读起来像把同一个页头印了两遍。改成二级上下文条:
+     高度收到 44px、标题左对齐降到 13px/500 灰字、底边用更轻的 --border,
+     与 TopBar(11px 品牌 + --border-strong)拉开一级, 层级才成立。 */
   .mobile-head {
     flex: none;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    height: 48px;
-    padding: 0 var(--space-3);
-    background: var(--topbar-bg);
-    border-bottom: 1px solid var(--topbar-border);
+    gap: var(--space-1);
+    height: 44px;
+    padding: 0 var(--space-2) 0 var(--space-1);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
   }
   .head-title {
     flex: 1;
-    font-weight: 600;
-    font-size: var(--text-base);
-    color: var(--text-1);
-    text-align: center;
+    min-width: 0;
+    font-weight: 500;
+    font-size: var(--text-13);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-2);
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1203,41 +1223,77 @@
     position: relative;
   }
 
-  /* ---- 会话侧栏 (桌面) ---- */
+  /* ---- 会话侧栏 (桌面) ----
+     原 240px 里只有 12px padding + 一个 11px 标题, 整个栏是空的。
+     加宽到 260px 并给标题加计数, 让「会话」这一栏自己也有信息:
+     标题行左边是 11px 微标签, 右边是等宽数字的条数, 中线以下才是列表。
+     列表为空时给一个左对齐的引导块而不是一句“暂无会话”, 与其它页面统一。 */
   .conv-panel {
     flex: none;
-    width: 240px;
+    width: var(--conv-w);
     border-right: 1px solid var(--border);
-    background: var(--surface);
+    /* 会话栏是「浮在氛围层之上」的一列 chrome, 用玻璃而非纯色,
+       两列才有同一张纸上的前后关系, 而不是被一条硬线拼起来的两块。 */
+    background: var(--bg);
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: var(--space-3);
+    padding: var(--space-3) var(--space-2);
     gap: var(--space-2);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .conv-panel {
+      background-color: var(--glass-1);
+      background-image: var(--glass-sheen);
+      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+      /* 与 main-area 之间那条边界: 玻璃压玻璃时, 单靠 border-right
+         会显得是"两块纸拼起来"; 加一条内高光让会话栏读作浮在上层的那一块。 */
+      box-shadow: var(--glass-highlight);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .conv-panel {
+      background: var(--bg);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
   .panel-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    padding: 0 var(--space-2) var(--space-2);
+    margin-bottom: var(--space-1);
+    border-bottom: 1px solid var(--border);
   }
   .panel-title {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     font-weight: 500;
-    letter-spacing: 0.12em;
+    letter-spacing: var(--tracking-wider);
     color: var(--text-3);
+    text-transform: uppercase;
+    flex: 1;
+  }
+  .panel-count {
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    margin-right: var(--space-2);
   }
   .add-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-xs);
-    background: transparent;
+    background: var(--surface);
     color: var(--text-2);
     cursor: pointer;
-    transition: background var(--transition), color var(--transition);
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
   }
   .add-btn:hover {
     background: var(--row-hover);
@@ -1250,7 +1306,7 @@
   .conv-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--optical-2);
     overflow-y: auto;
     min-height: 0;
     flex: 1;
@@ -1260,51 +1316,59 @@
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    padding: var(--space-2) var(--space-2);
+    padding: var(--space-2);
     border: none;
-    border-radius: var(--radius);
+    border-left: 2px solid transparent;
+    border-radius: 0;
     background: transparent;
     color: var(--text-1);
     text-align: left;
     cursor: pointer;
-    transition: background var(--transition);
+    transition: background var(--transition), border-color var(--transition);
     position: relative;
   }
   .conv-row:hover {
     background: var(--row-hover);
   }
   .conv-row.is-active {
-    background: var(--tint);
+    background: var(--surface);
+    border-left-color: var(--accent);
   }
   .conv-dot {
     flex: none;
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     border-radius: var(--radius-xs);
     background: var(--surface-3);
     color: var(--text-2);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    font-size: var(--text-base);
+    font-weight: 500;
+    font-size: var(--text-13);
+  }
+  .conv-row.is-active .conv-dot {
+    background: var(--accent-wash);
+    color: var(--accent);
   }
   .conv-meta {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    gap: var(--hair);
   }
   .conv-name {
     font-weight: 500;
-    font-size: var(--text-sm);
+    font-size: var(--text-13);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .conv-sub {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-3);
+    letter-spacing: var(--tracking-wide);
   }
   .row-menu {
     display: inline-flex;
@@ -1329,16 +1393,19 @@
   /* 会话行上下拉菜单 */
   .convs-menu {
     position: fixed;
-    z-index: 200;
+    z-index: var(--z-popover);
     min-width: 150px;
     padding: var(--space-1);
     background: var(--surface);
     border: 1px solid var(--card-border);
     border-radius: var(--card-radius);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-3);
     display: flex;
     flex-direction: column;
     animation: convs-pop .14s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .convs-menu { animation: none; }
   }
   @keyframes convs-pop {
     from { opacity: 0; transform: translateY(-4px) scale(.98); }
@@ -1363,10 +1430,13 @@
   .convs-menu-item.danger:hover { background: color-mix(in srgb, var(--error) 12%, transparent); }
   .convs-menu-ico { display: inline-flex; }
   .conv-empty {
-    padding: var(--space-5);
-    text-align: center;
-    font-size: var(--text-sm);
+    padding: var(--space-3) var(--space-2);
+    text-align: left;
+    font-size: var(--text-2xs);
+    line-height: 1.7;
     color: var(--text-3);
+    border-left: 2px solid var(--border-strong);
+    padding-left: var(--space-3);
   }
   .panel-divider {
     border-top: 1px solid var(--border);
@@ -1396,6 +1466,38 @@
     cursor: pointer;
     transition: border-color var(--transition), background var(--transition), transform var(--transition);
   }
+  /* 人设卡: 从「一个小 chip」变成「一行卡片」, 头像 22→28px,
+     名字下方加一行 10px 的动作暗示。整块可点, 目标区域从 ~72x26 提到 ~160x46,
+     空会话页从「没东西可点」变成「一眼看到两个入口」。 */
+  .welcome-chip {
+    width: 100%;
+    padding: var(--space-2);
+    gap: var(--space-3);
+    border-color: var(--border-strong);
+    text-align: left;
+  }
+  .welcome-chip .chip-avatar {
+    width: 28px;
+    height: 28px;
+  }
+  .chip-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hair);
+    min-width: 0;
+  }
+  .welcome-chip .chip-name {
+    font-size: var(--text-13);
+    font-weight: 500;
+    max-width: none;
+  }
+  .chip-go {
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-3);
+    transition: color var(--transition);
+  }
+  .welcome-chip:hover .chip-go { color: var(--accent); }
   .persona-chip:hover,
   .welcome-chip:hover {
     border-color: var(--accent);
@@ -1441,16 +1543,22 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: var(--space-4);
+    padding: var(--space-5) var(--space-4) var(--space-4);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
     -webkit-overflow-scrolling: touch;
   }
-  /* 空会话：让欢迎区在容器中真正居中（比 margin:auto 在滚动容器里更可靠） */
+  /* 空会话：欢迎区靠左上方起笔，而不是死居中。
+     居中会让整块内容随视口宽度漂移，且上下留白各占一半，
+     屏幕看起来「中间有个小岛，四周全是海」。改成 8vh 起笔后，
+     标题、说明、人设卡从左上角读完是一段完整的信息，视线有落点。 */
   .msgs.empty {
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: flex-start;
+    padding-top: clamp(var(--space-6), 9vh, 96px);
+    padding-left: var(--space-5);
+    padding-right: var(--space-5);
   }
   .msgs.empty .scroll-anchor {
     display: none;
@@ -1466,59 +1574,77 @@
     font-size: var(--text-sm);
   }
 
-  /* 欢迎区 */
+  /* 欢迎区 ----
+     原来是一个 360px 宽、全部居中的小方块: 72px 灰底 + 30px 黑方 + 17px 标题,
+     在 1000+px 宽的空白消息区里视觉权重约等于零, 整页看起来像没渲染完。
+     改成左对齐的「开启区」:
+     ① 一个 3px 冷蓝竖条作为页面锚点, 把视线固定在文字起点
+     ② 标题上到 --text-display(28px), 与说明文字形成 2.2 倍的字号落差
+     ③ 人设从「小 chip 一行」改成两列卡片网格, 每张卡带 22px 头像 + 名字 + 
+        「开始对话 →」暗示, 空页面立刻有了可操作的内容块
+     左对齐比居中更稳: 居中的空状态会随着视口宽度漂移, 左对齐的起点与
+     会话栏对齐, 整块界面显得是一个整体而不是浮在中间的一张卡片。 */
   .welcome {
     margin: 0;
     width: 100%;
-    max-width: 360px;
-    text-align: center;
-    padding: var(--space-6);
+    max-width: 460px;
+    align-self: flex-start;
+    text-align: left;
+    padding: var(--space-2) 0 var(--space-2) var(--space-5);
+    border-left: 3px solid var(--accent);
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-3);
   }
   .welcome-mark {
-    width: 72px;
-    height: 72px;
-    border-radius: var(--radius-sm);
-    background: var(--surface-2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: none;
   }
   .brand-dot {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     border-radius: var(--radius-xs);
     background: var(--text-1);
   }
+  .welcome-kicker {
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wider);
+    color: var(--accent);
+    text-transform: uppercase;
+  }
   .welcome-title {
     margin: 0;
-    font-size: var(--text-xl);
-    font-weight: 500;
+    font-size: var(--text-display);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    line-height: 1.1;
     color: var(--text-1);
   }
   .welcome-desc {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-15);
     color: var(--text-2);
-    line-height: var(--leading-normal);
+    line-height: 1.72;
+    max-width: 40ch;
   }
   .welcome-personas {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: var(--space-2);
-    margin-top: var(--space-2);
+    margin-top: var(--space-3);
+    width: 100%;
   }
 
   /* 气泡 */
+  /* 气泡列宽: 阅读行长已经由 --chat-msg-maxw(640px) 的居中列给出,
+     这里再从 78% 收到 92% —— 否则输入列 640px 里气泡只有 499px,
+     右侧总空出一指宽的缝, 看着像没对齐。 */
   .bubble-row {
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
-    max-width: min(var(--chat-msg-maxw), 78%);
+    max-width: min(var(--chat-msg-maxw), 92%);
   }
   .bubble-row.self {
     align-self: flex-end;
@@ -1529,27 +1655,32 @@
   }
   .av {
     flex: none;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--radius-xs);
-    background: var(--accent-soft);
-    color: var(--accent-strong);
+    background: var(--accent-wash);
+    color: var(--accent);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    font-size: var(--text-xs);
+    font-weight: 500;
+    font-size: var(--text-2xs);
+    letter-spacing: 0.02em;
   }
   .bubble-col {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--optical-4);
     min-width: 0;
   }
+  /* 气泡: 从「纯黑底/直角灰盒」改成「有留白节奏的对话块」。
+     用户气泡改成冷蓝实底, 与发送键同一套色 —— 
+     整页只有「我说的话 + 发送键」是蓝色, 一眼能分清谁在说。
+     近黑留给真正的标题与主按钮, 不再被气泡消耗掉。 */
   .bubble {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--bubble-radius-lg);
-    line-height: var(--leading-snug);
+    line-height: 1.62;
     word-break: break-word;
     white-space: pre-wrap;
   }
@@ -1563,16 +1694,15 @@
     color: var(--bubble-friend-text);
     border: 1px solid var(--bubble-border);
     border-bottom-left-radius: var(--bubble-radius-sm);
-    border-left: 3px solid var(--accent);
   }
   .bubble-text {
-    font-size: var(--text-base);
+    font-size: var(--text-15);
   }
   .caret {
     display: inline-block;
     width: 2px;
     height: 1em;
-    margin-left: 2px;
+    margin-left: var(--optical-2);
     vertical-align: text-bottom;
     background: currentColor;
     opacity: 0.7;
@@ -1584,7 +1714,7 @@
   .bubble-time {
     font-size: var(--text-xs);
     color: var(--bubble-time);
-    padding: 0 2px;
+    padding: 0 var(--optical-2);
   }
   .self .bubble-time {
     text-align: right;
@@ -1595,6 +1725,18 @@
   .image-bubble {
     max-width: min(260px, 78%);
   }
+  .chat-image-btn {
+    display: block;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: zoom-in;
+    border-radius: var(--radius-md);
+  }
+  .chat-image-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .chat-image {
     display: block;
     width: auto;
@@ -1603,20 +1745,21 @@
     max-height: 300px;
     border-radius: var(--radius-md);
     box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
-    cursor: zoom-in;
   }
   .src-badge {
     font-size: var(--text-xs);
     color: var(--text-3);
     opacity: 0.75;
-    margin: 2px 4px;
+    margin: var(--optical-2) var(--optical-4);
     user-select: none;
   }
+  /* 图片预览: 全屏黑底是刻意的 —— 看图时界面应该彻底退场,
+     所以这里不用玻璃而用近实心黑, 也不加模糊(模糊会让图片本身变脏)。 */
   .img-preview-overlay {
     position: fixed;
     inset: 0;
-    z-index: 999;
-    background: rgba(0, 0, 0, 0.82);
+    z-index: var(--z-lightbox);
+    background: rgba(0, 0, 0, 0.86);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1633,17 +1776,13 @@
     max-width: 150px;
     border-radius: var(--radius-sm);
   }
-  .voice-player {
-    max-width: 260px;
-    height: 34px;
-  }
   /* 微信风格语音条 */
   .voice-bar {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     height: 40px;
-    padding: 0 14px;
+    padding: 0 var(--optical-14);
     border: none;
     cursor: pointer;
     text-align: left;
@@ -1675,7 +1814,7 @@
     border-left: 2px solid var(--accent);
     border-radius: var(--radius-sm);
     padding: var(--space-2) var(--space-3);
-    margin-bottom: 2px;
+    margin-bottom: var(--optical-2);
   }
   .reasoning summary {
     cursor: pointer;
@@ -1695,11 +1834,35 @@
   .input-area {
     flex: none;
     border-top: 1px solid var(--border);
-    background: var(--surface);
+    /* 玻璃而非 --surface: 输入区横跨整个内容区宽度, 若用不透明底,
+       氛围层会在页面最下方被一条硬边切断 —— 底部渐变(藕紫)全部失效。
+       用 glass-1 让它与侧栏同属一层 chrome, 同时透出下方氛围。 */
+    background: var(--glass-1);
     position: relative;
     padding-bottom: env(safe-area-inset-bottom);
   }
-  /* 配置守卫 banner (模型未配置时显示在输入框上方) */
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .input-area {
+      background-color: var(--glass-1);
+      /* 输入区的光泽带方向要反过来: 它贴在页面底部, 受光面在上沿,
+         所以用 0deg 让亮度集中在上边一条, 而不是 160deg 斜着散开。 */
+      background-image: linear-gradient(
+        0deg,
+        rgba(255, 255, 255, 0) 60%,
+        rgba(255, 255, 255, 0.14) 100%
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      box-shadow: var(--glass-highlight);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .input-area {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }  /* 配置守卫 banner (模型未配置时显示在输入框上方) */
   .config-banner {
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border);
@@ -1745,7 +1908,7 @@
   }
   .debounce-hint {
     align-self: flex-start;
-    padding-left: 2px;
+    padding-left: var(--optical-2);
     color: var(--text-3);
   }
   @keyframes boot-pulse {
@@ -1791,80 +1954,30 @@
     aspect-ratio: 1;
     object-fit: contain;
   }
-  .image-preview-wrap {
-    position: relative;
-    max-width: 200px;
-    margin: 0 auto;
-  }
-  .image-preview {
-    width: 100%;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .remove {
-    position: absolute;
-    top: var(--space-1);
-    right: var(--space-1);
-    background: var(--overlay);
-    color: #fff;
-  }
-  .caption-row {
-    display: flex;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
-  }
-  .caption-input {
-    flex: 1;
-    height: 38px;
-    padding: 0 var(--space-3);
-    border: 1px solid var(--input-border);
-    border-radius: var(--input-radius);
-    background: var(--input-bg);
-    color: var(--input-text);
-    font-size: var(--text-sm);
-  }
-  .caption-input:focus {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .send-small {
-    height: 38px;
-    padding: 0 var(--space-4);
-    border: none;
-    border-radius: var(--input-radius);
-    background: var(--accent);
-    color: var(--on-accent);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background var(--transition);
-  }
-  .send-small:hover:not(:disabled) {
-    background: var(--accent-strong);
-  }
-  .send-small:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
 
   .composer {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    /* 与消息列同宽(640px), 输入框右边缘和气泡右边缘对齐 —— 
+       原来 +200px 的宽限让输入条比对话宽出一截, 视线落点对不上。 */
+    max-width: var(--chat-msg-maxw);
+    margin: 0 auto;
+    width: 100%;
   }
   .act-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 32px;
+    height: 32px;
     flex: none;
+    margin-bottom: var(--optical-4);
     border: none;
     border-radius: var(--radius-xs);
     background: transparent;
-    color: var(--text-2);
+    color: var(--text-3);
     cursor: pointer;
     transition: background var(--transition), color var(--transition);
   }
@@ -1876,26 +1989,37 @@
     opacity: 0.45;
     pointer-events: none;
   }
+  /* 输入框: 34px 扁条 -> 40px 高度 + 微内阴影, 让输入区成一个「可写入的凹槽」,
+     而不是页面上又一根 1px 细线的装饰。focus 时边框转冷蓝并带 2px 环,
+     是整页最明确的「你现在在这里」提示。 */
   .text-input {
     flex: 1;
     min-width: 0;
     height: 40px;
-    padding: 0 var(--space-4);
+    padding: 0 var(--space-3);
     border: 1px solid var(--input-border);
     border-radius: var(--input-radius);
-    background: var(--input-bg);
+    background: var(--surface-2);
     color: var(--input-text);
-    font-size: var(--text-base);
-    transition: border-color var(--transition), box-shadow var(--transition);
+    font-size: var(--text-15);
+    box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text-1) 5%, transparent);
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+  }
+  .text-input:hover {
+    border-color: var(--border-strong);
   }
   .text-input:focus {
     outline: none;
+    background: var(--surface);
     border-color: var(--input-focus-border);
     box-shadow: var(--focus-ring);
   }
   .text-input::placeholder {
     color: var(--input-placeholder);
   }
+  /* 发送键: 可发送时用冷蓝实底, 而不是近黑。
+     近黑是「破坏性/最高权重」的颜色, 用在发送这种高频动作上过重;
+     冷蓝是全站唯一的功能色, 留给唯一的主动作, 页面才有色彩呼吸点。 */
   .send-btn {
     flex: none;
     width: 40px;
@@ -1908,21 +2032,22 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background var(--transition), color var(--transition), transform var(--transition);
+    transition: background var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition);
   }
   .send-btn.active {
-    background: var(--text-1);
-    color: var(--surface);
+    background: var(--accent);
+    color: var(--on-accent);
     cursor: pointer;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .send-btn.active:hover {
-    background: var(--btn-primary-hover);
+    background: var(--accent-strong);
   }
   .send-btn.active:active {
-    transform: scale(0.96);
+    transform: scale(0.94);
   }
   .send-btn.disabled {
-    background: var(--surface-3);
+    background: var(--surface-2);
   }
   .thinking-dot {
     width: 10px;
@@ -1936,8 +2061,14 @@
   .drawer-mask {
     position: absolute;
     inset: 0;
-    background: var(--overlay);
-    z-index: 40;
+    background: var(--glass-0);
+    z-index: var(--z-scrim);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .drawer-mask {
+      -webkit-backdrop-filter: blur(var(--glass-blur-0));
+      backdrop-filter: blur(var(--glass-blur-0));
+    }
   }
   .drawer {
     position: absolute;
@@ -1945,15 +2076,33 @@
     bottom: 0;
     left: 0;
     width: min(300px, 82%);
-    z-index: 41;
+    z-index: var(--z-drawer);
     background: var(--surface);
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--glass-border-2);
     padding: var(--space-3);
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-3);
     animation: draw-in 220ms var(--ease-out);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .drawer {
+      background: var(--glass-2);
+      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      box-shadow: var(--glass-highlight), var(--shadow-3);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .drawer {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .drawer { animation: none; }
   }
   @keyframes draw-in {
     from { transform: translateX(-100%); }
@@ -1966,7 +2115,7 @@
     top: var(--space-3);
     left: 50%;
     transform: translateX(-50%);
-    z-index: 60;
+    z-index: var(--z-toast);
     display: flex;
     align-items: center;
     gap: var(--space-2);

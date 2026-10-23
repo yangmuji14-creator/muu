@@ -56,7 +56,7 @@
 
   .page-badge {
     font-size: var(--text-xs);
-    padding: 2px var(--space-2);
+    padding: var(--optical-2) var(--space-2);
     border-radius: var(--radius-xs);
     border: 1px solid var(--border);
     color: var(--text-2);

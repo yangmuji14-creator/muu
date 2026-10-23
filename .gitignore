@@ -12,6 +12,9 @@ dist/
 build/
 node_modules/
 coverage/
+.coverage
+.coverage.*
+htmlcov/
 
 # Environment
 .env
@@ -27,6 +30,10 @@ coverage/
 data/
 logs/
 *.db
+
+# 本地嵌入模型（92MB，不入库；缺了会自动降级关键词召回）
+# 拉取：python -m tools.fetch_embedding_model
+models/
 
 # User config (personalized — use .example files as template)
 config/settings.json
@@ -84,11 +91,15 @@ webui_server.log
 
 # Test/backup sandboxes
 .pytest-*/
+pytest-of-*/
+
+# 纯净版导出目录（python -m tools.export_clean）
+_export/
 .tmp*/.pytest-cache/.pytest/backups/
 build-wheel-audit*/
 
-# Release repo: keep GitHub clean (source only). Tests & debug tooling stay local.
-tests/
+# Release repo: keep GitHub clean (source only). Debug tooling stays local.
+# tests/ 已入库（pytest 套件，见 docs/HANDOFF.md「测试」一节）
 auto_test.py
 test_cli_automation.py
 vitest.config.js

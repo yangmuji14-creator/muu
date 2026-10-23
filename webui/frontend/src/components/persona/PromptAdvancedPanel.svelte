@@ -173,7 +173,7 @@
   }
   .keep-default svg {
     flex: none;
-    margin-top: 2px;
+    margin-top: var(--optical-2);
     color: var(--info);
   }
   .keep-default p {

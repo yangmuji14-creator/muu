@@ -365,7 +365,9 @@ def _scope_kwargs(pipeline, scope_id: str | None) -> dict:
         return {}
     try:
         parameters = inspect.signature(pipeline.process).parameters
-    except (TypeError, ValueError):
+    # AttributeError：pipeline 可能是个鸭子类型的替身（测试桩、适配器包装），
+    # 连 .process 都没有。这里做的是「能带就带」，不该因为签名探测失败就 500。
+    except (AttributeError, TypeError, ValueError):
         return {}
     return {"scope_id": scope_id} if "scope_id" in parameters else {}
 

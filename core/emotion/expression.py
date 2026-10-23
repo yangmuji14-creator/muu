@@ -61,24 +61,30 @@ class MessageSegmenter:
         raw_segments = [s.strip() for s in raw_segments if s.strip()]
 
         # 第二步：合并过短的段落，拆分过长的段落
-        final_segments = []
+        final_segments: list[str] = []
         buffer = ""
 
         for seg in raw_segments:
-            # 如果 buffer + 当前段落不超限，合并
+            # 超长段落先就地拆开，不管前面有没有 buffer —— 否则「buffer 里攒了
+            # 一段短的 + 紧跟一段超长的」时，超长那段会原样塞进 final_segments，
+            # 消息发出去就是一大坨，分段的修辞效果全没了。
+            if len(seg) > max_segment_length:
+                if buffer:
+                    final_segments.append(buffer)
+                    buffer = ""
+                final_segments.extend(
+                    MessageSegmenter._force_split(seg, max_segment_length)
+                )
+                continue
+
+            # 能塞进当前 buffer 就合并，否则收口重开
             if buffer and len(buffer) + len(seg) <= max_segment_length:
                 buffer += seg
             elif buffer:
                 final_segments.append(buffer)
                 buffer = seg
             else:
-                # 单段太长，强制拆分
-                if len(seg) > max_segment_length:
-                    chunks = MessageSegmenter._force_split(seg, max_segment_length)
-                    final_segments.extend(chunks)
-                    buffer = ""
-                else:
-                    buffer = seg
+                buffer = seg
 
         if buffer:
             final_segments.append(buffer)
@@ -160,9 +166,12 @@ class EmotionEnhancer:
                 return reply
             emojis = EMOTION_EMOJI_MAP.get(mapped, [])
             if emojis and mood_state.intensity >= 0.3:
-                chosen = random.choice(emojis)
-                if chosen not in reply:
-                    return f"{reply} {chosen}"
+                # 判重必须对整个池子做，不能只看 random 挑中的那一个 ——
+                # 否则回复里已经带了 😊，随机又挑中 ✨，尾巴上就会挂两个表情。
+                # 降级路径（EmotionResult）用的就是 any(...)，这里保持一致。
+                if any(e in reply for e in emojis):
+                    return reply
+                return f"{reply} {random.choice(emojis)}"
             return reply
 
         # 降级：使用 EmotionResult（用户单轮情绪）

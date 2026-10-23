@@ -47,6 +47,7 @@
     }} />
 {:else if meta.type === 'select'}
   <select class="field-select" value={typeof value === 'string' ? value : ''} onchange={(e) => setRaw(e.currentTarget.value)}>
+    {#if meta.optional}<option value="">不设定</option>{/if}
     {#each meta.options || [] as opt (opt)}
       <option value={opt}>{opt}</option>
     {/each}
@@ -79,7 +80,7 @@
       placeholder={meta.placeholder || ''}
       oninput={(e) => setRaw(e.currentTarget.value)}></textarea>
     {#if meta.counter !== false}
-      <span class="char-count">{count}</span>
+      <span class="char-count">{meta.maxLength ? `${count} / ${meta.maxLength}` : `${count} 字`}</span>
     {/if}
   </div>
 {/if}

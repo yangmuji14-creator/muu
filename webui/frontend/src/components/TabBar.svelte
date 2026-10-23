@@ -71,7 +71,10 @@
     display: flex;
   }
 
-  /* ---- 移动端: 底部横排 ---- */
+  /* ---- 移动端: 底部横排 ----
+     glass-1 (chrome 档): 底栏在滚动内容之上浮动时, 让内容从底下
+     透出来比一条实心色带更能表达"我还在这一页"。
+     兜底为不透明 --surface, 见下方 @supports。 */
   .horizontal {
     flex-direction: row;
     align-items: stretch;
@@ -80,14 +83,28 @@
     padding: 0 var(--space-2);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     background: var(--surface);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--glass-border-2);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .horizontal {
+      background: var(--glass-1);
+      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .horizontal {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
   .horizontal .tab {
     flex: 1;
     min-width: 0;
     flex-direction: column;
     justify-content: center;
-    gap: 3px;
+    gap: var(--optical-3);
     padding: 0;
     border-radius: 0;
   }
@@ -113,11 +130,12 @@
   .vertical .tab {
     flex-direction: row;
     justify-content: flex-start;
-    gap: var(--space-3);
-    height: 30px;
+    gap: var(--optical-10);
+    height: 32px;
     flex: none;
     padding: 0 var(--space-4);
-    font-size: var(--text-sm);
+    font-size: var(--text-13);
+    letter-spacing: 0.005em;
     border-left: 2px solid transparent;
   }
 
@@ -127,6 +145,7 @@
     align-items: center;
     justify-content: center;
     border: none;
+    border-radius: 0;
     background: transparent;
     color: var(--tab-inactive);
     font-size: var(--text-xs);
@@ -134,22 +153,27 @@
     line-height: 1.2;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: color var(--transition), background var(--transition);
+    transition: color var(--transition), background var(--transition), border-color var(--transition);
   }
   .tab:hover {
     color: var(--tab-hover);
     background: var(--row-hover);
   }
+  .tab:active { background: var(--row-active); }
 
-  /* 选中态: 冷蓝文字 + 冷蓝左标 */
+  /* 选中态: 冷蓝文字 + 冷蓝左标 + 一层极淡冷蓝底。
+     原来是 surface-2（暖灰），和 hover 行几乎同色，扫视时找不到
+     「我现在在哪」；换成 accent-wash 之后选中项在暖色侧栏里是唯一
+     一块偏蓝的，眼睛一眼落上去。 */
   .tab.is-active {
     color: var(--accent);
     font-weight: 500;
   }
   .vertical .tab.is-active {
-    background: var(--surface-2);
+    background: var(--accent-wash);
     border-left-color: var(--accent);
   }
+  .vertical .tab.is-active .tab-icon { color: var(--accent); }
 
   .tab-icon {
     display: inline-flex;
@@ -165,32 +189,35 @@
     flex-direction: column;
     padding: var(--space-1) 0 var(--space-2);
   }
+  /* 缩进对齐上一级图标的右缘: 16(pad) + 15(icon) + 10(gap) = 41px */
   .sub-tab {
     display: flex;
     align-items: center;
-    height: 26px;
-    padding: 0 var(--space-4) 0 38px;
+    height: 27px;
+    padding: 0 var(--space-4) 0 41px;
     border: none;
     border-left: 2px solid transparent;
     background: transparent;
     font-family: inherit;
     font-size: var(--text-xs);
-    color: var(--text-3);
+    letter-spacing: 0.01em;
+    color: var(--text-2);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: color var(--transition), background var(--transition);
+    transition: color var(--transition), background var(--transition), border-color var(--transition);
   }
-  .sub-tab:hover { background: var(--row-hover); color: var(--text-2); }
+  .sub-tab:hover { background: var(--row-hover); color: var(--text-1); }
   .sub-tab.on {
     color: var(--accent);
     font-weight: 500;
+    border-left-color: var(--accent-line);
   }
   .sub-sep {
     height: 1px;
-    margin: var(--space-1) var(--space-4) var(--space-1) 38px;
+    margin: var(--space-1) var(--space-4) var(--space-1) 41px;
     background: var(--border);
   }
 </style>

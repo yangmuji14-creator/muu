@@ -38,22 +38,38 @@
     bottom: calc(var(--tabbar-h) + var(--space-5));
     left: 50%;
     transform: translateX(-50%);
-    z-index: 60;
+    z-index: var(--z-toast);
     width: max-content;
     max-width: calc(100vw - var(--space-6) * 2);
     pointer-events: none;
   }
   .toast {
     position: relative;
-    padding: var(--space-2) var(--space-4);
+    padding: var(--optical-10) var(--space-4) var(--optical-10) var(--space-5);
     border-radius: var(--toast-radius);
     background: var(--toast-info-bg);
     color: var(--toast-info-text);
-    font-size: var(--text-sm);
+    font-size: var(--text-13);
     font-weight: 500;
+    letter-spacing: var(--tracking-tight);
     box-shadow: var(--toast-shadow);
-    text-align: center;
+    text-align: left;
     will-change: transform, opacity;
+  }
+  /* 左侧 2px 状态条: 原来三种类型只靠底色区分, 但 toast 底色本来就浅
+     (info 是炭黑、success 深绿、error 深红), 在小尺寸下区分度靠色相,
+     红绿色觉差异的用户读不出来。补一条左侧实心竖条 + 类型色, 形状与颜色
+     两个通道同时表达状态。 */
+  .toast::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: currentColor;
+    opacity: 0.55;
+    border-radius: var(--toast-radius) 0 0 var(--toast-radius);
   }
   .toast.is-success {
     background: var(--toast-success-bg);

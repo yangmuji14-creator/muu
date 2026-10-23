@@ -25,7 +25,14 @@ from webui.routes.common import *  # noqa: F401,F403
 def register(routes, app_components):
     @routes.get("/api/model")
     async def get_model(_request):
-        """返回当前模型 + 可用模型列表（含各自的多模态声明）。"""
+        """返回当前模型 + 可用模型列表（含各自的多模态声明与地址）。
+
+        available 是给老前端用的 key 字符串数组，保持不变；
+        providers 是同一批模型的完整描述（key / provider / model_name /
+        base_url / multimodal）。设置页「已添加」列表要显示地址，只能靠
+        providers —— 早先那版只返回字符串数组，前端拿不到 base_url，
+        每张卡片都退化成「未配置地址」，而配置里其实是有值的。
+        """
         try:
             settings = _load_settings()
             models = settings.get("models", {})
@@ -40,9 +47,21 @@ def register(routes, app_components):
                 for key, cfg in models.items()
                 if isinstance(cfg, dict)
             }
+            providers = [
+                {
+                    "key": key,
+                    "provider": str(cfg.get("provider") or key),
+                    "model_name": details[key]["model_name"],
+                    "base_url": str(cfg.get("base_url") or ""),
+                    "multimodal": details[key]["multimodal"],
+                }
+                for key, cfg in models.items()
+                if isinstance(cfg, dict)
+            ]
             return web.json_response({
                 "current": settings.get("default_model"),
                 "available": list(models.keys()),
+                "providers": providers,
                 "models": details,
             })
         except Exception as e:

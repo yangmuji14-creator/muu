@@ -144,7 +144,7 @@
   .diag-short { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
   .diag-details { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
   .diag-details summary { cursor: pointer; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
-  .payload { margin: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.78rem; overflow: auto; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 320px; }
+  .payload { margin: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); overflow: auto; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 320px; }
   .payload.compact { max-height: 220px; margin-top: var(--space-3); }
 
   .backup-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
