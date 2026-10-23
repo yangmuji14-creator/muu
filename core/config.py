@@ -176,16 +176,26 @@ def load_image_mode() -> str:
     """
     mode = str(load_advanced().get("image_mode", "auto") or "auto").strip().lower()
     return mode if mode in ("auto", "direct", "vision") else "auto"
-    """加载 MCP Servers 配置"""
+
+
+def load_mcp_servers() -> list[dict]:
+    """加载 MCP Servers 配置（config/mcp_servers.json 的 servers 数组）。
+
+    历史上这段代码是 `load_image_mode()` 尾部一段漏掉 `def` 头的死代码，
+    永远不可达。这里补回函数定义，供需要读取 MCP 配置的调用方复用。
+    """
     path = CONFIG_DIR / "mcp_servers.json"
     if not path.exists():
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("servers", [])
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(f"Failed to load mcp_servers.json: {e}")
         return []
+    if not isinstance(data, dict):
+        return []
+    servers = data.get("servers", [])
+    return servers if isinstance(servers, list) else []
 
 
 # ---------------------------------------------------------------------------

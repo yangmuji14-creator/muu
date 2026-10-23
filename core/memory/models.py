@@ -125,38 +125,6 @@ class Memory:
         return bool(self.superseded_by)
 
     @staticmethod
-    def infer_confidence(content: str) -> float:
-        """根据表达方式推断记忆置信度
-
-        - 明确陈述（"我是"、"我喜欢"、"我今年"）→ 0.9
-        - 一般陈述（"我可能"、"我觉得"）→ 0.6
-        - 猜测表达（"也许"、"大概"、"可能"）→ 0.4
-        - 不确定（"不知道"、"也许吧"）→ 0.3
-        """
-        content_lower = content.lower()
-        # 明确
-        if any(kw in content for kw in ("我叫", "我是", "我今年", "我的", "我住在",
-                                         "我工作", "我在", "我学", "我喜欢", "我讨厌",
-                                         "我爱", "我恨", "我有", "我没有")):
-            return 0.9
-        # 较强
-        if any(kw in content for kw in ("我觉得", "我认为", "我想", "我打算",
-                                         "我准备", "我计划", "我决定")):
-            return 0.7
-        # 一般表达
-        if any(kw in content for kw in ("我可能", "我应该", "我可以", "我会",
-                                         "我不太", "有点", "稍微")):
-            return 0.5
-        # 猜测
-        if any(kw in content for kw in ("也许", "大概", "可能", "说不定", "或许")):
-            return 0.4
-        # 不确定
-        if any(kw in content for kw in ("不知道", "不确定", "也许吧", "随便",
-                                         "都行", "无所谓")):
-            return 0.3
-        return 0.6  # 默认
-
-    @staticmethod
     def classify(content: str) -> str:
         """基于关键词快速分类记忆内容
 
@@ -179,9 +147,22 @@ class Memory:
 
     @staticmethod
     def classify_confidence(content: str) -> float:
-        """基于内容长度和关键词评估记忆置信度"""
-        if len(content) < 5:
+        """基于内容陈述方式评估记忆置信度
+
+        这一项回答的是「这条记忆有多可信」，不是「有多重要」——
+        重要度由 level 单独表达，两者混在一起就会变成一个数字的镜像。
+
+        分档：
+            0.3  太短，几乎无从判断
+            0.9  明确的自我陈述（我的 / 我叫 / 我是 / 我喜欢 / 我讨厌）
+            0.4  带不确定措辞（可能 / 好像 / 大概 / 也许 / 说不定 / 似乎）
+            0.7  其余陈述
+        """
+        text = content or ""
+        if len(text) < 5:
             return 0.3
-        if any(kw in content for kw in ["我的", "我叫", "我是", "我喜欢", "我讨厌"]):
+        if any(kw in text for kw in ["我的", "我叫", "我是", "我喜欢", "我讨厌"]):
             return 0.9
+        if any(kw in text for kw in ["可能", "好像", "大概", "也许", "说不定", "似乎", "估计"]):
+            return 0.4
         return 0.7

@@ -63,18 +63,23 @@
 </div>
 
 <style>
+  /* PromptPanel 与 PersonaAdvanced / PersonaCard 共用同一套分区语法:
+     不做盒子, 只做「一道更重的横线 + 11px 微标签标题」。
+     原来这里是一张独立白卡, 和上下两张人设卡叠在一起就成了盒套盒。 */
   .panel {
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    border-radius: var(--card-radius);
-    box-shadow: var(--card-shadow);
-    overflow: hidden;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border-strong);
+    border-radius: 0;
+    box-shadow: none;
+    overflow: visible;
+    margin-top: var(--space-2);
   }
 
-  /* 深度设置档: 视觉弱化(更灰/次要) */
+  /* 深度设置档: 视觉弱化(更灰/次要) —— 连线也降一档 */
   .panel.tier-2 {
-    background: var(--surface-2);
-    border-color: var(--border);
+    background: transparent;
+    border-top-color: var(--border);
     box-shadow: none;
   }
 
@@ -83,20 +88,22 @@
     align-items: center;
     gap: var(--space-2);
     width: 100%;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) 0 var(--space-3);
     background: transparent;
     border: none;
-    color: var(--text-1);
-    font-size: var(--text-sm);
-    font-weight: 600;
+    color: var(--text-3);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wider);
     cursor: pointer;
-    transition: background var(--transition);
+    transition: color var(--transition), border-color var(--transition);
   }
   .p-head:hover {
-    background: var(--row-hover);
+    background: transparent;
+    color: var(--text-1);
   }
   .tier-2 .p-head {
-    color: var(--text-2);
+    color: var(--text-3);
     font-weight: 500;
   }
   .p-title {
@@ -104,14 +111,16 @@
     text-align: left;
   }
   .p-badge {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
     color: var(--text-3);
-    background: var(--surface-3);
+    background: var(--surface-2);
     border-radius: var(--radius-xs);
-    padding: var(--space-1) var(--space-2);
+    padding: var(--hair) var(--optical-7);
+    font-variant-numeric: tabular-nums;
   }
   .tier-2 .p-badge {
-    background: color-mix(in srgb, var(--text-3) 16%, transparent);
+    background: var(--surface-2);
   }
   .p-arrow {
     transition: transform var(--transition);
@@ -122,15 +131,16 @@
   }
 
   .p-body {
-    padding: var(--space-4);
-    border-top: 1px solid var(--border);
+    padding: 0 0 var(--space-5) 0;
+    border-top: none;
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
   .p-hint {
     margin: 0;
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
+    line-height: 1.7;
     color: var(--text-3);
   }
   .p-content {
@@ -141,8 +151,8 @@
   .p-actions {
     display: flex;
     justify-content: flex-end;
-    padding-top: var(--space-1);
+    padding-top: var(--space-3);
     border-top: 1px solid var(--border);
-    margin-top: var(--space-1);
+    margin-top: 0;
   }
 </style>

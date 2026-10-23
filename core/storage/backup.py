@@ -40,12 +40,20 @@ def _snapshot_database(source: Path, destination: Path) -> None:
         source_conn.close()
 
 
-def _prune_old_backups(directory: Path) -> None:
+def _prune_old_backups(directory: Path, keep: int = MAX_BACKUPS, skip: Path | None = None) -> None:
+    """Delete the oldest backups, keeping at most ``keep`` archives.
+
+    ``skip`` is the archive that was just created — it must survive pruning even
+    if its mtime somehow sorts oldest (same-second creation after a clock jump).
+    """
     backups = sorted(
         [*directory.glob("mu-*.zip"), *directory.glob("cyber-companion-*.zip")],
         key=lambda item: item.stat().st_mtime,
     )
-    for old_backup in backups[:-MAX_BACKUPS]:
+    if skip is not None:
+        backups = [item for item in backups if item != skip]
+        keep = max(0, keep - 1)
+    for old_backup in (backups[:-keep] if keep > 0 else backups):
         old_backup.unlink(missing_ok=True)
 
 
@@ -60,7 +68,6 @@ def create_backup(data_dir: Path, config_dir: Path) -> Path:
     config_dir = Path(config_dir)
     backup_dir = data_dir / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    _prune_old_backups(backup_dir)
 
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
     filename = f"mu-{datetime.now():%Y%m%d-%H%M%S-%f}.zip"
@@ -69,6 +76,7 @@ def create_backup(data_dir: Path, config_dir: Path) -> Path:
         "format_version": BACKUP_FORMAT_VERSION,
         "created_at": created_at,
         "included": [],
+        "skipped": [],
         "excluded": ["data/credentials", "data/logs", "data/uploads", "*.db-wal", "*.db-shm"],
     }
 
@@ -85,6 +93,10 @@ def create_backup(data_dir: Path, config_dir: Path) -> Path:
                 _snapshot_database(database, temp_snapshot)
                 archive.write(temp_snapshot, arcname=f"data/{database.name}")
                 manifest["included"].append(f"data/{database.name}")
+            except sqlite3.DatabaseError:
+                # 一个坏掉的 .db（下载残留、被别的程序写成非 SQLite 格式）不该让
+                # 整次备份永远失败 —— 用户就再也导不出数据了。跳过并记账。
+                manifest["skipped"].append(f"data/{database.name}")
             finally:
                 temp_snapshot.unlink(missing_ok=True)
 
@@ -111,6 +123,7 @@ def create_backup(data_dir: Path, config_dir: Path) -> Path:
 
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
+    _prune_old_backups(backup_dir, skip=backup_path)
     return backup_path
 
 

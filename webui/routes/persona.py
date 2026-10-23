@@ -25,13 +25,37 @@ from webui.routes.common import *  # noqa: F401,F403
 def register(routes, app_components):
     @routes.get("/api/persona")
     async def list_personas(_request):
-        """返回人设列表（只 id+name+avatar，不含完整字段）。"""
+        """返回人设列表。
+
+        除 id/name/avatar 外附带几条**只读摘要**（age/gender/occupation/
+        personality/relationship_level/background），供通讯录名单渲染副标题。
+        这些字段本来就在 USER_FIELDS 里、`/api/persona/{id}` 也会全量返回，
+        这里只是提前给列表用，不引入新的敏感数据。
+
+        为什么加：名单页原来每行只有一个名字，两个人设的通讯录看起来像
+        一张空表 —— 有摘要才能在这一行里把「她是谁」说清楚，也才有信息
+        判断该点哪一条。
+        """
         try:
             personas = app_components.persona_loader.list_all()
-            return web.json_response([
-                {"id": p.id, "name": p.name, "avatar": getattr(p, "avatar", "") or ""}
-                for p in personas
-            ])
+            items = []
+            for p in personas:
+                summary = ""
+                bg = (getattr(p, "background", "") or "").strip()
+                if bg:
+                    summary = bg.splitlines()[0][:60]
+                items.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "avatar": getattr(p, "avatar", "") or "",
+                    "age": getattr(p, "age", None),
+                    "gender": getattr(p, "gender", "") or "",
+                    "occupation": getattr(p, "occupation", "") or "",
+                    "personality": list(getattr(p, "personality", []) or []),
+                    "relationship_level": getattr(p, "relationship_level", None),
+                    "summary": summary,
+                })
+            return web.json_response(items)
         except Exception as e:
             logger.error(f"WebUI list_personas error: {e}")
             return web.json_response({"error": str(e)}, status=500)
@@ -92,30 +116,86 @@ def register(routes, app_components):
 
     @routes.get("/api/persona/tags")
     async def get_persona_tags(_request):
-        """返回全部可选性格标签（建人时的"选项"）。
+        """返回性格标签选择器所需的全部元数据。
 
-        数据源 config/persona_tags.json —— 与 CLI setup_wizard 共用同一份，
-        标签会被翻译成 speaking_style / emotional_patterns / relationship_behavior
-        等具体行为规则。
+        数据源 config/persona_tags.json —— 与 CLI setup_wizard 共用同一份。
+
+        返回：
+          tags          标签名列表（保持文件顺序，前端 chip 的排列顺序）
+          specs         每个标签的三句草稿 + 硬规则，供「点选 → 预览」用
+          max_tags      多选上限（后端与前端读同一个数字，不各写一份）
+          mutex_groups  互斥对，前端据此自动取消勾选
+          version       schema 版本；1 表示标签只有字段没有草稿，前端应隐藏预览区
+
+        为什么一次给全：标签选择器需要「名字 + 说明 + 上限 + 互斥」四样东西
+        才能把「点一下就知道会发生什么」做出来。分成四个接口只会让前端在
+        打开弹窗时打四次请求，且中途失败会留下半截状态。
         """
         try:
-            from core.persona.tags import tag_names
+            from core.persona.tags import (
+                is_v2,
+                max_tags,
+                mutex_groups,
+                tag_names,
+                tag_specs,
+            )
 
-            return web.json_response({"tags": tag_names()})
+            return web.json_response(
+                {
+                    "version": 2 if is_v2() else 1,
+                    "tags": tag_names(),
+                    "specs": tag_specs(),
+                    "max_tags": max_tags(),
+                    "mutex_groups": mutex_groups(),
+                }
+            )
         except Exception as e:
             logger.error(f"WebUI get_persona_tags error: {e}")
-            return web.json_response({"tags": []})
+            return web.json_response(
+                {"version": 1, "tags": [], "specs": [], "max_tags": 3, "mutex_groups": []}
+            )
+
+    @routes.post("/api/persona/tags/preview")
+    async def preview_persona_tags(request):
+        """把选中的标签翻译成三组可编辑草稿，**不落库**。
+
+        body: {"tags": ["温柔", "细心"]}
+
+        返回 speaking / emotion / relationship 三段完整的中文句子，加
+        hard_rules、命中的互斥组 conflicts、不认识的标签 unknown、超上限
+        被截掉的 truncated。
+
+        交互契约：前端拿这三段填进 textarea，用户可以改；提交建人时把改过的
+        文本随 body 一起发回来，由 `drafts` 字段直接写入，**不再走标签翻译**。
+        这样「标签」只是降低填写门槛的草稿生成器，最终落库的永远是用户看见
+        并确认过的那句话。
+        """
+        try:
+            from core.persona.tags import preview_persona_tags
+
+            body = await request.json()
+            tags = body.get("tags") or []
+            if not isinstance(tags, list):
+                tags = [tags]
+            tags = [str(t).strip() for t in tags if str(t).strip()]
+            return web.json_response(preview_persona_tags(tags))
+        except Exception as e:
+            logger.error(f"WebUI preview_persona_tags error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     @routes.post("/api/persona")
     async def create_persona(request):
         """新建人设。
 
-        body: {"id"?, "name", "description"?, "personality"?}
+        body: {"id"?, "name", "description"?, "personality"?, "drafts"?}
 
         - `id` 可省略：缺省时由 name 生成（中文取拼音不可靠，退化为
           "persona_" + 短哈希），避免让用户去想技术 ID
         - `personality` 是性格标签列表（见 GET /api/persona/tags），
           会被翻译成具体行为规则合入人设
+        - `drafts` 可选，{"speaking"?, "emotion"?, "relationship"?} ——
+          用户在「点选标签 → 预览草稿」之后**改过的那三段文本**。带了这个
+          就直接写，不再用标签重新翻译一遍：用户改过的东西不能被标签覆盖。
         - `description` 可选，写入 background 字段
         """
         try:
@@ -129,7 +209,9 @@ def register(routes, app_components):
             generated = False
             if not persona_id:
                 base = "".join(c for c in name.lower() if c.isalnum()) or "persona"
-                if not base.isascii():
+                # 纯数字/纯中文的 name 会退化成 "1_988fe8" 这种没意义的前缀，
+                # 也会让磁盘文件名难以辨认。以字母开头才用作前缀。
+                if not (base.isascii() and base[0].isalpha()):
                     base = "persona"
                 persona_id = f"{base}_{uuid.uuid4().hex[:6]}"
                 generated = True
@@ -146,17 +228,27 @@ def register(routes, app_components):
                 personality = [personality] if personality else []
             personality = [str(t).strip() for t in personality if str(t).strip()]
 
+            drafts = body.get("drafts")
+            if not isinstance(drafts, dict):
+                drafts = {}
+
             persona = Persona(id=persona_id, name=name, personality=personality)
             if description:
                 persona.background = description
-            if personality:
+            if personality or drafts:
                 # 性格标签 → 具体行为规则（与 CLI setup_wizard 同一份翻译表）
-                from core.persona.tags import apply_persona_tags
+                from core.persona.tags import apply_drafts, apply_persona_tags
 
                 merged = apply_persona_tags(persona.model_dump(), personality)
+                # 用户改过的草稿优先：在标签翻译**之后**再覆盖一次。
+                # 顺序不能反 —— 反了就等于「标签覆盖用户」，那预览就没有意义了。
+                apply_drafts(merged, drafts)
                 persona = Persona(**merged)
             loader.add(persona)
-            logger.info(f"WebUI persona created: {persona_id} (tags={personality})")
+            logger.info(
+                f"WebUI persona created: {persona_id} "
+                f"(tags={personality}, drafts={sorted(drafts)})"
+            )
             return web.json_response(
                 {
                     "ok": True,

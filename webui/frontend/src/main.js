@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import './styles/tokens.css';
+
 import App from './App.svelte';
 
 // 主题初始化：默认浅色，读 localStorage `cc-theme`（light / dark）

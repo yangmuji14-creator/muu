@@ -69,6 +69,7 @@ def register(routes, app_components):
                     "source": m.source,
                     "confidence": m.confidence,
                     "last_accessed": m.last_accessed,
+                    "archived": m.archived,
                 }
                 for m in page
             ]
@@ -79,6 +80,98 @@ def register(routes, app_components):
             )
         except Exception as e:
             logger.error(f"WebUI get_memories error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    # 注意：这三条路由必须注册在 /api/memory/{memory_id} 之前，
+    # 否则 aiohttp 会把 "status"/"search" 当成 memory_id 匹配掉。
+    @routes.get("/api/memory/status")
+    async def get_memory_status(_request):
+        """返回语义记忆的可用状态（嵌入模型是否加载、向量索引覆盖率）。
+
+        记忆系统最容易「看起来正常、实际残废」——嵌入模型加载不到时
+        召回会静默降级成关键词匹配，接口不报错。所以单独暴露状态。
+        """
+        memory_mgr = getattr(app_components, "memory_mgr", None)
+        if memory_mgr is None:
+            return web.json_response({"error": "memory subsystem unavailable"}, status=503)
+        try:
+            return web.json_response(memory_mgr.embedding_status())
+        except Exception as e:
+            logger.error(f"WebUI memory status error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    @routes.get("/api/memory/search")
+    async def search_memories_semantic(request):
+        """语义检索记忆：?q=...&top_k=5&conversation_id=..."""
+        memory_mgr = getattr(app_components, "memory_mgr", None)
+        if memory_mgr is None:
+            return web.json_response({"error": "memory subsystem unavailable"}, status=503)
+        query = (request.query.get("q") or "").strip()
+        if not query:
+            return web.json_response({"error": "q is required"}, status=400)
+        try:
+            top_k = max(1, min(20, int(request.query.get("top_k", 5))))
+        except ValueError:
+            return web.json_response({"error": "invalid top_k"}, status=400)
+        try:
+            try:
+                user_id, _conv, _pid = _resolve_scoped_user_id(
+                    request.query.get("conversation_id"), app_components,
+                    fallback_persona_id=request.query.get("persona_id"),
+                )
+            except _ConversationNotFound as e:
+                return web.json_response(
+                    {"error": f"conversation not found: {e}"}, status=404
+                )
+            try:
+                results = memory_mgr.semantic_search(user_id, query, top_k=top_k)
+            except Exception as e:
+                logger.error(f"WebUI semantic search error: {e}")
+                return web.json_response({"error": str(e)}, status=500)
+            return web.json_response({
+                "query": query,
+                "results": results,
+                "semantic": bool(results),
+            })
+        except Exception as e:
+            logger.error(f"WebUI memory search error: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    @routes.post("/api/memory/reindex")
+    async def reindex_memories(request):
+        """重建记忆向量索引（幂等）。
+
+        body: {"force": false, "conversation_id": "..."} —— 不传 conversation_id
+        时重建全部用户的索引。
+        """
+        memory_mgr = getattr(app_components, "memory_mgr", None)
+        if memory_mgr is None:
+            return web.json_response({"error": "memory subsystem unavailable"}, status=503)
+        try:
+            payload = {}
+            if request.can_read_body:
+                try:
+                    payload = await request.json()
+                except Exception:
+                    payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            force = bool(payload.get("force", False))
+            user_id = None
+            if payload.get("conversation_id"):
+                try:
+                    user_id, _conv, _pid = _resolve_scoped_user_id(
+                        payload.get("conversation_id"), app_components,
+                        fallback_persona_id=payload.get("persona_id"),
+                    )
+                except _ConversationNotFound as e:
+                    return web.json_response(
+                        {"error": f"conversation not found: {e}"}, status=404
+                    )
+            result = memory_mgr.reindex_all(user_id=user_id, force=force)
+            return web.json_response({"ok": True, **result})
+        except Exception as e:
+            logger.error(f"WebUI memory reindex error: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
     @routes.get("/api/memory/{memory_id}")
@@ -100,7 +193,7 @@ def register(routes, app_components):
                 return web.json_response(
                     {"error": f"conversation not found: {e}"}, status=404
                 )
-            memory = memory_mgr.get_memory(user_id, memory_id)
+            memory = memory_mgr.memory_detail(user_id, memory_id)
             if memory is None:
                 return web.json_response({"error": "memory not found"}, status=404)
             return web.json_response({

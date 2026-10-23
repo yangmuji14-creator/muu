@@ -20,8 +20,7 @@
 """
 
 import json
-import sqlite3
-import threading
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +29,68 @@ from typing import Any
 from loguru import logger
 
 from core.utils import atomic_write_json
+
+# 校名抓取：只在「大学 / 学院 / 学校」三种后缀上做锚点
+_SCHOOL_SUFFIXES = ("大学", "学院", "学校")
+# 往前扩词时遇到这些字符就断（标点、代词、助词、常见动词、指示词）。
+# 注意不能把「上」放进来 —— 「上海交通大学」会从「上」处断成「海交通大学」。
+_SCHOOL_STOP_CHARS = set(
+    "。.！!？?，,、；;：: \t\r\n的了在我你他她它读去和与是到这那所么什哪几每"
+)
+# 候选名以这些字开头说明前面还粘着主语/指示词，不是校名
+_SCHOOL_BAD_LEADING = set("我你他她它这那该每几哪么什的了")
+# 专名部分最长多少字（含后缀），超出说明抓飞了
+_SCHOOL_MAX_LEN = 12
+# 候选名里如果还粘着这些动词/介词，从最后一个之后开始截
+_SCHOOL_STOP_WORDS = (
+    "毕业于", "毕业", "就读于", "就读", "考上了", "考上",
+    "来自于", "来自", "去了", "来到", "我是", "我在",
+)
+
+
+def _strip_stop_words(name: str) -> str:
+    """把候选校名里粘着的动词/介词剥掉（`毕业于上海交通大学` → `上海交通大学`）。"""
+    cut = 0
+    for word in _SCHOOL_STOP_WORDS:
+        pos = name.rfind(word)
+        if pos >= 0:
+            cut = max(cut, pos + len(word))
+    return name[cut:] if cut else name
+
+
+def _extract_school(message: str) -> str:
+    """从消息里抓校名，返回带后缀的完整名字（抓不到返回空串）。
+
+    旧实现用 `group(1) + "大学"` 拼校名，并且要求后缀后面紧跟标点或句尾 ——
+    于是「我在清华学院」被改成「清华大学」（后缀被改写），
+    「我在清华大学读书」「我是北京大学的学生」直接一条都抓不到。
+    这里改成：定位后缀 → 往前扩到标点/功能字为止 → 原样保留后缀。
+    """
+    for suffix in _SCHOOL_SUFFIXES:
+        start_idx = 0
+        while True:
+            idx = message.find(suffix, start_idx)
+            if idx < 0:
+                break
+            start_idx = idx + 1
+            if idx == 0:
+                continue
+            start = idx
+            while (
+                start > 0
+                and message[start - 1] not in _SCHOOL_STOP_CHARS
+                and idx + len(suffix) - start < _SCHOOL_MAX_LEN
+            ):
+                start -= 1
+            name = _strip_stop_words(message[start: idx + len(suffix)].strip())
+            # 专名部分至少两个字（「这所大学」「我在学校」不算校名），
+            # 也不能以主语/指示词开头（「我上大学」不算校名）
+            if len(name) <= len(suffix) + 1:
+                continue
+            if name[0] in _SCHOOL_BAD_LEADING:
+                continue
+            return name
+    return ""
 
 
 @dataclass
@@ -199,9 +260,16 @@ class IdentityLayer:
         path = self._file_path(profile.user_id)
         atomic_write_json(path, profile.to_dict())
 
-    def update(self, user_id: str, **kwargs) -> IdentityProfile:
-        """更新身份档案字段"""
+    def update(self, user_id: str, /, **kwargs) -> IdentityProfile:
+        """更新身份档案字段
+
+        `user_id` 是 positional-only（`/`）：这样 `update(uid, user_id=uid)` 里的
+        `user_id=` 会落进 kwargs 而被跳过，而不是在函数入口就抛
+        `TypeError: got multiple values for argument 'user_id'` ——
+        把一条记录整个展开传进来（`update(uid, **row)`）是最自然的写法。
+        """
         profile = self.load(user_id)
+        kwargs.pop("user_id", None)
         for key, value in kwargs.items():
             if hasattr(profile, key):
                 setattr(profile, key, value)
@@ -228,7 +296,7 @@ class IdentityLayer:
             r"读(.+?)专业",
         ]
         for pattern in major_patterns:
-            match = __import__("re").search(pattern, message)
+            match = re.search(pattern, message)
             if match:
                 major = match.group(1).strip()
                 if major and major != profile.major:
@@ -237,33 +305,28 @@ class IdentityLayer:
                 break
 
         # 学校
-        school_patterns = [
-            r"在(.+?)(?:大学|学院|学校)(?:[。.！]|$)",
-            r"(.+?)(?:大学|学院|学校)(?:[。.！]|$)",
-        ]
-        for pattern in school_patterns:
-            match = __import__("re").search(pattern, message)
-            if match:
-                school = match.group(1).strip() + "大学"
-                if school and school != profile.school:
-                    profile.school = school
-                    changed = True
-                break
+        school = _extract_school(message)
+        if school and school != profile.school:
+            profile.school = school
+            changed = True
 
         # 兴趣
-        interest_patterns = [
-            r"我喜欢(.+?)(?:[。.！]|$)",
-            r"我喜欢(.+?)和(.+?)(?:[。.！]|$)",
-        ]
-        for pattern in interest_patterns:
-            match = __import__("re").search(pattern, message)
-            if match:
-                interests = [g.strip() for g in match.groups() if g.strip()]
-                for i in interests:
-                    if i and i not in profile.interests:
-                        profile.interests.append(i)
+        # 一句话里可能有多段「喜欢…」：「我喜欢跑步和游泳」「我喜欢猫，也喜欢狗」
+        # 「我喜欢咖啡、喜欢跑步」「我不喜欢你这样但喜欢猫」。
+        # 先按标点与转折词切段，每段独立判断 —— 一次贪婪匹配会把
+        # 「喜欢你这样但喜欢猫」整串吞掉，后半段的真兴趣就丢了。
+        for segment in re.split(r"[。.！!？?，,；;、]|但是|但|不过|可是", message):
+            for match in re.finditer(r"(?:喜欢|爱好是|兴趣是|爱好|兴趣)(.+)", segment):
+                # 否定式不是兴趣（「我不喜欢下雨」「喜欢和不喜欢」）
+                if match.start() > 0 and segment[match.start() - 1] in "不没别":
+                    continue
+                for piece in match.group(1).split("和"):
+                    interest = piece.strip().lstrip("是的")
+                    if interest.startswith("不"):
+                        continue
+                    if interest and interest not in profile.interests:
+                        profile.interests.append(interest)
                         changed = True
-                break
 
         # 教育背景
         edu_keywords = {"大一": "大一", "大二": "大二", "大三": "大三", "大四": "大四",
@@ -285,166 +348,3 @@ class IdentityLayer:
         prompt = profile.to_prompt()
         return prompt if "教育背景" in prompt or "兴趣" in prompt else ""
 
-
-class IdentityStorage:
-    """身份信息持久化 — 独立 SQLite 表
-
-    特点：
-    - 独立于记忆存储（不参与遗忘系统）
-    - 每条用户只有一条记录（upsert）
-    - WAL 模式 + 线程安全
-    """
-
-    def __init__(self, data_dir: str | Path):
-        from core.storage.db import get_db_path
-        self._db_path = get_db_path(data_dir)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-        self._init_db()
-
-    @property
-    def _conn(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            from core.storage.db import open_db
-            self._local.conn = open_db(self._db_path)
-        return self._local.conn
-
-    def _init_db(self):
-        from core.storage.db import open_db
-        with open_db(self._db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS identity (
-                    user_id            TEXT PRIMARY KEY,
-                    education          TEXT NOT NULL DEFAULT '',
-                    major              TEXT NOT NULL DEFAULT '',
-                    interests          TEXT NOT NULL DEFAULT '[]',
-                    goals              TEXT NOT NULL DEFAULT '[]',
-                    value_traits       TEXT NOT NULL DEFAULT '[]',
-                    personality_traits TEXT NOT NULL DEFAULT '[]',
-                    important_life_events TEXT NOT NULL DEFAULT '[]',
-                    skills             TEXT NOT NULL DEFAULT '[]',
-                    career             TEXT NOT NULL DEFAULT '',
-                    location           TEXT NOT NULL DEFAULT '',
-                    updated_at         TEXT NOT NULL,
-                    created_at         TEXT NOT NULL
-                )
-            """)
-
-    def load(self, user_id: str) -> IdentityProfile | None:
-        """加载用户身份信息"""
-        cur = self._conn.execute(
-            "SELECT * FROM identity WHERE user_id=?",
-            (user_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
-        return IdentityProfile(
-            user_id=row["user_id"],
-            education=row["education"],
-            major=row["major"],
-            interests=json.loads(row["interests"]),
-            goals=json.loads(row["goals"]),
-            values=json.loads(row["value_traits"]),
-            personality_traits=json.loads(row["personality_traits"]),
-            important_life_events=json.loads(row["important_life_events"]),
-            skills=json.loads(row["skills"]),
-            career=row["career"],
-            location=row["location"],
-            updated_at=row["updated_at"],
-            created_at=row["created_at"],
-        )
-
-    def save(self, profile: IdentityProfile) -> None:
-        """保存或更新身份信息"""
-        self._conn.execute(
-            """INSERT OR REPLACE INTO identity
-               (user_id, education, major, interests, goals, value_traits,
-                personality_traits, important_life_events, skills,
-                career, location, updated_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                profile.user_id,
-                profile.education,
-                profile.major,
-                json.dumps(profile.interests, ensure_ascii=False),
-                json.dumps(profile.goals, ensure_ascii=False),
-                json.dumps(profile.values, ensure_ascii=False),
-                json.dumps(profile.personality_traits, ensure_ascii=False),
-                json.dumps(profile.important_life_events, ensure_ascii=False),
-                json.dumps(profile.skills, ensure_ascii=False),
-                profile.career,
-                profile.location,
-                profile.updated_at,
-                profile.created_at,
-            ),
-        )
-        self._conn.commit()
-        logger.debug(f"Identity profile saved for {profile.user_id}")
-
-    def delete(self, user_id: str) -> bool:
-        """删除用户身份信息"""
-        cur = self._conn.execute("DELETE FROM identity WHERE user_id=?", (user_id,))
-        self._conn.commit()
-        return cur.rowcount > 0
-
-    def list_users(self) -> list[str]:
-        """列出所有有身份记录的用户"""
-        cur = self._conn.execute("SELECT user_id FROM identity ORDER BY user_id")
-        return [row["user_id"] for row in cur.fetchall()]
-
-    def extract_from_content(self, user_id: str, content: str) -> IdentityProfile | None:
-        """从对话内容中提取身份信息（关键词匹配）"""
-        profile = self.load(user_id) or IdentityProfile(user_id=user_id)
-        changed = False
-
-        # 教育
-        edu_keywords = {
-            "大学生": "大学", "研究生": "研究生", "博士生": "博士",
-            "高中": "高中", "初中": "初中", "小学": "小学",
-            "本科": "本科", "硕士": "硕士", "博士": "博士",
-        }
-        for kw, val in edu_keywords.items():
-            if kw in content and val not in profile.education:
-                profile.education = val
-                changed = True
-
-        # 专业
-        major_keywords = ["计算机", "软件", "数学", "物理", "化学", "生物",
-                          "金融", "经济", "法律", "医学", "文学", "历史",
-                          "机械", "电子", "建筑", "艺术", "设计", "英语"]
-        for kw in major_keywords:
-            if kw in content and kw not in profile.major:
-                if profile.major:
-                    profile.major += f"、{kw}"
-                else:
-                    profile.major = kw
-                changed = True
-
-        # 兴趣
-        interest_keywords = ["喜欢", "爱好", "兴趣", "爱"]
-        for kw in interest_keywords:
-            idx = content.find(kw)
-            if idx >= 0:
-                rest = content[idx + len(kw):].strip("，。, .！!？?的")
-                if rest and len(rest) < 20 and rest not in profile.interests:
-                    profile.interests.append(rest)
-                    changed = True
-
-        # 职业
-        career_keywords = {
-            "程序员": "程序员", "工程师": "工程师", "老师": "老师",
-            "医生": "医生", "律师": "律师", "设计师": "设计师",
-            "产品经理": "产品经理", "运营": "运营", "销售": "销售",
-        }
-        for kw, val in career_keywords.items():
-            if kw in content and val not in profile.career:
-                profile.career = val
-                changed = True
-
-        if changed:
-            profile.updated_at = datetime.now().isoformat()
-            self.save(profile)
-            logger.info(f"Identity extracted for {user_id}: {content[:30]}...")
-
-        return profile if changed else None

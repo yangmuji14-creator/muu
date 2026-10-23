@@ -8,8 +8,13 @@ Schema:
     user_id TEXT, id TEXT, content TEXT, level INT, category TEXT,
     created_at TEXT, last_accessed TEXT, access_count INT,
     tags TEXT, source TEXT, related_ids TEXT, superseded_by TEXT,
+    confidence REAL, forget_score REAL, archived INT,
     PRIMARY KEY(user_id, id)
   )
+
+confidence / forget_score / archived 三列是 v4 补的（第二十八批）：
+在此之前这三项只活在 Memory 对象的默认值里，落到表里没有列，
+于是「置信度」永远读回 0.5、「遗忘分数」每次算完就丢。
 """
 
 import json
@@ -70,9 +75,13 @@ class MemoryStorage:
                     source         TEXT NOT NULL DEFAULT 'auto',
                     related_ids    TEXT NOT NULL DEFAULT '[]',
                     superseded_by  TEXT NOT NULL DEFAULT '',
+                    confidence     REAL NOT NULL DEFAULT 0.5,
+                    forget_score   REAL NOT NULL DEFAULT 0.0,
+                    archived       INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_id, id)
                 )
             """)
+            self._ensure_columns(conn)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_memories_user
                 ON memories(user_id)
@@ -82,6 +91,52 @@ class MemoryStorage:
                 ON memories(user_id, level DESC)
             """)
             conn.commit()
+
+    def _ensure_columns(self, conn: sqlite3.Connection) -> None:
+        """给老库补 confidence / forget_score / archived 三列
+
+        CREATE TABLE IF NOT EXISTS 对已存在的库是空操作，旧版本的 12 列表
+        不会自己长出这三列，所以必须显式 ALTER TABLE。
+        新加 confidence 列时顺带回填一遍历史行 —— 否则所有老记忆会停在
+        ALTER 的默认值 0.5，界面上仍是「每条都一样」。
+        """
+        existing = {
+            row[1] for row in conn.execute("PRAGMA table_info(memories)")
+        }
+        additions = (
+            ("confidence", "REAL NOT NULL DEFAULT 0.5"),
+            ("forget_score", "REAL NOT NULL DEFAULT 0.0"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"),
+        )
+        added: list[str] = []
+        for name, decl in additions:
+            if name in existing:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {decl}")
+                added.append(name)
+                logger.info(f"memories 表补列: {name}")
+            except sqlite3.OperationalError as e:  # pragma: no cover - 并发建列
+                logger.warning(f"补列 {name} 失败: {e}")
+        if "confidence" in added:
+            self._backfill_confidence(conn)
+
+    def _backfill_confidence(self, conn: sqlite3.Connection) -> None:
+        """给历史记忆回填置信度（按内容陈述方式，不含重要度）"""
+        rows = list(conn.execute("SELECT id, content FROM memories"))
+        if not rows:
+            return
+        filled = 0
+        for mem_id, content in rows:
+            try:
+                score = Memory.classify_confidence(content or "")
+            except Exception:
+                continue
+            conn.execute(
+                "UPDATE memories SET confidence=? WHERE id=?", (round(score, 4), mem_id)
+            )
+            filled += 1
+        logger.info(f"memories 回填置信度: {filled} 条")
 
     # ---- JSON 迁移 ----
 
@@ -122,14 +177,17 @@ class MemoryStorage:
         self._conn.execute(
             """INSERT OR REPLACE INTO memories
                (user_id, id, content, level, category, created_at,
-                last_accessed, access_count, tags, source, related_ids, superseded_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                last_accessed, access_count, tags, source, related_ids, superseded_by,
+                confidence, forget_score, archived)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 uid, memory.id, memory.content, memory.level,
                 memory.category, memory.created_at, memory.last_accessed,
                 memory.access_count, json.dumps(memory.tags, ensure_ascii=False),
                 memory.source, json.dumps(memory.related_memory_ids),
                 memory.superseded_by,
+                float(memory.confidence), float(memory.forget_score),
+                1 if memory.archived else 0,
             ),
         )
 
@@ -257,6 +315,11 @@ class MemoryStorage:
     @staticmethod
     def _row_to_memory(row: sqlite3.Row) -> Memory:
         """将 SQLite 行转换为 Memory 对象"""
+        keys = row.keys()
+
+        def _opt(name, default):
+            return row[name] if name in keys else default
+
         return Memory(
             id=row["id"],
             content=row["content"],
@@ -269,6 +332,9 @@ class MemoryStorage:
             source=row["source"],
             related_memory_ids=json.loads(row["related_ids"]) if isinstance(row["related_ids"], str) else [],
             superseded_by=row["superseded_by"] or "",
+            confidence=float(_opt("confidence", 0.5) or 0.5),
+            forget_score=float(_opt("forget_score", 0.0) or 0.0),
+            archived=bool(_opt("archived", 0)),
         )
 
     def close(self):

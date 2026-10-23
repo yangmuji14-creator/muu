@@ -143,18 +143,50 @@ class MemoryConflictResolver:
         return None
 
     @staticmethod
+    def _is_double_negated(text: str, negated_form: str) -> bool:
+        """判断否定式本身是否又被否定（「不是不喜欢」「并不讨厌」）。
+
+        取否定式每一次出现位置往前 3 个字符，只要出现 不/没/别 就算双重否定。
+        窗口取 3 而不是 1，是因为「不**是**不喜欢」中间隔着「是」。
+        """
+        start = 0
+        while True:
+            idx = text.find(negated_form, start)
+            if idx < 0:
+                return False
+            if any(mark in text[max(0, idx - 3):idx] for mark in ("不", "没", "别")):
+                return True
+            start = idx + 1
+
+    @staticmethod
     def _check_antonym_conflict(content_a: str, content_b: str) -> str | None:
-        """检测反义词冲突（偏好/观点对立）"""
+        """检测反义词冲突（偏好/观点对立）
+
+        .. note::
+           双重否定豁免只查「否定式又被否定」，**不能**再查 `"不" + 正向词`。
+           ANTONYM_PAIRS 里有 10 组本身就把否定写成「不 + 正向词」
+           （想/不想、在/不在、养/不养、喜欢/不喜欢、会/不会、去/不去、
+           是/不是、吃/不吃、要/不要、爱吃/不爱吃），再拿 `"不" + pos`
+           去豁免，那 10 组会 100% 命中豁免、永远判不出冲突 ——
+           用户说「我不喜欢猫」，旧记忆「我喜欢猫」就永远不会被取代。
+        """
         for pos, neg, conflict_type in MemoryConflictResolver.ANTONYM_PAIRS:
             if (pos in content_a and neg in content_b) or \
                (neg in content_a and pos in content_b):
-                # 确认不是否定结构（如"不是不喜欢"）
-                if "不" + pos in content_a or "不" + pos in content_b:
+                if MemoryConflictResolver._is_double_negated(content_a, neg):
                     continue
-                if "不" + neg in content_a or "不" + neg in content_b:
+                if MemoryConflictResolver._is_double_negated(content_b, neg):
                     continue
                 return conflict_type
         return None
+
+    # 汉字年级（「大一 / 大二」不写阿拉伯数字，数字正则抓不到）
+    GRADE_CN = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8}
+
+    @staticmethod
+    def _extract_grade(content: str) -> int | None:
+        match = re.search(r"大([一二三四五六七八])", content or "")
+        return MemoryConflictResolver.GRADE_CN.get(match.group(1)) if match else None
 
     @staticmethod
     def _check_identity_conflict(content_a: str, content_b: str) -> str | None:
@@ -170,6 +202,13 @@ class MemoryConflictResolver:
                     # 同一单位但数值不同 — 身份冲突
                     if unit_a in ('岁', '年级', '年'):
                         return "identity"
+
+        # 年级常写成「大一 / 大二」，没有阿拉伯数字，单独比一次
+        grade_a = MemoryConflictResolver._extract_grade(content_a)
+        grade_b = MemoryConflictResolver._extract_grade(content_b)
+        if grade_a is not None and grade_b is not None and grade_a != grade_b:
+            return "identity"
+
         return None
 
     @staticmethod

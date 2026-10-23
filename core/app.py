@@ -5,6 +5,7 @@
 
 import asyncio
 import inspect
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,28 @@ from core.brain import BrainCoordinator, BrainConfig
 from core.tools.mcp_manager import MCPManager
 from core.multimodal.vision import VisionManager
 from core.storage import consolidate_legacy_databases, get_db_path
+
+
+def _warm_memory_vectors(memory_mgr: MemoryManager) -> None:
+    """后台补齐历史记忆的向量索引（幂等，失败不影响启动）。
+
+    这段逻辑单独存在的原因：老版本 embedder 依赖 hub id + 离线模式，
+    在无法访问 huggingface.co 的机器上必然加载失败，`memory_vectors`
+    一直是空表 —— 记忆写入/召回全程静默降级成关键词匹配。
+    现在模型随项目分发到 `models/`，这里顺带把历史记忆回填一遍。
+    """
+    def _worker() -> None:
+        try:
+            result = memory_mgr.reindex_all()
+            if result["indexed"]:
+                logger.info(
+                    f"Memory vectors backfilled: {result['indexed']} 条 "
+                    f"(skipped {result['skipped']}, failed {result['failed']})"
+                )
+        except Exception as e:  # 任何异常都不能影响服务启动
+            logger.warning(f"Memory vector backfill skipped: {e}")
+
+    threading.Thread(target=_worker, name="memory-vector-backfill", daemon=True).start()
 
 
 @dataclass
@@ -87,6 +110,10 @@ class ComponentBuilder:
         memory_mgr = MemoryManager(
             self._data_dir, embedder=embedder, vector_store=vector_store,
         )
+        # 后台补齐历史记忆的向量索引：老版本因为嵌入模型加载不到，
+        # memory_vectors 长期是空表，语义检索全程空转。这里做一次幂等回填，
+        # 放线程里避免拖慢启动（首次加载模型约 1-2s）。
+        _warm_memory_vectors(memory_mgr)
         chat_history = ChatHistoryStorage(
             self._data_dir,
             max_messages=self.config["max_messages"],

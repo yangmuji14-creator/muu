@@ -38,7 +38,7 @@ py-modules = ["main", "setup_wizard", "setup_wechat"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "adapters*", "mcp_servers*", "plugins*", "tools*", "webui*"]
+include = ["core*", "adapters*", "mcp_servers*", "tools*", "webui*"]
 exclude = ["tests*", "data*", "logs*", "config*", "packaging*", "scripts*"]
 
 [tool.setuptools.package-data]

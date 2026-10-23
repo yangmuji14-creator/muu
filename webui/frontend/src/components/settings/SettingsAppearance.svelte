@@ -144,7 +144,7 @@
     background: var(--surface-2); color: var(--text-2);
   }
   .theme-opt.on .theme-opt-icon { background: var(--accent-soft); color: var(--accent-strong); }
-  .theme-opt-txt { display: flex; flex-direction: column; gap: 1px; text-align: left; }
+  .theme-opt-txt { display: flex; flex-direction: column; gap: var(--hair); text-align: left; }
   .theme-opt-label { font-weight: 600; color: var(--text-1); font-size: var(--text-sm); }
   .theme-opt-desc { font-size: var(--text-xs); color: var(--text-3); }
   .theme-check { flex: none; color: var(--accent); }
@@ -172,10 +172,10 @@
   .layout-preview {
     flex: none;
     display: flex;
-    gap: 2px;
+    gap: var(--optical-2);
     width: 56px;
     height: 36px;
-    padding: 2px;
+    padding: var(--optical-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-xs);
     background: var(--surface);
@@ -183,9 +183,9 @@
   .layout-preview.col { flex-direction: column; }
   .lp { background: var(--surface-3); }
   .layout-opt.on .lp { background: var(--accent-soft); }
-  .lp-row { display: flex; gap: 2px; flex: 1; }
+  .lp-row { display: flex; gap: var(--optical-2); flex: 1; }
 
-  .layout-txt { display: flex; flex-direction: column; gap: 1px; text-align: left; min-width: 0; }
+  .layout-txt { display: flex; flex-direction: column; gap: var(--hair); text-align: left; min-width: 0; }
   .layout-label { font-weight: 500; color: var(--text-1); font-size: var(--text-sm); }
   .layout-desc { font-size: var(--text-xs); color: var(--text-3); }
 </style>

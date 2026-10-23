@@ -449,7 +449,7 @@
     color: var(--accent); background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
   }
   .bind-hero-text { flex: 1; min-width: 0; }
-  .bind-hero-text h4 { margin: 0 0 2px; }
+  .bind-hero-text h4 { margin: 0 0 var(--optical-2); }
   .bind-hero-desc { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 
   /* 平台选择 */
@@ -465,14 +465,20 @@
   .platform-icon { flex: none; color: var(--accent); display: flex; }
   .platform-main { flex: 1; min-width: 0; }
   .platform-label { display: block; font-weight: 600; color: var(--text-1); }
-  .platform-desc { display: block; font-size: var(--text-sm); color: var(--text-2); margin-top: 2px; }
-  .platform-arrow { color: var(--text-3); font-size: 18px; }
+  .platform-desc { display: block; font-size: var(--text-sm); color: var(--text-2); margin-top: var(--optical-2); }
+  .platform-arrow { color: var(--text-3); font-size: var(--text-lg); }
 
   /* 扫码 */
   .qr-overlay {
-    position: fixed; inset: 0; z-index: 50;
+    position: fixed; inset: 0; z-index: var(--z-modal-scrim);
     display: flex; align-items: center; justify-content: center;
-    background: var(--overlay); padding: var(--space-4);
+    background: var(--glass-0); padding: var(--space-4);
+  }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .qr-overlay {
+      -webkit-backdrop-filter: blur(var(--glass-blur-0));
+      backdrop-filter: blur(var(--glass-blur-0));
+    }
   }
   .qr-card { width: 100%; max-width: 320px; text-align: center; }
   .qr-img { width: 200px; height: 200px; object-fit: contain; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; margin: var(--space-2) auto; display: block; }

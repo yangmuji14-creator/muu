@@ -58,6 +58,13 @@ def parse_enriched_output(json_str: str) -> dict:
 
     # 旧格式检测：包含 emotion 键（非 emotion_understanding）
     if "emotion" in data and "intensity" in data:
+        # intensity 可能是 null / 字符串 / 带百分号 —— 直接 float() 会 TypeError。
+        # 这个解析器一路「从不抛异常」，模型抽风时也要保住这条。
+        raw_intensity = data.get("intensity", 0.5)
+        try:
+            old_intensity = float(raw_intensity)
+        except (TypeError, ValueError):
+            old_intensity = 0.5
         return {
             "emotion_understanding": data.get("reason", ""),
             "emotional_needs": [],
@@ -69,7 +76,7 @@ def parse_enriched_output(json_str: str) -> dict:
             "personality_shift": {},
             "response_guidance": {"tone": "", "key_points": [], "avoid": []},
             "_old_emotion": data.get("emotion", "中性"),
-            "_old_intensity": float(data.get("intensity", 0.5)),
+            "_old_intensity": old_intensity,
             "_old_reason": data.get("reason", ""),
         }
 
@@ -182,7 +189,9 @@ class EmotionTrajectory:
         ]
 
         if len(scores) < 3:
-            return "stable"
+            # 不可达：进到这里时 `len(self._history) >= 3` 已成立，
+            # 而 `recent = list(self._history)[-5:]` 不会变短。留作防御。
+            return "stable"  # pragma: no cover
 
         # 比较前半和后半
         mid = len(scores) // 2

@@ -194,11 +194,23 @@ import Toast from '../components/Toast.svelte';
 <Toast {toast} />
 
 <div class="page">
-  <h1 class="page-title">记忆</h1>
+  <header class="page-top">
+    <div class="page-top-main">
+      <span class="micro-label">记忆库</span>
+      <h1 class="page-title">记忆</h1>
+      <p class="page-lede">对话里被她判定为重要的事会沉淀在这里，也会整理成日记。</p>
+    </div>
+  </header>
 
   <div class="tabs" role="tablist">
-    <button class="tab-btn {tab === 'memory' ? 'is-active' : ''}" role="tab" type="button" onclick={() => (tab = 'memory')}>重要记忆</button>
-    <button class="tab-btn {tab === 'diary' ? 'is-active' : ''}" role="tab" type="button" onclick={() => (tab = 'diary')}>大脑日记</button>
+    <button class="tab-btn {tab === 'memory' ? 'is-active' : ''}" role="tab" type="button" onclick={() => (tab = 'memory')}>
+      重要记忆
+      {#if messages.length > 0}<span class="tab-count mono">{messages.length}</span>{/if}
+    </button>
+    <button class="tab-btn {tab === 'diary' ? 'is-active' : ''}" role="tab" type="button" onclick={() => (tab = 'diary')}>
+      大脑日记
+      {#if summaries.length > 0}<span class="tab-count mono">{summaries.length}</span>{/if}
+    </button>
   </div>
 
   {#if tab === 'memory'}
@@ -207,8 +219,9 @@ import Toast from '../components/Toast.svelte';
       <div class="empty-state"><p class="empty-desc">加载中…</p></div>
     {:else if messages.length === 0}
       <div class="empty-state">
+        <span class="empty-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 2.4 1.2 4.1 2.5 5.5.7.8 1 1.6 1 2.5v1h7v-1c0-.9.3-1.7 1-2.5C17.8 13.1 19 11.4 19 9a7 7 0 0 0-7-7z"/><line x1="9" y1="22" x2="15" y2="22"/></svg></span>
         <p class="empty-title">还没有重要记忆</p>
-        <p class="empty-desc">与角色深入交流后，重要的内容会沉淀到这里。</p>
+        <p class="empty-desc">多聊几轮之后，值得留下的片段会自动沉淀到这里。也可以在聊天里直接说「记住这件事」。</p>
       </div>
     {:else}
       <div class="list">
@@ -218,13 +231,13 @@ import Toast from '../components/Toast.svelte';
               <div class="mem-head">
                 <span class="mem-level" style="background:{levelColor(m.level)}" title="重要度 {m.level}"></span>
                 <span class="mem-category">{m.category || '未分类'}</span>
+                {#if m.archived}<span class="mem-archived">已归档</span>{/if}
                 <span class="mem-time">{friendlyTime(m.created_at)}</span>
                 {#if m.source}<span class="mem-source">{m.source}</span>{/if}
               </div>
               <p class="mem-content">{m.content}</p>
               <div class="mem-tags">
                 <span class="mem-meta">重要度 {m.level}</span>
-                {#if m.confidence != null}<span class="mem-meta">置信度 {m.confidence}</span>{/if}
                 {#each (m.tags || []).slice(0, 5) as t (t)}
                   <span class="tag">#{t}</span>
                 {/each}
@@ -240,8 +253,17 @@ import Toast from '../components/Toast.svelte';
                   {#if d.access_count != null}
                     <div class="detail-row"><span class="detail-k">访问次数</span><span class="detail-v">{d.access_count}</span></div>
                   {/if}
+                  {#if d.confidence != null}
+                    <div class="detail-row">
+                      <span class="detail-k">置信度</span>
+                      <span class="detail-v">{Number(d.confidence).toFixed(2)}</span>
+                    </div>
+                  {/if}
                   {#if d.forget_score != null}
-                    <div class="detail-row"><span class="detail-k">遗忘指数</span><span class="detail-v">{d.forget_score}</span></div>
+                    <div class="detail-row">
+                      <span class="detail-k">遗忘指数</span>
+                      <span class="detail-v">{Number(d.forget_score).toFixed(3)}</span>
+                    </div>
                   {/if}
                   {#if d.archived != null}
                     <div class="detail-row"><span class="detail-k">已归档</span><span class="detail-v">{d.archived ? '是' : '否'}</span></div>
@@ -275,7 +297,7 @@ import Toast from '../components/Toast.svelte';
   {:else}
     <!-- ============ 大脑日记 ============ -->
     {#if latest}
-      <div class="latest card">
+      <div class="latest">
         <div class="latest-head">
           <span class="latest-badge">最新摘要</span>
           <span class="latest-time">{friendlyTime(latest.created_at)}</span>
@@ -295,13 +317,14 @@ import Toast from '../components/Toast.svelte';
       <div class="empty-state"><p class="empty-desc">加载中…</p></div>
     {:else if summaries.length === 0}
       <div class="empty-state">
+        <span class="empty-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
         <p class="empty-title">还没有大脑日记</p>
-        <p class="empty-desc">记忆会按周期整理成总结日记。</p>
+        <p class="empty-desc">积累到一定量的对话之后，记忆会被整理成周期性总结。先聊聊看。</p>
       </div>
     {:else}
       <div class="diary-list">
         {#each summaries as s (s.id)}
-          <article class="diary card">
+          <article class="diary">
             <header class="diary-head">
               <span class="diary-type">{s.summary_type || '总结'}</span>
               <span class="diary-time">{friendlyTime(s.created_at)}</span>
@@ -350,29 +373,55 @@ import Toast from '../components/Toast.svelte';
 
 <style>
   .page {
-    padding: var(--space-4) var(--space-5) var(--space-7);
-    max-width: 780px;
+    padding: var(--space-6) var(--space-6) var(--space-8);
+    max-width: 820px;
     margin: 0;
   }
+
+  /* ---- 页头: 与通讯录/发现同一套骨架 ---- */
+  .page-top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding-bottom: var(--space-4);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .page-top-main { min-width: 0; display: flex; flex-direction: column; }
   .page-title {
-    margin: 0 0 var(--space-4);
-    font-size: var(--text-base);
-    font-weight: 500;
+    margin: 0;
+    font-size: var(--text-display);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    line-height: 1.12;
     color: var(--text-1);
   }
+  .page-lede {
+    margin: var(--optical-6) 0 0;
+    font-size: var(--text-13);
+    line-height: 1.65;
+    color: var(--text-2);
+    max-width: 52ch;
+  }
 
-  /* 分段切换 -> 下划线标签 (与 Ink 语言一致, 不用药丸底) */
+  /* 分段切换 -> 下划线标签 (与 Ink 语言一致, 不用药丸底)
+     加了等宽计数, 让「重要记忆 12 / 大脑日记 3」一眼看出有多少内容,
+     空 tab 也能立刻判断该不该点进去。 */
   .tabs {
     display: flex;
     gap: var(--space-5);
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-5);
     padding: 0;
     background: transparent;
     border-bottom: 1px solid var(--border);
   }
   .tab-btn {
     flex: none;
-    padding: var(--space-2) 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) 0;
     margin-bottom: -1px;
     border: none;
     border-bottom: 2px solid transparent;
@@ -380,73 +429,105 @@ import Toast from '../components/Toast.svelte';
     color: var(--text-3);
     font-size: var(--text-sm);
     font-weight: 500;
+    letter-spacing: var(--tracking-tight);
     cursor: pointer;
     transition: color var(--transition), border-color var(--transition);
   }
   .tab-btn:hover { color: var(--text-2); }
   .tab-btn.is-active {
-    color: var(--accent);
+    color: var(--text-1);
     border-bottom-color: var(--accent);
   }
+  .tab-count {
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    background: var(--surface-2);
+    padding: var(--hair) var(--optical-6);
+    border-radius: var(--radius-xs);
+  }
+  .tab-btn.is-active .tab-count {
+    color: var(--accent);
+    background: var(--accent-wash);
+  }
 
-  /* ---- 重要记忆 ---- */
+  /* ---- 重要记忆 ----
+     从「一张张卡片」改成「细线分隔的条目」: 卡片(1px 边 + 6px 圆角 + 8px 间距)
+     在长列表里会变成一堆并排的小盒子, 读起来像表单而不是内容流。
+     条目化之后行与行之间只有一条线, 视觉密度上去、噪声下来。 */
   .list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: 0;
+    border-top: 1px solid var(--border);
   }
   .mem-item {
-    background: var(--surface);
-    border: 1px solid var(--card-border);
-    border-radius: var(--card-radius);
-    box-shadow: var(--card-shadow);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
     overflow: hidden;
+    transition: background var(--transition);
   }
+  .mem-item:hover { background: var(--row-hover); }
   .mem-main {
     width: 100%;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-4);
+    padding: var(--space-4) var(--space-3) var(--space-4) var(--space-4);
     border: none;
     background: transparent;
     text-align: left;
     cursor: pointer;
     color: var(--text-1);
   }
-  .mem-main:hover { background: var(--row-hover); }
   .mem-head {
     display: flex;
     align-items: center;
     gap: var(--space-2);
   }
+  /* 重要度从 10px 色块改成 3px 竖条: 色块像「状态灯」, 竖条像「刻度」 */
   .mem-level {
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius-xs);
+    width: 3px;
+    height: 13px;
+    border-radius: 0;
     flex: none;
   }
   .mem-category {
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--accent);
-    background: var(--tint);
-    padding: 1px var(--space-2);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: var(--hair) var(--optical-6);
     border-radius: var(--radius-xs);
   }
   .mem-time {
     font-size: var(--text-xs);
     color: var(--text-3);
     margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .mem-archived {
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-3);
+    border: 1px dashed var(--border-strong);
+    padding: var(--hair) var(--optical-6);
+    border-radius: var(--radius-xs);
   }
   .mem-source {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-3);
+    letter-spacing: var(--tracking-wide);
   }
   .mem-content {
     margin: 0;
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    font-size: var(--text-15);
+    line-height: 1.72;
     color: var(--text-1);
   }
   .mem-tags {
@@ -456,18 +537,20 @@ import Toast from '../components/Toast.svelte';
     flex-wrap: wrap;
   }
   .mem-meta {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-3);
+    font-variant-numeric: tabular-nums;
   }
   .tag {
-    font-size: var(--text-xs);
-    color: var(--info);
-    background: color-mix(in srgb, var(--info) 12%, transparent);
-    padding: 1px var(--space-2);
+    font-size: var(--text-2xs);
+    color: var(--text-2);
+    background: var(--surface-2);
+    padding: var(--hair) var(--optical-6);
     border-radius: var(--radius-xs);
+    letter-spacing: 0.02em;
   }
   .mem-detail {
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-3) var(--space-4) var(--space-4) var(--space-5);
     border-top: 1px solid var(--border);
     background: var(--surface-2);
     display: flex;
@@ -495,11 +578,17 @@ import Toast from '../components/Toast.svelte';
     margin-top: var(--space-1);
   }
 
-  /* ---- 大脑日记 ---- */
+  /* ---- 大脑日记 ----
+     latest 从「无底色的左蓝条块」变成「浅底 + 左冷蓝条 + 顶部微标签」,
+     现在它看起来确实是「置顶摘要」而不是随便一段文字。
+     原配色是 accent 实底 + 白字, 在页面里是一块高饱和蓝块, 过于抢眼;
+     改成 wash 底 + accent 字, 保持强调但不压过正文。 */
   .latest {
     padding: var(--space-4);
-    margin-bottom: var(--space-4);
-    border-left: 3px solid var(--accent);
+    margin-bottom: var(--space-5);
+    background: var(--accent-wash);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
   }
   .latest-head {
     display: flex;
@@ -508,31 +597,37 @@ import Toast from '../components/Toast.svelte';
     margin-bottom: var(--space-2);
   }
   .latest-badge {
-    font-size: var(--text-xs);
-    font-weight: 700;
-    color: var(--accent-contrast);
-    background: var(--accent);
-    padding: 2px var(--space-2);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent-line);
+    padding: var(--hair) var(--optical-7);
     border-radius: var(--radius-xs);
   }
-  .latest-time { font-size: var(--text-xs); color: var(--text-3); }
+  .latest-time { font-size: var(--text-xs); color: var(--text-3); margin-left: auto; }
   .latest-summary {
     margin: 0;
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    font-size: var(--text-15);
+    line-height: 1.75;
     color: var(--text-1);
   }
 
   .diary-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: 0;
+    border-top: 1px solid var(--border);
   }
   .diary {
-    padding: var(--space-4);
+    padding: var(--space-4) 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
   }
   .diary-head {
     display: flex;
@@ -540,23 +635,25 @@ import Toast from '../components/Toast.svelte';
     gap: var(--space-2);
   }
   .diary-type {
-    font-size: var(--text-xs);
-    font-weight: 700;
-    color: var(--accent-contrast);
-    background: var(--accent);
-    padding: 2px var(--space-2);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: var(--hair) var(--optical-7);
     border-radius: var(--radius-xs);
-    text-transform: uppercase;
   }
   .diary-time {
     font-size: var(--text-xs);
     color: var(--text-3);
     margin-left: auto;
+    font-variant-numeric: tabular-nums;
   }
   .diary-summary {
     margin: 0;
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    font-size: var(--text-15);
+    line-height: 1.75;
     color: var(--text-1);
   }
   .block {
@@ -568,18 +665,18 @@ import Toast from '../components/Toast.svelte';
     border-radius: var(--radius);
   }
   .block-label {
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-2);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-3);
   }
-  .tags-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .kv { display: flex; gap: var(--space-3); font-size: var(--text-sm); }
+  .tags-row { display: flex; flex-wrap: wrap; gap: var(--optical-6); }
+  .kv { display: flex; gap: var(--space-3); font-size: var(--text-13); }
   .kv-k { flex: none; color: var(--text-3); }
   .kv-v { color: var(--text-1); word-break: break-word; }
   .diary-foot {
     font-size: var(--text-xs);
     color: var(--text-3);
-    border-top: 1px solid var(--border);
     padding-top: var(--space-2);
   }
 
@@ -590,8 +687,9 @@ import Toast from '../components/Toast.svelte';
   }
 
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-    border-radius: var(--btn-radius); font-size: var(--text-sm); font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--optical-6);
+    border-radius: var(--btn-radius); font-size: var(--text-sm);
+    font-weight: 500; letter-spacing: var(--tracking-tight);
     cursor: pointer; border: 1px solid transparent; white-space: nowrap;
     transition: background var(--transition), border-color var(--transition), transform var(--transition), box-shadow var(--transition);
   }
@@ -604,10 +702,26 @@ import Toast from '../components/Toast.svelte';
   .btn-outline:hover:not(:disabled) { background: var(--btn-outline-hover); }
   .btn-sm { height: var(--btn-h-sm); padding: 0 var(--space-3); font-size: var(--text-xs); }
 
+  /* ---- 空状态 ---- */
   .empty-state {
     display: flex; flex-direction: column; align-items: flex-start; text-align: left;
-    gap: var(--space-1); padding: var(--space-6) 0;
+    gap: var(--space-2); padding: var(--space-5) 0 var(--space-5) var(--space-4);
+    border-left: 2px solid var(--border-strong);
   }
-  .empty-title { margin: 0; font-size: var(--text-sm); font-weight: 500; color: var(--text-2); }
-  .empty-desc { margin: 0; font-size: var(--text-sm); color: var(--empty-text); }
+  .empty-icon { display: inline-flex; color: var(--empty-icon); margin-bottom: var(--space-1); }
+  .empty-title {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-1);
+    line-height: 1.3;
+  }
+  .empty-desc {
+    margin: 0;
+    font-size: var(--text-13);
+    line-height: 1.72;
+    color: var(--text-2);
+    max-width: 46ch;
+  }
 </style>

@@ -17,7 +17,7 @@ export const SETTINGS_GROUPS = [
       { key: 'wechat', icon: 'wechat', title: '微信账号', desc: '账号绑定与扫码登录' },
       { key: 'mcp', icon: 'plug', title: 'MCP 扩展', desc: '外部能力服务器接入' },
       { key: 'voice', icon: 'voice', title: '语音服务商', desc: 'TTS 合成与试听' },
-      { key: 'plugins', icon: 'puzzle', title: '插件 / 工具', desc: '已装能力概览（只读）' },
+      { key: 'plugins', icon: 'puzzle', title: '工具与能力', desc: '内置工具 + MCP 工具（只读）' },
     ],
   },
   {

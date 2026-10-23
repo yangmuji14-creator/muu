@@ -26,6 +26,21 @@ if TYPE_CHECKING:
 # Extract meaningful tokens: 2+ char Chinese phrases, 2+ letter English words, numbers
 TOKEN_RE = re.compile(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{2,}|\d+', re.UNICODE)
 
+# 中文没有空格分词，TOKEN_RE 抓到的是「最长连续汉字串」——整句往往是一个 token，
+# 于是 "查询" 与 "查询这件事的细节" 之间判定为「没有关键词重叠」，短查询的记忆
+# 会被相似度阈值整条丢掉。这里对中文串再切 2-gram，让子串重叠能被识别。
+_CJK_RE = re.compile(r'[\u4e00-\u9fff]+', re.UNICODE)
+
+
+def _keyword_tokens(text: str) -> set[str]:
+    """抽取用于「关键词重叠」判定的 token（中文补 2-gram）。"""
+    tokens: set[str] = set(TOKEN_RE.findall(text or ""))
+    for chunk in _CJK_RE.findall(text or ""):
+        if len(chunk) < 2:
+            continue
+        tokens.update(chunk[i:i + 2] for i in range(len(chunk) - 1))
+    return tokens
+
 
 class MemoryManager:
     MIN_SEMANTIC_SIMILARITY = 0.35
@@ -131,6 +146,13 @@ class MemoryManager:
         if category is None:
             category = Memory.classify(content)
 
+        # 置信度 = 这条记忆「有多可信」，与「有多重要」是两件事。
+        #
+        # 原来这里写的是 memory.confidence = level / 5.0，等于把置信度做成
+        # 了重要度的镜像：level 3 永远 0.6、level 4 永远 0.8，界面上每条
+        # 都显示同一个数字，信息量归零。现在直接采信内容的陈述方式
+        # （明确自述 0.9 / 含糊其辞 0.4 / 普通陈述 0.7），level 由 level
+        # 列自己表达，不再混进来。
         memory = Memory(
             id=f"mem_{uuid.uuid4().hex[:8]}",
             content=content,
@@ -152,10 +174,6 @@ class MemoryManager:
                 f"Memory conflict: '{conflict.content[:30]}' "
                 f"superseded by '{memory.content[:30]}'"
             )
-
-        # 设置置信度
-        if level is not None:
-            memory.confidence = min(1.0, level / 5.0)
 
         memories.append(memory)
 
@@ -198,6 +216,7 @@ class MemoryManager:
         category: str | None = None,
         include_superseded: bool = False,
         min_confidence: float = 0.0,
+        include_archived: bool = True,
     ) -> list[Memory]:
         """获取用户记忆，按重要度和最近访问排序
 
@@ -209,6 +228,9 @@ class MemoryManager:
             category: 分类过滤
             include_superseded: 是否包含已被取代的
             min_confidence: 最低置信度（v1.2 新增，过滤低置信度记忆）
+            include_archived: 是否包含已归档的。管理界面（`/api/memory`）要能看到
+                全部，所以默认 True；**喂给模型的上下文必须传 False**
+                （见 `get_context_prompt`），否则「已经忘掉的事」还会被注入 prompt。
         """
         memories = self._storage.load(user_id)
 
@@ -218,6 +240,8 @@ class MemoryManager:
         filtered = []
         for m in memories:
             if not include_superseded and m.is_superseded:
+                continue
+            if not include_archived and m.archived:
                 continue
             if not (level_min <= m.level <= level_max):
                 continue
@@ -230,16 +254,19 @@ class MemoryManager:
         return filtered[:limit]
 
     def apply_decay(self, user_id: str) -> int:
-        """显式触发记忆衰减，返回被归档/清理的记忆数"""
+        """显式触发记忆衰减，返回被衰减影响的记忆数
+
+        注意这里**不做归档**：归档统一由 `_cleanup_old_memories` 在记忆数
+        超过上限时执行。早先这里还额外数了一遍 `is_superseded and
+        forget_score >= 0.8` 的条数，但那个局部变量从来没被返回或使用，
+        而 docstring 却写着「返回被归档/清理的记忆数」—— 名实不符，
+        已一并删掉。
+        """
         memories = self._storage.load(user_id)
         result = self._decay_system.apply_forget_decay(user_id, memories)
         # 持久化更新后的 forget_score
         for m in memories:
             self._storage.update(user_id, m)
-        archived = 0
-        for m in memories:
-            if m.is_superseded and m.forget_score >= 0.8:
-                archived += 1
         logger.info(f"Decay applied for {user_id}: {result} affected")
         return result
 
@@ -280,6 +307,131 @@ class MemoryManager:
     def get_memory(self, user_id: str, memory_id: str) -> Memory | None:
         """获取单条记忆"""
         return self._storage.get(user_id, memory_id)
+
+    def memory_detail(self, user_id: str, memory_id: str) -> Memory | None:
+        """获取单条记忆的完整信息（遗忘分数按当前时间实时算）。
+
+        存在的原因：`forget_score` 原本只在 `_cleanup_old_memories` 里落库，
+        而那段逻辑要等记忆总数超过上限才会跑一次 —— 平时详情页读到的
+        永远是初始值 0.0，看起来像「这条记忆永远不会被忘」。这里按当前
+        时间重算一遍再返回，读接口不做任何写入。
+        """
+        memory = self._storage.get(user_id, memory_id)
+        if memory is None:
+            return None
+        try:
+            memory.forget_score = self._decay_system.calculate_forget_score(memory)
+        except Exception as e:
+            logger.debug(f"forget_score calc skipped for [{memory_id}]: {e}")
+        return memory
+
+    # ---- 向量维护 ----
+
+    def embedding_status(self) -> dict:
+        """嵌入器与向量库的当前状态（供诊断接口使用）。
+
+        这是记忆系统健康度的唯一可信来源：``ready=False`` 时语义检索
+        会静默降级成关键词排序，功能不崩但记忆召回质量会明显变差。
+        """
+        embedder = self._embedder
+        ready = bool(embedder and embedder.available)
+        status = {
+            "ready": ready,
+            "dimension": getattr(embedder, "dimension", 0) if embedder else 0,
+            "model_source": getattr(embedder, "model_source", "") if embedder else "",
+            "error": getattr(embedder, "init_error", None) if embedder else None,
+            "indexed_by_user": {},
+            "missing": 0,
+        }
+        if not self._vector_store:
+            return status
+        try:
+            for user_id in self._storage.list_users():
+                total = self._storage.count(user_id)
+                indexed = self._vector_store.count(user_id)
+                status["indexed_by_user"][user_id] = {
+                    "memories": total,
+                    "indexed": indexed,
+                }
+                status["missing"] += max(0, total - indexed)
+        except Exception as e:  # 诊断接口绝不能自己抛错
+            logger.debug(f"embedding_status failed: {e}")
+        return status
+
+    def reindex_all(self, user_id: str | None = None, force: bool = False) -> dict:
+        """为已有记忆补建向量索引。
+
+        历史原因：向量库上线前写入的记忆没有 embedding，旧版本的
+        embedder 在无网环境下又必然加载失败，于是 ``memory_vectors``
+        长期是空表，语义检索全程空转。这个方法是幂等的修复入口，
+        启动时可安全调用（已索引的会跳过，除非 ``force``）。
+
+        Args:
+            user_id: 只重建某个用户；None 表示全部用户
+            force:  True 时删除并重建已有向量
+
+        Returns:
+            {"users": n, "indexed": n, "skipped": n, "failed": n}
+        """
+        result = {"users": 0, "indexed": 0, "skipped": 0, "failed": 0}
+        if not self._embedder or not self._vector_store:
+            return result
+        if not self._embedder.available:
+            logger.debug("Reindex skipped: embedder unavailable")
+            return result
+
+        users = [user_id] if user_id else self._storage.list_users()
+        for uid in users:
+            if not uid:
+                continue
+            result["users"] += 1
+            try:
+                memories = self._storage.load(uid)
+            except Exception as e:
+                logger.warning(f"Reindex skipped for {uid}: {e}")
+                result["failed"] += 1
+                continue
+
+            if force and self._vector_store:
+                self._vector_store.delete_all(uid)
+
+            existing = set() if force else self._existing_vector_ids(uid)
+            pending = [m for m in memories if m.id not in existing]
+            result["skipped"] += len(memories) - len(pending)
+            if not pending:
+                continue
+
+            texts = [m.content for m in pending]
+            vecs = self._embedder.embed_batch(texts)
+            if not vecs or len(vecs) != len(pending):
+                logger.warning(f"Reindex failed for {uid}: embedding batch mismatch")
+                result["failed"] += len(pending)
+                continue
+
+            for mem, vec in zip(pending, vecs):
+                try:
+                    self._vector_store.add(uid, mem.id, mem.content, vec, mem.created_at)
+                    result["indexed"] += 1
+                except Exception as e:
+                    logger.debug(f"Reindex insert failed for [{mem.id}]: {e}")
+                    result["failed"] += 1
+
+        if result["indexed"]:
+            logger.info(
+                f"Vector reindex: {result['indexed']} indexed, "
+                f"{result['skipped']} skipped, {result['failed']} failed"
+            )
+        return result
+
+    def _existing_vector_ids(self, user_id: str) -> set[str]:
+        """一次查出已建索引的 memory_id 集合（避免逐条查询）。"""
+        if not self._vector_store:
+            return set()
+        try:
+            return {r["memory_id"] for r in self._vector_store.list_all(user_id)}
+        except Exception as e:
+            logger.debug(f"list_all vectors failed: {e}")
+            return set()
 
     # ---- 删 ----
 
@@ -333,7 +485,9 @@ class MemoryManager:
         混合评分：语义相似度 × 0.5 + 重要度 × 0.3 + 时效 × 0.2
         嵌入器不可用时降级为纯重要度排序。
         """
-        candidates = self.get_memories(user_id, level_min=2, limit=30)
+        candidates = self.get_memories(
+            user_id, level_min=2, limit=30, include_archived=False
+        )
         if not candidates:
             return ""
 
@@ -367,7 +521,7 @@ class MemoryManager:
         for mem, vec in zip(candidates, cand_vecs):
             mem_np = np.array(vec, dtype=np.float32).reshape(1, -1)
             sim = float(np.dot(query_np, mem_np.T)[0, 0])
-            keyword_overlap = bool(set(TOKEN_RE.findall(query)) & set(TOKEN_RE.findall(mem.content)))
+            keyword_overlap = bool(_keyword_tokens(query) & _keyword_tokens(mem.content))
             if sim < self.MIN_SEMANTIC_SIMILARITY and not keyword_overlap:
                 continue
 
@@ -442,13 +596,32 @@ class MemoryManager:
     # ---- 内部 ----
 
     def _cleanup_old_memories(self, memories: list[Memory]) -> list[Memory]:
-        """清理旧记忆：已取代的优先清理，其余按重要度 + 遗忘评分"""
-        # 先更新遗忘评分
-        memories = [self._update_decay(m) for m in memories]
+        """清理旧记忆：先归档「该忘的」，再按重要度 + 遗忘评分裁剪到上限
 
-        # 按遗忘评分自动归档
-        archived = [m for m in memories if m.forget_score >= 0.8 and m.level < 3]
-        active = [m for m in memories if not (m.forget_score >= 0.8 and m.level < 3)]
+        两件事一起做，是因为它们都需要同一个 `forget_score`：
+
+        1. **归档**：`MemoryDecaySystem.should_archive` 判定 —— forget_score 过阈值
+           且 level < 3 的标记 `archived = True`。这个标记真正落到 `archived` 列，
+           归档后不再参与 `get_context_prompt` 的召回（`include_archived=False`）。
+        2. **裁剪**：超过 `max_memories` 时按 `(level, 1-forget_score, last_accessed)`
+           排序保留头部。已归档、已取代的另外归堆，不占「活跃」名额。
+
+        遗忘评分统一由 `MemoryDecaySystem.calculate_forget_score` 计算。
+        这里曾经有一套**独立的** `_update_decay`
+        （`days*0.01*importance_factor*recency - access/50`），与 `decay.py` 的
+        （`days*base*level_mult*cat_mod - access*0.005 - 近期访问奖励`）不一致，
+        结果是「详情页看到的遗忘指数」和「清理时真正用的分数」是两个不同的数，
+        而且归档判定用的是 0.8 硬编码阈值、归档结果从不写进 `archived` 列。
+        现在只留一套公式、一个阈值来源。
+        """
+        for m in memories:
+            m.forget_score = self._decay_system.calculate_forget_score(m)
+            # 已取代的记忆有单独的清理路径，不在这里归档
+            if not m.is_superseded and self._decay_system.should_archive(m):
+                self._decay_system.archive_memory(m)
+
+        archived = [m for m in memories if m.archived]
+        active = [m for m in memories if not m.archived]
 
         # 已取代的优先清理
         superseded = [m for m in active if m.is_superseded]
@@ -467,42 +640,3 @@ class MemoryManager:
         removed = len(candidates) - len(kept)
         logger.info(f"Cleaned up {removed} old memories (archived {len(archived)})")
         return kept + superseded + archived
-
-    def _update_decay(self, memory: Memory) -> Memory:
-        """更新记忆的遗忘评分
-
-        衰减规则:
-            - 基础衰减: 每过一天 +0.01
-            - 重要度保护: level 5 → ×0.2, level 1 → ×1.0
-            - 访问保护: access_count > 0 → 每 5 次访问降低 0.1
-            - 时间保护: 30 天内访问过 → 衰减减半
-        """
-        try:
-            now = datetime.now()
-            created = datetime.fromisoformat(memory.created_at)
-            days_old = (now - created).total_seconds() / 86400
-
-            # 基础衰减
-            base_decay = days_old * 0.01
-
-            # 重要度保护因子 (level 5 → 0.2, level 1 → 1.0)
-            importance_factor = 1.0 - (memory.level - 1) * 0.2
-
-            # 访问保护
-            access_protection = min(memory.access_count / 50, 0.5)
-
-            # 最近访问保护
-            try:
-                last_access = datetime.fromisoformat(memory.last_accessed)
-                days_since_access = (now - last_access).total_seconds() / 86400
-                recency_factor = 0.5 if days_since_access < 30 else 1.0
-            except (ValueError, TypeError):
-                recency_factor = 1.0
-
-            memory.forget_score = (
-                base_decay * importance_factor * recency_factor - access_protection
-            )
-            memory.forget_score = max(0.0, min(1.0, memory.forget_score))
-        except Exception:
-            pass
-        return memory

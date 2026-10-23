@@ -171,13 +171,63 @@
     padding: var(--space-3) 0;
   }
   .conv-field.has-divider { border-top: 1px solid var(--border); }
-  .conv-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .conv-label { display: flex; flex-direction: column; gap: var(--optical-2); min-width: 0; flex: 1; }
   .conv-name { font-weight: 600; color: var(--text-1); font-size: var(--text-sm); }
   .conv-hint { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-snug); }
 
   .num-control { display: flex; flex-direction: column; gap: var(--space-2); flex: none; max-width: 240px; min-width: 180px; }
   .num-value { text-align: center; max-width: 130px; align-self: flex-end; }
-  .num-slider { accent-color: var(--accent); width: 100%; height: 28px; margin: 0; }
+  /* 滑杆原来只设了 accent-color, 用的是浏览器原生样式:
+     轨道是 8px 圆头厚条、滑块是圆润的水滴 —— 在一个通篇 2-6px 方角的
+     界面里, 它是最不像「这套设计语言」的一个控件, 而且是设置页里
+     出现次数最多的控件 (一屏 6 条)。
+     改为自绘: 轨道 3px 方角 + 冷蓝填充, 滑块 10x16 方角 + 1px 描边,
+     hover/active 时滑块变高一点作为触感反馈。 */
+  .num-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 18px;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .num-slider::-webkit-slider-runnable-track {
+    height: 3px;
+    background: var(--surface-3);
+    border-radius: var(--radius-xs);
+  }
+  .num-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 16px;
+    margin-top: -6.5px;
+    background: var(--accent);
+    border: 1px solid var(--accent-strong);
+    border-radius: var(--radius-xs);
+    transition: background var(--transition), transform var(--transition);
+  }
+  .num-slider:hover::-webkit-slider-thumb { background: var(--accent-strong); }
+  .num-slider:active::-webkit-slider-thumb { transform: scaleY(1.1); }
+  .num-slider::-moz-range-track {
+    height: 3px;
+    background: var(--surface-3);
+    border-radius: var(--radius-xs);
+  }
+  .num-slider::-moz-range-progress {
+    height: 3px;
+    background: var(--accent);
+    border-radius: var(--radius-xs);
+  }
+  .num-slider::-moz-range-thumb {
+    width: 8px;
+    height: 14px;
+    background: var(--accent);
+    border: 1px solid var(--accent-strong);
+    border-radius: var(--radius-xs);
+  }
+  .num-slider:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
   .conv-text { max-width: 240px; }
 
@@ -189,18 +239,66 @@
   .sk-line { height: 12px; }
   @keyframes sk-pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
 
-  /* 底部固定保存条 */
+  /* 底部固定保存条
+     .card / .btn-* 已收归 .settings-main 作用域, 而这条保存条挂在
+     SettingsShell 外面, 所以这里自带背景与按钮样式。
+     它是 sticky 到内容区底部的 chrome, 用 glass-1 让下面的表单透出来 ——
+     实心底色会把最后一行字段切成两半, 玻璃反而让"还有内容在下面"可读。 */
   .save-bar {
     position: sticky;
     bottom: 0;
-    z-index: 10;
+    z-index: var(--z-sticky);
     display: flex;
-    gap: var(--space-3);
-    margin-top: var(--space-2);
+    gap: var(--space-2);
+    margin-top: var(--space-4);
     padding: var(--space-3);
-    max-width: 720px;
-    margin-left: auto;
-    margin-right: auto;
+    background: var(--surface);
+    border: 1px solid var(--glass-border-2);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
   }
-  .save-bar .btn-primary, .save-bar .btn-outline { flex: 1; }
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .save-bar {
+      background: var(--glass-1);
+      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .save-bar {
+      background: var(--surface);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+  .save-bar .btn-primary,
+  .save-bar .btn-outline {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--btn-h-lg);
+    padding: 0 var(--space-4);
+    border-radius: var(--btn-radius);
+    font-family: inherit;
+    font-size: var(--text-13);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), transform var(--transition);
+  }
+  .save-bar .btn-primary {
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 1px solid transparent;
+  }
+  .save-bar .btn-primary:hover { background: var(--accent-strong); }
+  .save-bar .btn-primary:disabled { opacity: 0.5; cursor: default; }
+  .save-bar .btn-outline {
+    background: var(--btn-outline-bg);
+    color: var(--btn-outline-text);
+    border: 1px solid var(--btn-outline-border);
+  }
+  .save-bar .btn-outline:hover { background: var(--btn-outline-hover); border-color: var(--border-strong); }
+  .save-bar .btn-primary:active,
+  .save-bar .btn-outline:active { transform: scale(0.98); }
 </style>

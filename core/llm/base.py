@@ -112,6 +112,7 @@ class BaseLLM(ABC):
     async def _retry(self, coro_factory, operation_name: str):
         """带指数退避 + 随机抖动的重试包装器"""
         last_error = None
+        # pragma: no branch —— 最后一轮必走 else: break，循环不会自然耗尽
         for attempt in range(self.max_retries + 1):
             try:
                 return await coro_factory()
@@ -276,6 +277,7 @@ class BaseLLM(ABC):
         last_error = None
         yielded_any = False
         first_token_ms: float | None = None
+        # pragma: no branch —— 最后一轮必走 else: break，循环不会自然耗尽
         for attempt in range(self.max_retries + 1):
             started = monotonic()
             try:

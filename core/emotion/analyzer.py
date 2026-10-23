@@ -133,6 +133,10 @@ class EmotionAnalyzer:
             return False
         # 检查关键词前面 3 个字符内是否有否定词
         prefix = text[max(0, idx - 3):idx]
+        # 强度副词本身就含否定字：「特别」的「别」、「非常」的「非」。
+        # 不先剥掉，`我今天特别开心` 会被读成「别开心」，整句情感直接归零。
+        for booster in INTENSITY_BOOSTERS:
+            prefix = prefix.replace(booster, "")
         return any(neg in prefix for neg in NEGATION_WORDS)
 
     @staticmethod
@@ -169,8 +173,16 @@ class EmotionAnalyzer:
         if not scores:
             return EmotionResult(EmotionType.NEUTRAL, 0.0, [])
 
-        # 找到最高分的情感
-        best_emotion = max(scores, key=scores.get)  # type: ignore
+        # 找到最高分的情感。
+        # 平分时不能只靠字典插入顺序，否则「爱你」「太棒了」「我喜欢你」这类
+        # 更具体的说法永远输给靠前的 HAPPY —— HAPPY 表里有单字「爱」「棒」，
+        # 与 LOVE 的「爱你」、EXCITED 的「太棒了」各命中 1 次打平，而 HAPPY
+        # 是 EMOTION_KEYWORDS 的第一项。用「命中词最长长度」做第二判据：
+        # 词越长越具体，这才是用户真正表达的那个情绪。
+        best_emotion = max(
+            scores,
+            key=lambda e: (scores[e], max(len(k) for k in matched_keywords[e])),
+        )  # type: ignore[arg-type]
         raw_score = scores[best_emotion]
 
         # 计算强度（归一化到 0-1）

@@ -116,7 +116,9 @@ class ChatHistoryStorage:
         safe_id = re.sub(r"[^a-zA-Z0-9_\-.]", "_", user_id)
         path = (self._data_dir / f"{safe_id}.json").resolve()
         if not path.is_relative_to(self._data_dir.resolve()):
-            raise ValueError(f"Invalid user_id: {user_id}")
+            # 兜底：sanitize 已把所有分隔符换掉，正常路径到不了这里。
+            # 留着是因为这行存在本身就在防未来的 sanitize 放宽。
+            raise ValueError(f"Invalid user_id: {user_id}")  # pragma: no cover
         return path
 
     def load(self, user_id: str) -> dict[str, list]:
@@ -273,8 +275,6 @@ class ChatHistoryStorage:
                 self.save(user_id)
                 return True
         return False
-
-        self.save(user_id)
 
     def get_short_memories(self, user_id: str) -> list[dict[str, str]]:
         """获取用户短期记忆"""

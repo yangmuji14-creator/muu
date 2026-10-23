@@ -47,6 +47,17 @@
   let memories = $derived(data?.memories ?? []);
   let loops = $derived(data?.open_loops ?? []);
   let monologue = $derived((data?.monologue ?? '').trim());
+  // 独白常常上百字，244px 宽的栏里会一个人顶掉半屏。默认截到四行，
+  // 超长时才给「展开」——短独白不该看到任何折叠痕迹。
+  // 阈值 50：中文在 215px 内容宽、15px 字号下一行约 12 字，四行约 48 字，
+  // 再多一行就把它当长段落处理。
+  let monologueExpanded = $state(false);
+  let monologueLong = $derived(monologue.length > 50);
+  $effect(() => {
+    // 独白换了内容就收回折叠态，免得旧的展开状态套到新的一段上
+    void monologue;
+    monologueExpanded = false;
+  });
   let diary = $derived(data?.diary ?? null);
 
   let hasAny = $derived(
@@ -89,7 +100,12 @@
     {#if monologue}
       <div class="sp-section">
         <div class="micro-label">心里在想</div>
-        <p class="sp-quote">{monologue}</p>
+        <p class="sp-quote" class:is-clamped={monologueLong && !monologueExpanded}>{monologue}</p>
+        {#if monologueLong}
+          <button class="sp-more" type="button" onclick={() => (monologueExpanded = !monologueExpanded)}>
+            {monologueExpanded ? '收起' : '展开'}
+          </button>
+        {/if}
       </div>
     {/if}
 
@@ -130,7 +146,9 @@
   .state-panel {
     height: 100%;
     overflow-y: auto;
-    background: var(--bg);
+    /* 不再自带底色: 外层 .panel-col 已经是 glass-1, 这里再铺一层 --bg
+       会把玻璃彻底盖住, 让侧栏又变回不透明。 */
+    background: transparent;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
   }
@@ -143,85 +161,125 @@
   }
 
   .sp-section {
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--border);
   }
   .sp-section.sp-last { border-bottom: none; }
-  .sp-section .micro-label { margin-bottom: var(--space-2); }
+  .sp-section .micro-label { margin-bottom: var(--space-3); }
 
+  /* 两条进度行: 3px 细条改成 4px 圆头, 填充色从炭黑改冷蓝。
+     炭黑填充在暖灰轨道上读数很费解 (哪头是“满”看不出来),
+     冷蓝 + 圆头 + 右侧等宽读数, 一眼能读出比例。 */
   .sp-row {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    margin-bottom: 6px;
+    margin-bottom: var(--optical-10);
   }
   .sp-key {
     flex: none;
-    width: 28px;
-    font-size: var(--text-xs);
-    color: var(--text-2);
+    width: 30px;
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-3);
   }
   .sp-track {
     flex: 1;
-    height: 3px;
+    height: 4px;
     background: var(--surface-3);
     overflow: hidden;
+    border-radius: var(--radius-full);
   }
   .sp-fill {
     display: block;
     height: 100%;
-    background: var(--text-1);
+    background: var(--accent);
+    border-radius: var(--radius-full);
+    transition: width var(--transition-slow);
   }
   .sp-val {
     flex: none;
-    min-width: 28px;
+    min-width: 30px;
     text-align: right;
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-2);
+    font-variant-numeric: tabular-nums;
   }
   .sp-note {
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-3);
-    padding-left: 36px;
+    padding-left: 38px;
+    margin-top: -4px;
   }
 
+  /* 内心独白: 这一栏原本是「28px 灰标签 + 14px 灰字」,
+     整块面板读起来没有一处是「内容」。给它一道左竖线 + 15px/1.75,
+     成为这一栏第一个真正可读的段落。 */
   .sp-quote {
     margin: 0;
-    font-size: var(--text-sm);
-    line-height: 1.7;
-    color: var(--text-2);
+    padding-left: var(--space-3);
+    border-left: 2px solid var(--accent-line);
+    font-size: var(--text-15);
+    line-height: 1.72;
+    letter-spacing: 0.005em;
+    color: var(--text-1);
   }
+  .sp-quote.is-clamped {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    overflow: hidden;
+  }
+  .sp-more {
+    display: inline-block;
+    margin: var(--space-1) 0 0 var(--space-3);
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: var(--text-xs);
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .sp-more:hover { text-decoration: underline; }
 
   .sp-list {
     margin: 0;
     padding: 0;
     list-style: none;
   }
+  /* 记忆条目: 原来是 nowrap + ellipsis, 242px 宽的栏里几乎每条都被裁成
+     「他说他会一直陪着我，我记住了…」—— 六条记忆五条以省略号收尾,
+     一栏全是断句, 读的人根本得不到信息。放开到两行 clamp:
+     一行放得下的自然还是一行, 长的那条多给一行就够说完整。 */
   .sp-list li {
     position: relative;
     padding-left: 12px;
-    margin-bottom: 5px;
-    font-size: var(--text-sm);
-    line-height: 1.6;
+    margin-bottom: var(--optical-7);
+    font-size: var(--text-13);
+    line-height: 1.62;
     color: var(--text-2);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    word-break: break-word;
   }
   .sp-list li::before {
     content: '';
     position: absolute;
     left: 0;
-    top: 8px;
-    width: 4px;
+    top: 9px;
+    width: 5px;
     height: 1px;
-    background: var(--text-3);
+    background: var(--border-strong);
   }
   /* 待跟进: 标题可截断, 日期完整保留（不随长标题被裁掉） */
   .sp-list li.sp-loop {
     display: flex;
     align-items: baseline;
-    gap: 6px;
+    gap: var(--optical-6);
     overflow: visible;
     white-space: normal;
   }
@@ -234,15 +292,16 @@
   }
   .sp-date {
     flex: none;
-    font-size: var(--text-xs);
+    font-size: var(--text-2xs);
     color: var(--text-3);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
   .sp-diary {
     margin: 0;
-    font-size: var(--text-sm);
-    line-height: 1.7;
+    font-size: var(--text-13);
+    line-height: 1.74;
     color: var(--text-2);
     display: -webkit-box;
     -webkit-line-clamp: 6;
@@ -252,11 +311,11 @@
   }
 
   .sp-empty {
-    padding: var(--space-5) var(--space-4);
-    font-size: var(--text-sm);
+    padding: var(--space-6) var(--space-4);
+    font-size: var(--text-13);
     color: var(--text-3);
-    line-height: 1.7;
+    line-height: 1.72;
   }
-  .sp-empty p { margin: 0 0 4px; }
+  .sp-empty p { margin: 0 0 var(--optical-5); }
   .sp-hint { font-size: var(--text-xs); color: var(--text-3); }
 </style>
