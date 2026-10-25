@@ -1,18 +1,30 @@
 <script>
-  // TopBar.svelte — 移动端顶栏 (品牌 + 右侧插槽)
+  // TopBar.svelte — 窄屏顶栏（品牌 + 右侧动作）
+  //
+  // brand 片段：页面可接管左侧。会话页需要「汉堡开列表 + 当前会话名」，
+  //   若页面再自己画一条标题栏，窄屏就会出现两条顶栏叠在一起 ——
+  //   所以内容由页面给，这条栏本身只有一个。
   import ThemeToggle from './ThemeToggle.svelte';
+
+  let { brand = null, actions = null } = $props();
 </script>
 
 <header class="topbar">
-  <div class="brand">
-    <span class="brand-mark" aria-hidden="true"></span>
-    <span class="brand-name">慕</span>
-  </div>
+  {#if brand}
+    <div class="brand brand-page">{@render brand()}</div>
+  {:else}
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">慕</span>
+    </div>
+  {/if}
 
   <div class="actions">
-    <slot name="actions">
+    {#if actions}
+      {@render actions()}
+    {:else}
       <ThemeToggle />
-    </slot>
+    {/if}
   </div>
 </header>
 
@@ -58,6 +70,13 @@
     align-items: center;
     gap: var(--optical-9);
     min-width: 0;
+  }
+
+  /* 页面接管时: 汉堡按钮贴左缘, 标题吃掉剩余宽度 */
+  .brand-page {
+    flex: 1;
+    gap: var(--space-1);
+    margin-left: calc(-1 * var(--space-2));
   }
 
   /* 与桌面侧栏同一枚标识: 黑方块 + 右下 5px 冷蓝角 */

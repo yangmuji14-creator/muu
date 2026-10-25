@@ -130,7 +130,15 @@ config/*.bak-*
 /docs/WebUI问题清单.md
 /docs/模型配置与记忆排查.md
 /docs/设计语言_Ink.md
+/docs/方案_*.md
 /docs/screenshots/legacy/
+# 历史设计迭代截图（glass / ink / ink-v2 / apple-glass / tmp）只留本地。
+# 仓库只保留 README 用到的当前主题：docs/screenshots/midnight-violet/
+/docs/screenshots/glass/
+/docs/screenshots/ink/
+/docs/screenshots/ink-v2/
+/docs/screenshots/apple-glass/
+/docs/screenshots/tmp/
 /docs/iLink接入调研.md
 /docs/项目架构对齐方案.md
 /docs/项目理解报告/

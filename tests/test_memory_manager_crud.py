@@ -384,6 +384,75 @@ class TestApplyDecay:
         assert mgr.apply_decay("nobody") == 0
 
 
+class TestDecayFlush:
+    """`get_memories` 里的衰减结果必须真的落库（第三批修复）
+
+    之前 `get_memories` 只改内存对象、不写回，遗忘分永远停在创建时的值。
+    """
+
+    def test_get_memories_persists_forget_score(self, mgr) -> None:
+        mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
+        # 绕开 manager，直接从存储层读，确认写回的是数据库而不是内存对象
+        before = mgr._storage.get("u", "stale")
+        assert before is not None
+        assert before.forget_score == 0.0
+
+        mgr.get_memories("u")
+
+        after = mgr._storage.get("u", "stale")
+        assert after is not None
+        assert after.forget_score > 0
+
+    def test_flush_is_throttled(self, mgr, monkeypatch) -> None:
+        mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
+        mgr.get_memories("u")  # 第一次：落库
+
+        calls: list[int] = []
+        real = mgr._storage.update_many
+
+        def spy(user_id, memories):
+            calls.append(len(memories))
+            return real(user_id, memories)
+
+        monkeypatch.setattr(mgr._storage, "update_many", spy)
+        mgr.get_memories("u")  # 节流窗口内：不应再写
+        assert calls == []
+
+    def test_apply_decay_bypasses_throttle(self, mgr, monkeypatch) -> None:
+        mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
+        mgr.get_memories("u")  # 把节流窗口打开
+
+        calls: list[int] = []
+        real = mgr._storage.update_many
+
+        def spy(user_id, memories):
+            calls.append(len(memories))
+            return real(user_id, memories)
+
+        monkeypatch.setattr(mgr._storage, "update_many", spy)
+        mgr.apply_decay("u")  # 显式调用必须立即写库
+        assert calls == [1]
+
+    def test_flush_failure_does_not_raise(self, mgr, monkeypatch) -> None:
+        mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
+
+        def boom(user_id, memories):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(mgr._storage, "update_many", boom)
+        # 衰减落库失败不能把整轮对话搞挂
+        assert len(mgr.get_memories("u")) == 1
+
+    def test_skips_archived_and_superseded(self, mgr) -> None:
+        mgr._storage.save("u", [
+            _old("arch", days=200, level=2, archived=True),
+            _old("super", days=200, level=2, superseded_by="x"),
+            _old("live", days=200, level=2, category="other"),
+        ])
+        written = mgr._flush_decay("u", mgr._storage.load("u"), force=True)
+        assert written == 1
+
+
 class TestListAndSearch:
     def test_list_all_paginates(self, mgr) -> None:
         mgr._storage.save("u", [_old(f"m{i}", level=i + 1) for i in range(5)])
@@ -428,6 +497,67 @@ class TestListAndSearch:
         manager = MemoryManager(tmp_path, embedder=FakeEmbedder(fail=True),
                                 vector_store=vs)
         assert manager.semantic_search("u", "查询") == []
+
+
+class TestSemanticSearchFiltering:
+    """`semantic_search` 必须过滤作废/归档/已删除的记忆（第五批修复）
+
+    向量表只有 ``(user_id, memory_id, content, embedding, created_at)``，
+    没有任何状态列。冲突取代、归档、删除都只改 ``memories`` 表，所以
+    直接返回 ``vector_store.search()`` 的原始结果会把「已经不该被记起的
+    内容」交给调用方 —— 用户能在管理界面搜到自相矛盾的记忆。
+    """
+
+    def test_superseded_excluded(self, mgr) -> None:
+        old = mgr.add_memory_sync("u", "我喜欢喝咖啡", level=4)
+        new = mgr.add_memory_sync("u", "我不喜欢喝咖啡了", level=4)
+        assert old is not None and new is not None
+        # 手工标记取代关系（冲突检测的判定逻辑另有测试）
+        mgr._storage.update("u", _old(old.id, content="我喜欢喝咖啡",
+                                      level=4, superseded_by=new.id))
+
+        hits = mgr.semantic_search("u", "查询", top_k=10)
+        ids = [h["memory_id"] for h in hits]
+        assert old.id not in ids, "被取代的记忆不该被语义检索召回"
+        assert new.id in ids
+
+    def test_archived_excluded(self, mgr) -> None:
+        mem = mgr.add_memory_sync("u", "相关内容", level=4)
+        assert mem is not None
+        mgr._storage.update("u", _old(mem.id, content="相关内容",
+                                      level=4, archived=True))
+        assert mgr.semantic_search("u", "查询", top_k=10) == []
+
+    def test_orphan_vector_excluded(self, mgr, vs) -> None:
+        """向量表里有、memories 表里没有 → 孤儿，不该被召回。"""
+        mem = mgr.add_memory_sync("u", "相关内容", level=4)
+        assert mem is not None
+        mgr._storage.delete("u", mem.id)
+        assert vs.count("u") == 1, "前置条件：向量还在"
+        assert mgr.semantic_search("u", "查询", top_k=10) == []
+
+    def test_top_k_still_satisfied_after_filtering(self, mgr) -> None:
+        """作废记忆占多数时，过滤后仍要尽量凑够 top_k。"""
+        keep = [mgr.add_memory_sync("u", f"相关的内容{i}", level=4) for i in range(3)]
+        dead = [mgr.add_memory_sync("u", f"相关但作废{i}", level=4) for i in range(10)]
+        for m in dead:
+            assert m is not None
+            mgr._storage.update("u", _old(m.id, content=f"相关但作废{dead.index(m)}",
+                                          level=4, superseded_by="x"))
+        hits = mgr.semantic_search("u", "查询", top_k=3)
+        ids = {h["memory_id"] for h in hits}
+        assert len(hits) == 3
+        assert ids == {m.id for m in keep}
+
+    def test_state_lookup_failure_returns_empty(self, mgr, monkeypatch) -> None:
+        """查不到状态时返回空，而不是把作废内容漏出去。"""
+        mgr.add_memory_sync("u", "相关内容", level=4)
+
+        def boom(user_id):
+            raise RuntimeError("memories.db gone")
+
+        monkeypatch.setattr(mgr._storage, "load", boom)
+        assert mgr.semantic_search("u", "查询") == []
 
 
 class TestMemoryDetail:
@@ -622,8 +752,12 @@ class TestContextPrompt:
         assert "内容记忆" in prompt
 
     def test_hybrid_falls_back_on_batch_mismatch(self, mgr, monkeypatch) -> None:
-        mgr.add_memory_sync("u", "内容记忆", level=4)
-        mgr.add_memory_sync("u", "另一条记忆", level=4)
+        """向量表没覆盖到时退回现算路径，现算批量长度不符也要降级到重要度排序。"""
+        # 直接写存储层，绕开 _index_memory → 向量表里没有这两条
+        mgr._storage.save("u", [
+            _old("a", content="内容记忆", level=4),
+            _old("b", content="另一条记忆", level=4),
+        ])
         monkeypatch.setattr(type(mgr._embedder), "embed_batch",
                             lambda self, texts: [unit(1)])
         prompt = mgr.get_context_prompt("u", query="查询")
@@ -637,13 +771,13 @@ class TestContextPrompt:
 
     def test_embed_none_falls_back(self, mgr, monkeypatch) -> None:
         """embed() 返回 None（不是抛异常）也要走降级路径。"""
-        mgr.add_memory_sync("u", "内容记忆", level=4)
+        mgr._storage.save("u", [_old("a", content="内容记忆", level=4)])
         monkeypatch.setattr(type(mgr._embedder), "embed", lambda self, text: None)
         prompt = mgr.get_context_prompt("u", query="查询")
         assert "内容记忆" in prompt
 
     def test_batch_empty_falls_back(self, mgr, monkeypatch) -> None:
-        mgr.add_memory_sync("u", "内容记忆", level=4)
+        mgr._storage.save("u", [_old("a", content="内容记忆", level=4)])
         monkeypatch.setattr(type(mgr._embedder), "embed_batch",
                             lambda self, texts: [])
         prompt = mgr.get_context_prompt("u", query="查询")
@@ -691,6 +825,110 @@ class TestContextPrompt:
         assert mgr.get_context_prompt("u").count("查询相关的内容条目") == 2
 
 
+class TestVectorStoreRanking:
+    """主对话召回必须复用 `memory_vectors` 里已建好的向量（第四批修复）
+
+    历史缺陷：`get_context_prompt` 每轮把候选记忆全部重新 embed 一遍，
+    写进向量库的索引只有管理界面的 `semantic_search` 在读 —— 用户写入的
+    向量在主对话里从未被使用，200 条记忆规模下每轮白烧 ~140ms。
+    """
+
+    def test_uses_stored_vectors_without_reembedding(self, mgr, monkeypatch) -> None:
+        mgr.add_memory_sync("u", "相关内容", level=4)
+        mgr.add_memory_sync("u", "别的东西", level=4)
+
+        batch_calls: list[int] = []
+        monkeypatch.setattr(
+            type(mgr._embedder), "embed_batch",
+            lambda self, texts: batch_calls.append(len(texts)) or [],
+        )
+        get_emb_calls: list[list[str] | None] = []
+        real = mgr._vector_store.get_embeddings
+
+        def spy(user_id, memory_ids=None):
+            get_emb_calls.append(memory_ids)
+            return real(user_id, memory_ids)
+
+        monkeypatch.setattr(mgr._vector_store, "get_embeddings", spy)
+
+        prompt = mgr.get_context_prompt("u", query="查询")
+
+        assert "相关内容" in prompt
+        assert batch_calls == [], "不应该再逐条重算候选向量"
+        assert get_emb_calls and get_emb_calls[0], "应该按 id 取回已存的向量"
+
+    def test_query_embedded_exactly_once(self, mgr, monkeypatch) -> None:
+        mgr.add_memory_sync("u", "相关内容", level=4)
+        calls: list[str] = []
+        real = mgr._embedder.embed
+
+        def spy(text):
+            calls.append(text)
+            return real(text)
+
+        monkeypatch.setattr(mgr._embedder, "embed", spy)
+        mgr.get_context_prompt("u", query="查询")
+        assert calls == ["查询"], f"查询只该 embed 一次，实际 {calls}"
+
+    def test_missing_vector_falls_back_to_live_embed(self, mgr, monkeypatch) -> None:
+        """向量表没覆盖到候选时，必须回退到现算路径而不是漏掉记忆。"""
+        mgr._storage.save("u", [_old("a", content="查询相关的内容", level=4)])
+        assert mgr._vector_store.count("u") == 0
+
+        batch_calls: list[int] = []
+        real_batch = mgr._embedder.embed_batch
+
+        def spy(texts):
+            batch_calls.append(len(texts))
+            return real_batch(texts)
+
+        monkeypatch.setattr(mgr._embedder, "embed_batch", spy)
+        prompt = mgr.get_context_prompt("u", query="查询")
+        assert "查询相关的内容" in prompt
+        assert batch_calls == [1], "缺向量时应走现算回退路径"
+
+    def test_partial_coverage_uses_fallback(self, mgr, monkeypatch) -> None:
+        """只索引了一部分 → 整体回退，避免新旧向量混排导致排序不可解释。"""
+        mgr.add_memory_sync("u", "有索引的内容", level=4)
+        mgr._storage.add("u", _old("no_vec", content="没索引的内容", level=4))
+        assert mgr._vector_store.count("u") == 1
+        assert mgr._storage.count("u") == 2
+
+        batch_calls: list[int] = []
+        real_batch = mgr._embedder.embed_batch
+
+        def spy(texts):
+            batch_calls.append(len(texts))
+            return real_batch(texts)
+
+        monkeypatch.setattr(mgr._embedder, "embed_batch", spy)
+        mgr.get_context_prompt("u", query="查询")
+        assert batch_calls == [2], "覆盖不全时应回退到现算（2 条候选）"
+
+    def test_vector_store_error_falls_back(self, mgr, monkeypatch) -> None:
+        mgr.add_memory_sync("u", "相关内容", level=4)
+
+        def boom(user_id, memory_ids=None):
+            raise RuntimeError("vectors.db gone")
+
+        monkeypatch.setattr(mgr._vector_store, "get_embeddings", boom)
+        prompt = mgr.get_context_prompt("u", query="查询")
+        assert "相关内容" in prompt
+
+    def test_ranking_matches_live_path(self, mgr) -> None:
+        """快路径与慢路径的排序结果必须一致（只是省掉了重算向量）。"""
+        for content in ("查询相关的内容", "完全无关的话题", "查询这件事的细节"):
+            mgr.add_memory_sync("u", content, level=4)
+
+        fast = mgr.get_context_prompt("u", query="查询")
+
+        # 手动走慢路径：清空向量库 → 触发回退
+        mgr._vector_store.delete_all("u")
+        slow = mgr.get_context_prompt("u", query="查询")
+
+        assert fast == slow
+
+
 # --------------------------------------------------------------------------- #
 # 分类 / 导入导出
 # --------------------------------------------------------------------------- #
@@ -730,3 +968,167 @@ class TestCategoryAndTransfer:
 
     def test_export_empty(self, mgr) -> None:
         assert mgr.export_memories("nobody") == []
+
+
+# --------------------------------------------------------------------------- #
+# 孤儿向量：记忆被裁掉 / 清空后，向量必须同步消失
+# --------------------------------------------------------------------------- #
+
+
+class TestOrphanVectors:
+    """`memory_vectors` 不允许比 `memories` 长出孤儿行。
+
+    孤儿向量是用户可感知的正确性缺陷：`semantic_search` 会把「已经不在
+    memories 里、管理界面也看不到」的内容召回进 prompt。
+    """
+
+    def test_cleanup_prunes_dropped_vectors(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, max_memories=3, embedder=FakeEmbedder(), vector_store=vs)
+        for i in range(6):
+            mgr.add_memory_sync("u", f"内容{i}", level=3)
+        assert mgr._storage.count("u") == 3
+        assert vs.count("u") == 3, "被裁掉的记忆必须同时删掉向量"
+
+    def test_cleanup_kept_memories_still_searchable(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, max_memories=2, embedder=FakeEmbedder(), vector_store=vs)
+        for i in range(5):
+            mgr.add_memory_sync("u", f"内容{i}", level=4)
+        alive = {m.id for m in mgr._storage.load("u")}
+        indexed = {r["memory_id"] for r in vs.list_all("u")}
+        assert indexed == alive
+
+    def test_semantic_search_never_returns_dead_memory(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, max_memories=2, embedder=FakeEmbedder(), vector_store=vs)
+        for i in range(5):
+            mgr.add_memory_sync("u", f"内容{i}", level=4)
+        alive = {m.id for m in mgr._storage.load("u")}
+        hits = mgr.semantic_search("u", "查询", top_k=10)
+        assert hits, "向量检索应仍有结果"
+        assert all(h["memory_id"] in alive for h in hits), "不能召回已不存在的记忆"
+
+    def test_cleanup_without_user_id_does_not_touch_vectors(self, tmp_path, vs) -> None:
+        """私有方法被直接调用（无 user_id）时不做 IO，保持旧行为。"""
+        mgr = MemoryManager(tmp_path, max_memories=1, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "保留", level=5)
+        extra = Memory(id="m_extra", content="多余的", level=1)
+        out = mgr._cleanup_old_memories(
+            [Memory(id="m_keep", content="保留的", level=5), extra]
+        )
+        assert [m.id for m in out] == ["m_keep"]
+        assert vs.count("u") == 1, "没传 user_id 时不应误删别的向量"
+
+    def test_vector_delete_failure_is_swallowed(self, tmp_path, vs, monkeypatch) -> None:
+        """单条向量删除失败不能打断整轮清理。"""
+        mgr = MemoryManager(tmp_path, max_memories=1, embedder=FakeEmbedder(), vector_store=vs)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("delete failed")
+
+        monkeypatch.setattr(type(vs), "delete", boom)
+        mgr.add_memory_sync("u", "内容一", level=4)
+        mgr.add_memory_sync("u", "内容二", level=5)
+        assert mgr._storage.count("u") == 1, "清理本身仍要成功"
+
+    def test_reindex_prunes_orphans_without_force(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "活着的内容", level=4)
+        vs.add("u", "m_ghost", "早已不存在的内容", unit(7))
+        assert vs.count("u") == 2
+
+        result = mgr.reindex_all()
+        assert result["pruned"] == 1
+        assert vs.count("u") == 1
+        assert {r["memory_id"] for r in vs.list_all("u")} != {"m_ghost"}
+
+    def test_reindex_prune_is_idempotent(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "活着的内容", level=4)
+        vs.add("u", "m_ghost", "幽灵内容", unit(7))
+        assert mgr.reindex_all()["pruned"] == 1
+        assert mgr.reindex_all()["pruned"] == 0
+
+    def test_reindex_prune_specific_user_only(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u1", "用户一", level=4)
+        mgr.add_memory_sync("u2", "用户二", level=4)
+        vs.add("u1", "m_ghost1", "幽灵一", unit(7))
+        vs.add("u2", "m_ghost2", "幽灵二", unit(8))
+
+        result = mgr.reindex_all(user_id="u1")
+        assert result["pruned"] == 1
+        assert vs.count("u2") == 2, "只清指定用户的孤儿"
+
+    def test_reindex_prune_failure_is_swallowed(self, tmp_path, vs, monkeypatch) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "活着的内容", level=4)
+        vs.add("u", "m_ghost", "幽灵内容", unit(7))
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("delete failed")
+
+        monkeypatch.setattr(type(vs), "delete", boom)
+        result = mgr.reindex_all()
+        assert result["pruned"] == 0
+        assert result["failed"] == 0, "孤儿清理失败不算索引失败"
+
+
+class TestClearMemories:
+    """整用户级删除必须同时清 memories 和 memory_vectors。
+
+    `/memories clear` 曾经自建 MemoryStorage 直接 delete_all，绕过向量库 ——
+    用户清空记忆后 semantic_search 仍能召回已删除内容。
+    """
+
+    def test_clear_removes_both_sides(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "内容一", level=4)
+        mgr.add_memory_sync("u", "内容二", level=4)
+        assert mgr._storage.count("u") == 2
+        assert vs.count("u") == 2
+
+        removed = mgr.clear_memories("u")
+        assert removed == 2
+        assert mgr._storage.count("u") == 0
+        assert vs.count("u") == 0
+
+    def test_clear_makes_semantic_search_empty(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "查询相关的秘密", level=5)
+        assert mgr.semantic_search("u", "查询", top_k=10)
+
+        mgr.clear_memories("u")
+        assert mgr.semantic_search("u", "查询", top_k=10) == [], (
+            "清空后语义检索必须一条都召不回来"
+        )
+
+    def test_clear_does_not_touch_other_users(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u1", "用户一的内容", level=4)
+        mgr.add_memory_sync("u2", "用户二的内容", level=4)
+
+        mgr.clear_memories("u1")
+        assert mgr._storage.count("u1") == 0
+        assert vs.count("u1") == 0
+        assert mgr._storage.count("u2") == 1
+        assert vs.count("u2") == 1
+
+    def test_clear_without_vector_store(self, tmp_path) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder())
+        mgr.add_memory_sync("u", "内容一", level=4)
+        assert mgr.clear_memories("u") == 1
+        assert mgr._storage.count("u") == 0
+
+    def test_clear_empty_user_returns_zero(self, tmp_path, vs) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        assert mgr.clear_memories("nobody") == 0
+
+    def test_clear_survives_vector_failure(self, tmp_path, vs, monkeypatch) -> None:
+        mgr = MemoryManager(tmp_path, embedder=FakeEmbedder(), vector_store=vs)
+        mgr.add_memory_sync("u", "内容一", level=4)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("vector clear failed")
+
+        monkeypatch.setattr(type(vs), "delete_all", boom)
+        assert mgr.clear_memories("u") == 1
+        assert mgr._storage.count("u") == 0, "向量清空失败不能回滚记忆清空"

@@ -17,6 +17,7 @@ import pytest
 
 from core.memory.manager import MemoryManager
 from core.memory.models import Memory
+from core.memory.vector_store import VectorStore
 
 
 def unit(seed: int, dim: int = 8) -> list[float]:
@@ -110,6 +111,54 @@ class TestEmbeddingStatus:
         assert status["dimension"] == 0
 
 
+class TestEmbeddingStatusDirections:
+    """`missing` 与 `orphaned` 必须分开报（第六批修复）
+
+    历史缺陷：`status["missing"] += max(0, total - indexed)` —— 孤儿向量让
+    ``indexed > total`` 时差值被吃掉，报成 ``missing=0``，健康检查因此
+    永远判 ok。两个方向对应两类不同故障，混成一个数就必然漏掉一类。
+    """
+
+    def test_orphan_vectors_reported_separately(self, tmp_path):
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        m.add_memory_sync("u", "只有一条真记忆", level=4)
+        # 直接往向量表塞孤儿，模拟「记忆被删了但向量没删」
+        vs.add("u", "ghost1", "幽灵一", unit(1))
+        vs.add("u", "ghost2", "幽灵二", unit(2))
+        assert m._storage.count("u") == 1
+        assert vs.count("u") == 3
+
+        status = m.embedding_status()
+        assert status["missing"] == 0, "没有缺索引的记忆"
+        assert status["orphaned"] == 2, "孤儿向量必须被单独报出来"
+        vs.close()
+
+    def test_missing_still_reported(self, tmp_path):
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        m.add_memory_sync("u", "记忆一", level=4)
+        m.add_memory_sync("u", "记忆二", level=4)
+        vs.delete_all("u")
+
+        status = m.embedding_status()
+        assert status["missing"] == 2
+        assert status["orphaned"] == 0
+        vs.close()
+
+    def test_balanced_is_zero(self, tmp_path):
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        m.add_memory_sync("u", "记忆一", level=4)
+        status = m.embedding_status()
+        assert status["missing"] == 0
+        assert status["orphaned"] == 0
+        vs.close()
+
+
 class TestReindex:
     """reindex_all 针对的是「写入时没有向量」的历史记忆。
 
@@ -160,7 +209,9 @@ class TestReindex:
 
     def test_missing_embedder_returns_zeros(self, tmp_path):
         m = MemoryManager(tmp_path)
-        assert m.reindex_all() == {"users": 0, "indexed": 0, "skipped": 0, "failed": 0}
+        assert m.reindex_all() == {
+            "users": 0, "indexed": 0, "skipped": 0, "failed": 0, "pruned": 0,
+        }
 
     def test_disabled_embedder_returns_zeros(self, tmp_path):
         from core.memory.vector_store import VectorStore
@@ -216,6 +267,123 @@ class TestHybridRanking:
         mem = Memory(id="m1", content="相关内容", level=3, created_at="not-a-date")
         out = mgr._hybrid_rank_prompt([mem], [unit(1)], unit(1), limit=5, query="查询")
         assert "相关内容" in out
+
+
+class TestRelativeGate:
+    """相对闸门（第七批修复）
+
+    历史缺陷：只有绝对阈值 ``MIN_SEMANTIC_SIMILARITY``。实测
+    （``tools/probe_gate_noise.py``）在 23 条日常记忆 × 10 个闲聊查询下，
+    0.35 的过闸率是 53%、平均每条查询放进 12.2 条记忆 —— 等于没有闸门。
+    ``RELATIVE_SIMILARITY_RATIO`` 要求候选达到「最佳候选 × 0.9」，
+    在同等召回率下把陪跑噪声从 1.80 条压到 0.30 条
+    （``tools/calibrate_relative_gate.py``）。
+    """
+
+    def _mem(self, content, level=3, days_old=0):
+        created = (datetime.now() - timedelta(days=days_old)).isoformat()
+        return Memory(id=f"m_{abs(hash(content)) % 10000}", content=content,
+                      level=level, created_at=created, last_accessed=created)
+
+    @staticmethod
+    def _partial_vec(cos: float) -> list[float]:
+        """造一个与 ``unit(1)`` 余弦恰为 ``cos`` 的向量。"""
+        a = np.array(unit(1), dtype=np.float32)
+        other = np.array(unit(7), dtype=np.float32)
+        return (cos * a + np.sqrt(1 - cos * cos) * other).tolist()
+
+    def test_weak_candidates_dropped_when_strong_match_exists(self, mgr):
+        """有强匹配时，勉强沾边的候选必须被相对闸门挡掉。
+
+        构造：query 与 A 的向量完全相同（sim=1.0），与 B 余弦 0.6
+        （仍高于绝对阈值 0.35）。旧逻辑两条都留，新逻辑只留 A。
+        """
+        cands = [self._mem("强相关的内容", level=3),
+                 self._mem("勉强沾边的内容", level=3)]
+        out = mgr._hybrid_rank_prompt(
+            cands, [unit(1), self._partial_vec(0.6)], unit(1),
+            limit=5, query="查询",
+        )
+        assert "强相关的内容" in out
+        assert "勉强沾边的内容" not in out, "相对闸门没生效"
+
+    def test_keyword_overlap_bypasses_relative_gate(self, mgr):
+        """字面命中说明用户明确提到了这件事，不该被相对闸门挡掉。"""
+        cands = [self._mem("强相关的内容", level=3),
+                 self._mem("查询这件事的细节", level=3)]
+        out = mgr._hybrid_rank_prompt(
+            cands, [unit(1), self._partial_vec(0.6)], unit(1),
+            limit=5, query="查询",
+        )
+        assert "查询这件事的细节" in out
+
+    def test_single_candidate_always_survives_relative_gate(self, mgr):
+        """只有一条候选时 top1 就是自己，相对闸门必须放行（否则永远空）。"""
+        cands = [self._mem("唯一的内容", level=3)]
+        out = mgr._hybrid_rank_prompt(cands, [unit(1)], unit(1), limit=5, query="查询")
+        assert "唯一的内容" in out
+
+    def test_ratio_is_a_contract(self):
+        """相对比例是行为契约，改动会静默改变注入的记忆条数。"""
+        assert MemoryManager.RELATIVE_SIMILARITY_RATIO == 0.9
+
+
+class TestAccessCount:
+    """语义召回要记访问（第七批修复）
+
+    历史缺陷：`touch()` 只在关键词 `search()` 里调用，语义召回从不计数，
+    `access_count` 恒为 0 —— 衰减公式「高访问频率衰减慢」和
+    `get_retrieval_weight` 的 24h 新鲜项永远拿不到数据。
+    """
+
+    def test_recall_persists_access_count(self, tmp_path):
+        from core.memory.vector_store import VectorStore
+
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        mem = m.add_memory_sync("u", "相关的内容", level=4)
+        assert m._storage.get("u", mem.id).access_count == 0
+
+        m.get_context_prompt("u", query="相关")
+
+        # 直接读存储层，绕开 manager，确保验的是数据库而不是内存对象
+        assert m._storage.get("u", mem.id).access_count == 1
+        vs.close()
+
+    def test_candidates_not_in_prompt_are_not_counted(self, tmp_path):
+        """没进 prompt 的候选不算访问 —— 「被想起」≠「被扫过一眼」。"""
+        from core.memory.vector_store import VectorStore
+
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        m.add_memory_sync("u", "相关的内容", level=4)
+        far = m.add_memory_sync("u", "完全无关的话题", level=4)
+        # 让 far 的向量与查询正交，确保它过不了闸门
+        vs.add("u", far.id, far.content, unit(99))
+
+        m.get_context_prompt("u", query="相关")
+
+        assert m._storage.get("u", far.id).access_count == 0
+        vs.close()
+
+    def test_touch_failure_does_not_break_recall(self, tmp_path, monkeypatch):
+        """计数落库失败不该让整轮对话挂掉。"""
+        from core.memory.vector_store import VectorStore
+
+        vs = VectorStore(tmp_path / "v.db")
+        m = MemoryManager(tmp_path, embedder=FakeEmbedder({"相关": unit(1)}),
+                          vector_store=vs)
+        m.add_memory_sync("u", "相关的内容", level=4)
+
+        def boom(*a, **kw):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(m._storage, "update_many", boom)
+        out = m.get_context_prompt("u", query="相关")
+        assert "相关的内容" in out
+        vs.close()
 
 
 class TestContextPromptFallback:

@@ -7,7 +7,10 @@
   import { layout } from '../lib/layout.svelte.js';
   import { SETTINGS_GROUPS, SETTINGS_KEYS } from '../lib/settingsNav.svelte.js';
 
-  let { active = 'chat', vertical = false } = $props();
+  // rail: 桌面端「图标轨」形态 —— 只留图标与 tooltip, 把宽度让给正文。
+  //   一级导航从「带文字的竖排列表」收成 64px 的形状后, 聊天页才有空间
+  //   把会话列表与正文同时铺开; 文字标签在 title / aria-label 里仍然完整。
+  let { active = 'chat', vertical = false, rail = false } = $props();
 
   // 当前设置子页; 未指定时高亮第一个分类 (与 SettingsPage 的默认落地一致)
   let activeSub = $derived(
@@ -32,7 +35,7 @@
   };
 </script>
 
-<nav class="tabbar {vertical ? 'vertical' : 'horizontal'}" aria-label="主导航">
+<nav class="tabbar {vertical ? 'vertical' : 'horizontal'}" class:rail={rail && vertical} aria-label="主导航">
   {#each navTabs(layout.mode) as tab}
     {@const selected = active === tab}
     {@const color = selected ? 'var(--accent)' : 'var(--tab-inactive)'}
@@ -43,12 +46,13 @@
       aria-current={selected ? 'page' : undefined}
       aria-expanded={vertical && tab === 'settings' ? selected : undefined}
       title={TAB_LABELS[tab]}
+      aria-label={rail && vertical ? TAB_LABELS[tab] : undefined}
     >
       <span class="tab-icon" aria-hidden="true">{@html iconFor[tab](color)}</span>
       <span class="tab-label">{TAB_LABELS[tab]}</span>
     </button>
 
-    {#if vertical && tab === 'settings' && selected}
+    {#if vertical && !rail && tab === 'settings' && selected}
       <div class="sub-tabs">
         {#each SETTINGS_GROUPS as g, gi}
           {#if gi > 0}<div class="sub-sep" aria-hidden="true"></div>{/if}
@@ -219,5 +223,32 @@
     height: 1px;
     margin: var(--space-1) var(--space-4) var(--space-1) 41px;
     background: var(--border);
+  }
+
+  /* ---- 图标轨 (rail) ----
+     桌面侧栏收到 64px 宽: 只留图标, 文字与设置分类全部收起。
+     选中态从「左侧竖线 + 淡底」换成「圆角方块底」—— 竖线在窄轨上
+     贴着屏幕边缘, 反而看不清。 */
+  .vertical.rail {
+    padding: var(--space-2);
+    gap: var(--optical-2);
+    align-items: stretch;
+  }
+  .vertical.rail .tab {
+    justify-content: center;
+    height: 38px;
+    padding: 0;
+    border-left: none;
+    border-radius: var(--radius-sm);
+    gap: 0;
+  }
+  .vertical.rail .tab-label {
+    display: none;
+  }
+  .vertical.rail .tab:hover {
+    background: var(--row-hover);
+  }
+  .vertical.rail .tab.is-active {
+    background: var(--accent-wash);
   }
 </style>

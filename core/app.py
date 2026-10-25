@@ -61,6 +61,24 @@ def _warm_memory_vectors(memory_mgr: MemoryManager) -> None:
                     f"Memory vectors backfilled: {result['indexed']} 条 "
                     f"(skipped {result['skipped']}, failed {result['failed']})"
                 )
+            # 回填跑完却一条都没索引，通常是 embedder 不可用或模型路径不对。
+            # 这时候 memory_vectors 是空的，语义召回已经静默降级 ——
+            # 必须在启动日志里说出来，否则只能靠翻 embedding_status() 才发现。
+            elif result["users"] and not result["skipped"]:
+                status = memory_mgr.embedding_status()
+                logger.warning(
+                    "Memory vector backfill produced nothing "
+                    f"(users={result['users']}, failed={result['failed']}, "
+                    f"embedder_ready={status.get('ready')}, "
+                    f"model={status.get('model_source')}, "
+                    f"error={status.get('error')}) — "
+                    "semantic recall will fall back to importance ordering"
+                )
+            if result["failed"]:
+                logger.warning(
+                    f"Memory vector backfill had {result['failed']} failures — "
+                    "those memories are not semantically searchable"
+                )
         except Exception as e:  # 任何异常都不能影响服务启动
             logger.warning(f"Memory vector backfill skipped: {e}")
 

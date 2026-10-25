@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 
 from core.chat.commands.colors import Colors
-from core.memory.storage import MemoryStorage
 
 
 def _mem_help(handler, user_id: str, parts: list[str]) -> None:
@@ -115,9 +114,11 @@ def _mem_clear(handler, user_id: str, parts: list[str]) -> None:
         print(f"  {Colors.DIM}输入 /memories clear --confirm 确认清空{Colors.RESET}")
         print(f"  {Colors.DIM}输入 /memories export 先备份记忆{Colors.RESET}\n")
         return
-    storage = MemoryStorage(str(handler._h.memory_mgr.data_dir))
-    storage.delete_all(user_id)
-    print(f"\n{Colors.GREEN}✅ 已清空全部 {len(all_ms)} 条记忆{Colors.RESET}\n")
+    # 必须走 MemoryManager：它同时清 memories 和 memory_vectors。
+    # 早先这里 new 一个 MemoryStorage 直接 delete_all()，向量表没动，
+    # 于是清空之后 semantic_search 还能把「已删除」的记忆召回进 prompt。
+    removed = handler._h.memory_mgr.clear_memories(user_id)
+    print(f"\n{Colors.GREEN}✅ 已清空全部 {removed} 条记忆{Colors.RESET}\n")
 
 
 _MEMORY_DISPATCH = {

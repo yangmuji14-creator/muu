@@ -152,7 +152,11 @@
     min-height: 100%;
     max-width: 1000px;
     margin: 0;
-    background: var(--surface);
+    /* v17: 原来是 background: var(--surface) —— 一块 1000px 宽的不透明实色板。
+       它在左缘贴住视口、右缘停在 1000px, 于是玻璃被切成「左边实色 / 右边氛围」
+       两半, 接缝是一条很扎眼的竖线, 而且整块面板把氛围层吃掉了。
+       页面自身不再承担底色: 玻璃由外壳 .main-area 统一铺, 页面只画内容。 */
+    background: transparent;
   }
 
   /* ---- 页头 ----

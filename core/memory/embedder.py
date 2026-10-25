@@ -15,6 +15,7 @@
 """
 
 import os
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -128,6 +129,16 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self._dim = 0
         self._ready = False
         self._init_error = None
+        # 保护 _lazy_init 的「一次性加载」语义。
+        #
+        # 不加锁时 6 个线程会同时通过 `if self._ready or self._init_error`
+        # 的判断，一起调 SentenceTransformer()。torch 加载权重期间多个
+        # 线程同时往同一批 tensor 里搬数据，会把参数写成 meta tensor，
+        # 报「Cannot copy out of meta tensor; no data!」，于是「模型其实
+        # 能用」和「加载失败」两种状态在同一次启动里同时出现：
+        # 后台回填线程看到失败并写进 _init_error，主线程的实例却成功了。
+        # 结果就是日志说「回退关键词搜索」，embedding_status 却说 ready=True。
+        self._init_lock = threading.Lock()
 
     @property
     def model_source(self) -> str:
@@ -156,9 +167,17 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return self._init_error
 
     def _lazy_init(self):
-        """首次使用时延迟加载模型"""
+        """首次使用时延迟加载模型（线程安全，只会真正加载一次）"""
         if self._ready or self._init_error:
             return
+        with self._init_lock:
+            # 双重检查：等锁期间别的线程可能已经把模型加载好了
+            if self._ready or self._init_error:
+                return
+            self._lazy_init_locked()
+
+    def _lazy_init_locked(self):
+        """真正加载模型的部分，调用方必须持有 ``self._init_lock``。"""
 
         source = self._explicit_model or resolve_model_source()
         self._resolved_source = source

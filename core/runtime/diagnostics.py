@@ -86,12 +86,16 @@ def _memory_check(memory_manager: Any) -> dict:
 
     total = sum(item["memories"] for item in status.get("indexed_by_user", {}).values())
     indexed = sum(item["indexed"] for item in status.get("indexed_by_user", {}).values())
+    missing = status.get("missing", 0)
+    orphaned = status.get("orphaned", 0)
     details = {
         "embedding_ready": status.get("ready", False),
         "model_source": status.get("model_source", ""),
         "dimension": status.get("dimension", 0),
         "memories": total,
         "indexed": indexed,
+        "missing": missing,
+        "orphaned": orphaned,
     }
 
     if not status.get("ready"):
@@ -101,12 +105,18 @@ def _memory_check(memory_manager: Any) -> dict:
             hint = f"{hint}；原因：{error[:160]}"
         return _check("memory", "记忆系统", "warn", hint, **details)
 
-    if total and indexed < total:
-        return _check(
-            "memory", "记忆系统", "warn",
-            f"有 {total - indexed} 条记忆尚未建立向量索引，语义检索会漏掉它们",
-            **details,
+    # 两个方向分开报：缺索引是「漏召回」，孤儿向量是「召回死内容」。
+    # 早先这里只有 `indexed < total` 一条判断，孤儿向量让 indexed 反超
+    # total 时整条检查直接判 ok。
+    problems: list[str] = []
+    if missing:
+        problems.append(f"{missing} 条记忆尚未建立向量索引，语义检索会漏掉它们")
+    if orphaned:
+        problems.append(
+            f"{orphaned} 条向量对应的记忆已不存在，语义检索会召回已删除的内容"
         )
+    if problems:
+        return _check("memory", "记忆系统", "warn", "；".join(problems), **details)
 
     return _check("memory", "记忆系统", "ok", f"语义记忆已启用（{indexed}/{total} 条已索引）", **details)
 

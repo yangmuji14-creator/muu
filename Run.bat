@@ -40,6 +40,25 @@ if not exist ".venv\.deps_ok" (
   echo  [Mu] Dependencies installed.
 )
 
+rem Semantic memory: only when the model directory ships alongside (one-click build).
+rem sentence-transformers pulls torch (~2 GB) - worth skipping for people who only
+rem want keyword memory, so this is gated on the model actually being present.
+if exist "models\bge-small-zh-v1.5\config.json" (
+  if not exist ".venv\.vector_ok" (
+    echo.
+    echo  [Mu] Vector memory model found - installing semantic memory support...
+    echo  [Mu] This pulls torch, roughly 2 GB and a few minutes. One time only.
+    "%PY%" -m pip install -r requirements-vector.txt
+    if errorlevel 1 (
+      echo  [Mu] Vector deps failed to install. Mu still runs with keyword memory.
+      echo  [Mu] Retry later with: "%PY%" -m pip install -r requirements-vector.txt
+    ) else (
+      type nul > ".venv\.vector_ok"
+      echo  [Mu] Semantic memory ready.
+    )
+  )
+)
+
 echo  [Mu] Environment self-check...
 "%PY%" main.py doctor
 if errorlevel 1 (

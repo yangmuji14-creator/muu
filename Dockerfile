@@ -12,10 +12,9 @@ COPY pyproject.toml README.md ./
 COPY core ./core
 COPY adapters ./adapters
 COPY mcp_servers ./mcp_servers
-COPY plugins ./plugins
 COPY tools ./tools
 COPY webui ./webui
-COPY main.py setup_wizard.py install.py import_chat.py import_exskill.py ./
+COPY main.py setup_wizard.py install.py ./
 COPY config/*.example.json /opt/mu/default-config/
 COPY docker-entrypoint.sh /usr/local/bin/mu-entrypoint
 
@@ -28,8 +27,8 @@ RUN if [ -n "$INSTALL_EXTRAS" ]; then \
 
 EXPOSE 8000
 
-ENV CC_WEB_HOST=0.0.0.0 \
-    CC_WEB_PORT=8000
+ENV MU_WEB_HOST=0.0.0.0 \
+    MU_WEB_PORT=8000
 
 ENTRYPOINT ["mu-entrypoint"]
 CMD ["python", "main.py", "web"]

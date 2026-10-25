@@ -48,9 +48,29 @@
   let formPull = $state([]);
   let formPulling = $state(false);
   let formPullMsg = $state('');
-  // 连接与测试反馈
+  // 连接与测试反馈（新增表单里就地测试）
   let testState = $state('idle'); // idle | testing | ok | fail
   let testMsg = $state('');
+  // ④ 连接测试区：对「已保存的服务商」单独测一次，不回显已存密钥
+  let diagKey = $state('');
+  let diagApiKey = $state('');
+  let diagState = $state('idle'); // idle | testing | ok | fail
+  let diagMsg = $state('');
+
+  // ④ 选中服务商变化时清掉上一次的测试结果，避免旧结论挂在新的服务商上
+  $effect(() => {
+    void diagKey;
+    diagState = 'idle';
+    diagMsg = '';
+  });
+
+  // ② 服务商列表加载/变化后，把测试目标补一个默认选中项
+  //    （reloadModels 里那句发生在 providers 还是空数组时，所以这里兜一次）
+  $effect(() => {
+    const first = providers[0]?.key || '';
+    if (!first) return;
+    if (!providers.some((p) => p.key === diagKey)) diagKey = first;
+  });
 
   $effect(() => {
     let alive = true;
@@ -326,6 +346,7 @@
       }
     } catch { /* ignore */ }
     pullKey = pullKey || model?.current || providers[0]?.key || '';
+    diagKey = diagKey || providers[0]?.key || '';
     loading = false;
   }
 
@@ -397,135 +418,147 @@
       testMsg = errMsg(e, '连接失败');
     }
   }
+
+  // 区块跳转：标题区/总览里的按钮滚到对应区块，长表单不用手滑
+  function jumpTo(id) {
+    const el = document.getElementById(id);
+    if (el?.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ④ 用已保存服务商的 provider/base_url/model_name + 现场粘贴的密钥测一次
+  async function testAddedProvider() {
+    const p = providers.find((x) => x.key === diagKey) || providers[0];
+    if (!p) {
+      diagState = 'fail';
+      diagMsg = '还没有可测试的服务商';
+      return;
+    }
+    if (!diagApiKey) {
+      diagState = 'fail';
+      diagMsg = '请先粘贴该服务商的 API Key';
+      return;
+    }
+    diagState = 'testing';
+    diagMsg = '';
+    try {
+      const body = { provider: p.provider || p.key };
+      if (p.base_url) body.base_url = p.base_url;
+      if (p.model_name) body.model_name = p.model_name;
+      body.api_key = diagApiKey;
+      const r = await bootstrapApi.test(body);
+      if (r.ok) {
+        const ok = r.data?.ok !== false;
+        diagState = ok ? 'ok' : 'fail';
+        const msg = typeof r.data?.message === 'string' ? r.data.message : '';
+        const ms = Number(r.data?.latency_ms);
+        diagMsg = ok
+          ? `${msg || '连接成功'}${Number.isFinite(ms) && ms > 0 ? `（${ms} ms）` : ''}`
+          : (msg || '连接失败');
+      } else {
+        const m = errMsg(r, '连接失败');
+        diagState = 'fail';
+        diagMsg = m.includes('暂不支持') ? '该服务商暂不支持在线测试' : m;
+      }
+    } catch (e) {
+      diagState = 'fail';
+      diagMsg = errMsg(e, '连接失败');
+    }
+  }
 </script>
 
-<SettingsShell title="模型设置" desc="加厂商 → 拉模型 → 分配角色" {onback}>
+<SettingsShell title="模型设置" desc="默认模型 → 服务商 → 能力分配 → 连接测试" {onback}>
   {#if loading}
     <div class="card card-pad">
       <EmptyState icon="cpu" title="正在加载模型配置…" compact />
     </div>
   {:else}
-    <!-- ============ ① 模型角色 ============ -->
-    <section class="card card-pad">
+    <!-- ============ ① 默认模型与状态 ============ -->
+    <section class="card card-pad" id="overview">
       <div class="section-head">
-        <h4>模型角色</h4>
-        <span class="head-sub">谁聊天、谁看图、谁发语音</span>
+        <h4>默认模型与状态</h4>
+        <span class="head-sub">当前在用的语言模型与整体情况</span>
       </div>
 
-      <!-- 识别流程：何时直连 / 何时走备用，一句话讲清 -->
-      <div class="mm-chain">
+      <div class="ov-grid">
+        <div class="ov-item">
+          <span class="ov-label">语言模型</span>
+          <span class="ov-value mono" class:is-empty={!roles.chat?.model_name}>
+            {roles.chat?.model_name || '未配置'}
+          </span>
+          <span class="ov-note">{roles.chat?.key || '还没有可以聊天的模型'}</span>
+        </div>
+        <div class="ov-item">
+          <span class="ov-label">已配置模型</span>
+          <span class="ov-value">{model?.available?.length || 0}</span>
+          <span class="ov-note">
+            {#if model?.available?.length}来自 {providers.length} 家服务商{:else}还没有任何模型{/if}
+          </span>
+        </div>
+        <div class="ov-item">
+          <span class="ov-label">备用识别</span>
+          <span class="ov-value mono" class:is-empty={!roles.vision?.model_name}>
+            {roles.vision?.model_name || '未设置'}
+          </span>
+          <span class="ov-note">
+            {roles.vision?.model_name ? '图片先转文字再交给语言模型' : '由语言模型直接看图'}
+          </span>
+        </div>
+        <div class="ov-item">
+          <span class="ov-label">语音合成</span>
+          <span class="ov-value mono" class:is-empty={!roles.tts?.model_name}>
+            {roles.tts?.model_name || '未设置'}
+          </span>
+          <span class="ov-note">{roles.tts?.model_name ? '生成型模型，单独设置' : '当前不发语音'}</span>
+        </div>
+      </div>
+
+      <div class="ov-chain">
         <span class="micro-label">识别流程</span>
-        <p class="mm-chain-text">{roles.image_chain || '—'}</p>
+        <p class="ov-chain-text">{roles.image_chain || '—'}</p>
       </div>
 
-      <!-- 已添加的模型（一个条目 = 一个模型槽位） -->
-      {#if roles.pool.length}
-        <div class="entry-list">
-          {#each roles.pool as entry (entry.key)}
-            <div class="entry-row">
-              <div class="entry-head">
-                <span class="entry-name mono">
-                  {entry.model_name || entry.key}
-                  <span class="entry-key">{entry.key}</span>
-                </span>
-                {#if entry.is_current}<span class="badge ok">语言</span>{/if}
-                {#if roles.vision?.model_name === entry.model_name && !entry.is_current}<span class="badge">识别</span>{/if}
+      {#if !model?.available?.length}
+        <div class="ov-warn">
+          <p class="ov-warn-text">
+            当前没有任何模型能回复消息 —— 最常见的原因是 API Key 没配好。
+            到下面「服务商」里挑一家，填上 Key 就能开始。
+          </p>
+          <button class="btn-outline sm" type="button" onclick={() => jumpTo('providers')}>去添加服务商</button>
+        </div>
+      {/if}
+    </section>
+
+    <!-- ============ ② 服务商管理 ============ -->
+    <section class="card card-pad" id="providers">
+      <div class="section-head">
+        <h4>服务商</h4>
+        <span class="head-sub">已添加的可以分配模型，下面可以再添一家</span>
+      </div>
+
+      {#if providers.length}
+        <div class="card-list">
+          {#each providers as p}
+            <div class="card-row">
+              <div class="row-main">
+                <span class="row-title">{p.provider || p.key}{#if p.model_name}<span class="dim"> · {p.model_name}</span>{/if}</span>
+                <span class="row-sub">{p.base_url || '未配置地址'}</span>
               </div>
-              <div class="entry-controls">
-                <label class="check-line" title="勾选 = 该模型是多模态：看图、听语音这类识别都直接发给它（快）">
-                  <input
-                    type="checkbox"
-                    checked={entry.multimodal}
-                    disabled={!!checking}
-                    onchange={(e) => toggleVision(entry, e.currentTarget.checked)}
-                  />
-                  <span>多模态</span>
-                </label>
-                <span class="ctl-sep"></span>
-                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('chat', entry.model_name, entry.key)}
-                  title={entry.is_current ? '当前语言模型' : '设为语言模型'}
-                  class:on={entry.is_current}>语言</button>
-                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('vision', entry.model_name, entry.key)}
-                  title={roles.vision?.model_name === entry.model_name ? '再次点击取消（备用识别）' : '设为备用识别模型（图片/语音转文字）'}
-                  class:on={roles.vision?.model_name === entry.model_name}>识别</button>
-                <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('tts', entry.model_name, entry.key)}
-                  title={roles.tts?.model_name === entry.model_name ? '再次点击取消' : '只有语音合成类模型（tts）可分配'}
-                  class:on={roles.tts?.model_name === entry.model_name}>语音</button>
+              <div class="row-actions">
+                {#if p.key === model.current}<span class="badge ok">使用中</span>{/if}
+                <button class="icon-btn danger" type="button" title="删除" onclick={() => removeProvider(p.key)}>
+                  {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.trash}</svg>`}
+                </button>
               </div>
             </div>
           {/each}
         </div>
-        <p class="hint">
-          <strong>多模态</strong>：勾了 → 图片（和之后的语音）直接发给语言模型识别（一次调用，备用识别不启用）；
-          没勾 → 需把另一个模型设为「识别」（备用：图片先转文字描述再交给语言模型）。
-          语音合成是生成型模型，用「语音」单独设。
-        </p>
       {:else}
-        <p class="hint">还没有模型 —— 在下方「选择服务商」点一张卡片，填上 API Key 保存即可。</p>
+        <p class="hint">还没有服务商 —— 从下面挑一家，填上 API Key 保存即可。</p>
       {/if}
 
-      <!-- 拉取：切换条目用哪个具体模型名 -->
-      {#if providers.length}
-        <div class="pull-bar">
-          {#if providers.length > 1}
-            <select class="input pull-provider" bind:value={pullKey} aria-label="选择拉取来源提供商">
-              {#each providers as p (p.key)}
-                <option value={p.key}>{p.key}</option>
-              {/each}
-            </select>
-          {/if}
-          <button class="btn-outline" type="button" disabled={pulling} onclick={pullModels}>
-            {pulling ? '正在拉取…' : '拉取可用模型'}
-          </button>
-          {#if pullMsg}<span class="pull-msg">{pullMsg}</span>{/if}
-        </div>
-        {#if pulled.length}
-          <div class="model-pool">
-            {#each pulled as m (m)}
-              <div class="pool-row">
-                <span class="pool-name mono">{m}</span>
-                <div class="pool-actions">
-                  <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
-                    onclick={() => assignRole('chat', m, pullKey)}
-                    title="把 {pullKey} 条目切到此模型，并设为语言模型"
-                    class:on={roles.chat?.model_name === m && roles.chat?.key === pullKey}>语言</button>
-                  <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
-                    onclick={() => assignRole('vision', m, pullKey)}
-                    title={roles.vision?.model_name === m ? '再次点击取消' : '设为备用识别模型（图片/语音转文字）'}
-                    class:on={roles.vision?.model_name === m}>识别</button>
-                  <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(m)}
-                    onclick={() => assignRole('tts', m, pullKey)}
-                    title={roles.tts?.model_name === m ? '再次点击取消' : '只有语音类模型（tts）可分配'}
-                    class:on={roles.tts?.model_name === m}>语音</button>
-                </div>
-              </div>
-            {/each}
-          </div>
-          <p class="hint">拉取的是厂商的模型名列表 —— 点「语言」= 把该厂商条目切到此模型；点「识别」= 设为备用识别。</p>
-        {/if}
-      {/if}
-    </section>
-
-    {#if !model?.available?.length}
-      <section class="card card-pad">
-        <div class="no-model">
-          <span class="micro-label">还没有可用的模型</span>
-          <p class="no-model-desc">
-            当前没有任何模型能回复消息 —— 最常见的原因是 API Key 没配对。
-            从下面「选择服务商」里挑一家，填上 Key 就能开始。
-          </p>
-        </div>
-      </section>
-    {/if}
-
-    <!-- ============ ② 选择服务商 ============ -->
-    <section class="card card-pad" id="preset-section">
-      <div class="section-head">
-        <h4>选择服务商</h4>
-        <span class="head-sub">点卡片展开，填 API Key 即可</span>
+      <div class="add-head">
+        <span class="micro-label">新增服务商</span>
+        <span class="add-sub">点卡片就地展开，填 API Key 保存</span>
       </div>
 
       {#if presetsLoading}
@@ -578,6 +611,27 @@
                       </div>
                     </div>
                   {/if}
+
+                  <details class="adv-details">
+                    <summary>
+                      <span>高级参数</span>
+                      <span class="adv-hint">采样温度与惩罚项，留空用厂商默认</span>
+                    </summary>
+                    <div class="field-row">
+                      <label class="field"><span>Temperature</span><input class="input" type="number" step="0.1" min="0" max="2" bind:value={pf.temperature} placeholder="1.0" /></label>
+                      <label class="field"><span>Max Tokens</span><input class="input" type="number" min="1" bind:value={pf.max_tokens} placeholder="2048" /></label>
+                    </div>
+                    <SamplingPresets
+                      temperature={pf.temperature}
+                      presence={pf.presence_penalty}
+                      frequency={pf.frequency_penalty}
+                      onselect={applySampling}
+                    />
+                    <div class="field-row">
+                      <label class="field"><span class="field-label">存在惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.presence_penalty} placeholder="0.3" /></label>
+                      <label class="field"><span class="field-label">频率惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.frequency_penalty} placeholder="0.3" /></label>
+                    </div>
+                  </details>
 
                   <div class="form-actions">
                     <button class="btn-outline sm" type="button" onclick={() => (expandedPreset = null)}>取消</button>
@@ -635,7 +689,10 @@
                 </label>
 
                 <details class="adv-details">
-                  <summary>高级选项（采样参数）</summary>
+                  <summary>
+                    <span>高级参数</span>
+                    <span class="adv-hint">采样温度与惩罚项，留空用厂商默认</span>
+                  </summary>
                   <div class="field-row">
                     <label class="field"><span>Temperature</span><input class="input" type="number" step="0.1" min="0" max="2" bind:value={pf.temperature} placeholder="1.0" /></label>
                     <label class="field"><span>Max Tokens</span><input class="input" type="number" min="1" bind:value={pf.max_tokens} placeholder="2048" /></label>
@@ -661,46 +718,233 @@
           </div>
         </div>
       {/if}
+    </section>
+
+    <!-- ============ ③ 模型能力与用途 ============ -->
+    <section class="card card-pad" id="capability">
+      <div class="section-head">
+        <h4>模型能力与用途</h4>
+        <span class="head-sub">谁聊天、谁看图、谁发语音</span>
+      </div>
+
+      {#if roles.pool.length}
+        <div class="entry-list">
+          {#each roles.pool as entry (entry.key)}
+            <div class="entry-row">
+              <div class="entry-head">
+                <span class="entry-name mono">
+                  {entry.model_name || entry.key}
+                  <span class="entry-key">{entry.key}</span>
+                </span>
+                {#if entry.is_current}<span class="badge ok">语言</span>{/if}
+                {#if roles.vision?.model_name === entry.model_name && !entry.is_current}<span class="badge">识别</span>{/if}
+              </div>
+              <div class="entry-controls">
+                <label class="check-line" title="勾选 = 该模型是多模态：看图、听语音这类识别都直接发给它（快）">
+                  <input
+                    type="checkbox"
+                    checked={entry.multimodal}
+                    disabled={!!checking}
+                    onchange={(e) => toggleVision(entry, e.currentTarget.checked)}
+                  />
+                  <span>多模态</span>
+                </label>
+                <span class="ctl-sep"></span>
+                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
+                  onclick={() => assignRole('chat', entry.model_name, entry.key)}
+                  title={entry.is_current ? '当前语言模型' : '设为语言模型'}
+                  class:on={entry.is_current}>语言</button>
+                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
+                  onclick={() => assignRole('vision', entry.model_name, entry.key)}
+                  title={roles.vision?.model_name === entry.model_name ? '再次点击取消（备用识别）' : '设为备用识别模型（图片/语音转文字）'}
+                  class:on={roles.vision?.model_name === entry.model_name}>识别</button>
+                <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(entry.model_name)}
+                  onclick={() => assignRole('tts', entry.model_name, entry.key)}
+                  title={roles.tts?.model_name === entry.model_name ? '再次点击取消' : '只有语音合成类模型（tts）可分配'}
+                  class:on={roles.tts?.model_name === entry.model_name}>语音</button>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        {#if providers.length}
+          <div class="pull-bar">
+            {#if providers.length > 1}
+              <select class="input pull-provider" bind:value={pullKey} aria-label="选择拉取来源提供商">
+                {#each providers as p (p.key)}
+                  <option value={p.key}>{p.key}</option>
+                {/each}
+              </select>
+            {/if}
+            <button class="btn-outline" type="button" disabled={pulling} onclick={pullModels}>
+              {pulling ? '正在拉取…' : '拉取可用模型'}
+            </button>
+            {#if pullMsg}<span class="pull-msg">{pullMsg}</span>{/if}
+          </div>
+          {#if pulled.length}
+            <div class="model-pool">
+              {#each pulled as m (m)}
+                <div class="pool-row">
+                  <span class="pool-name mono">{m}</span>
+                  <div class="pool-actions">
+                    <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
+                      onclick={() => assignRole('chat', m, pullKey)}
+                      title="把 {pullKey} 条目切到此模型，并设为语言模型"
+                      class:on={roles.chat?.model_name === m && roles.chat?.key === pullKey}>语言</button>
+                    <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
+                      onclick={() => assignRole('vision', m, pullKey)}
+                      title={roles.vision?.model_name === m ? '再次点击取消' : '设为备用识别模型（图片/语音转文字）'}
+                      class:on={roles.vision?.model_name === m}>识别</button>
+                    <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(m)}
+                      onclick={() => assignRole('tts', m, pullKey)}
+                      title={roles.tts?.model_name === m ? '再次点击取消' : '只有语音类模型（tts）可分配'}
+                      class:on={roles.tts?.model_name === m}>语音</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+
+        <p class="hint">
+          <strong>多模态</strong>：勾了 → 图片直接发给语言模型识别（一次调用，备用识别不启用）；
+          没勾 → 把另一个模型设为「识别」（图片先转文字描述再交给语言模型）。语音合成是生成型模型，用「语音」单独设。
+        </p>
+      {:else}
+        <p class="hint">还没有模型条目 —— 先在「服务商」里添加一家并保存，这里就会出现可分配的角色。</p>
+      {/if}
+    </section>
+
+    <!-- ============ ④ 连接测试与错误反馈 ============ -->
+    <section class="card card-pad" id="diagnostics">
+      <div class="section-head">
+        <h4>连接测试</h4>
+        <span class="head-sub">发一条最小请求，验证地址、密钥与模型名</span>
+      </div>
 
       {#if providers.length}
-        <div class="added-block">
-          <span class="micro-label">已添加</span>
-          <div class="card-list">
-            {#each providers as p}
-              <div class="card-row">
-                <div class="row-main">
-                  <span class="row-title">{p.provider || p.key}{#if p.model_name}<span class="dim"> · {p.model_name}</span>{/if}</span>
-                  <span class="row-sub">{p.base_url || '未配置地址'}</span>
-                </div>
-                <div class="row-actions">
-                  {#if p.key === model.current}<span class="badge ok">使用中</span>{/if}
-                  <button class="icon-btn danger" type="button" title="删除" onclick={() => removeProvider(p.key)}>
-                    {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.trash}</svg>`}
-                  </button>
-                </div>
-              </div>
-            {/each}
+        <div class="diag">
+          <div class="field-row">
+            <label class="field">
+              <span>测哪个服务商</span>
+              <select class="input" bind:value={diagKey}>
+                {#each providers as p (p.key)}
+                  <option value={p.key}>{p.provider || p.key}{#if p.model_name} · {p.model_name}{/if}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="field">
+              <span>API Key</span>
+              <input class="input" type="password" bind:value={diagApiKey} placeholder="已保存的密钥不回显，粘贴一次即可测试" />
+            </label>
+          </div>
+          <div class="diag-actions">
+            <button class="btn-primary sm" type="button"
+              disabled={diagState === 'testing' || !diagApiKey}
+              onclick={testAddedProvider}>
+              {diagState === 'testing' ? '测试中…' : '测试连接'}
+            </button>
+            {#if diagState !== 'idle'}
+              <p class="test-msg {diagState === 'ok' ? 'ok' : 'fail'}">{diagMsg}</p>
+            {/if}
           </div>
         </div>
+      {:else}
+        <p class="hint">还没有服务商可测试 —— 先在上面添加一家。</p>
       {/if}
     </section>
   {/if}
 </SettingsShell>
 
 <style>
-  /* ---- 图片流程说明 ---- */
-  .mm-chain {
-    padding: var(--space-3);
-    margin-bottom: var(--space-3);
-    border-left: 2px solid var(--accent);
-    background: var(--surface-2);
+  /* ---- ① 总览四宫格 ----
+     原来这一块只有一段「识别流程」长句 + 一串条目行，用户第一眼看不出
+     「现在到底在用哪个模型」。四宫格把四个关键状态一次摆出来：
+     语言 / 已配置数 / 备用识别 / 语音，值用等宽字，附注一行小字说明含义。
+     网格 auto-fit 236px：窄屏自动落到两列、一列，不需要额外 media query。 */
+  .ov-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
   }
-  .mm-chain-text {
+  .ov-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    min-width: 0;
+  }
+  .ov-label {
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wider);
+    color: var(--text-3);
+  }
+  .ov-value {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-1);
+    word-break: break-all;
+    line-height: 1.3;
+  }
+  .ov-value.mono { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 500; }
+  .ov-value.is-empty { color: var(--text-3); font-weight: 400; }
+  .ov-note {
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    color: var(--text-3);
+  }
+
+  /* ---- 识别流程：原来是一整块 surface-2 色板，现在退化成一条带竖线的说明 ---- */
+  .ov-chain {
+    padding-left: var(--space-3);
+    border-left: 2px solid var(--accent-line);
+    margin-bottom: var(--space-3);
+  }
+  .ov-chain-text {
     margin: var(--space-1) 0 0;
     font-size: var(--text-sm);
-    line-height: 1.6;
+    line-height: 1.65;
     color: var(--text-1);
   }
+
+  /* ---- 无模型警示：不是又一张卡，而是一条带动作的提示 ---- */
+  .ov-warn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--warning-soft);
+  }
+  .ov-warn-text {
+    margin: 0;
+    flex: 1;
+    min-width: 200px;
+    font-size: var(--text-xs);
+    line-height: 1.7;
+    color: var(--text-1);
+  }
+
+  /* ---- ② 服务商：已添加列表 → 新增区，两段各自有微标签 ---- */
+  .add-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin: var(--space-5) 0 var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+  .add-sub { font-size: var(--text-2xs); color: var(--text-3); }
 
   /* ---- 已添加模型条目 ---- */
   .entry-list {
@@ -871,14 +1115,8 @@
   .inline-form .pull-bar { margin: var(--space-2) 0; }
   .inline-form .form-actions { margin-top: var(--space-3); }
 
-  /* ---- 已添加提供商列表 ---- */
-  .added-block {
-    margin-top: var(--space-4);
-  }
-  .added-block .micro-label {
-    display: block;
-    margin-bottom: var(--space-2);
-  }
+  /* ---- 已添加提供商列表（现在用 settings-base 的 .card-list/.card-row，
+        旧的 .added-block 包裹层已删除） ---- */
 
   .form-model-pick {
     margin-bottom: var(--space-3);
@@ -912,14 +1150,52 @@
 
   .adv-details {
     margin-bottom: var(--space-3);
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
   }
   .adv-details summary {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
     cursor: pointer;
     font-size: var(--text-13);
+    font-weight: 500;
     color: var(--text-2);
-    margin-bottom: var(--space-3);
+    margin-bottom: 0;
+    padding: var(--space-1) 0;
     user-select: none;
+    list-style: none;
   }
+  .adv-details summary::-webkit-details-marker { display: none; }
+  .adv-details summary::before {
+    content: '＋';
+    flex: none;
+    width: 12px;
+    color: var(--text-3);
+    font-size: var(--text-xs);
+  }
+  .adv-details[open] summary::before { content: '－'; }
+  .adv-details[open] summary { margin-bottom: var(--space-3); }
+  .adv-details summary:hover { color: var(--text-1); }
+  .adv-hint { font-size: var(--text-2xs); font-weight: 400; color: var(--text-3); }
+
+  /* ---- ④ 连接测试 ----
+     已保存服务商的密钥不回显，所以测试要求现场粘贴一次；
+     测试结果与它的服务商绑定，切换服务商时由 $effect 清空。 */
+  .diag {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .diag .field-row { align-items: flex-end; }
+  .diag-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  .diag-actions .test-msg { margin: 0; flex: 1; min-width: 180px; }
 
   .model-pool {
     display: flex;
@@ -982,17 +1258,5 @@
   .test-msg.ok { color: var(--success); background: var(--success-soft); }
   .test-msg.fail { color: var(--error); background: var(--error-soft); }
 
-  /* ---- 无可用模型时的引导 ---- */
-  .no-model {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-2);
-  }
-  .no-model-desc {
-    margin: 0;
-    font-size: var(--text-sm);
-    line-height: 1.7;
-    color: var(--text-2);
-  }
+  /* ---- 无可用模型时的引导（现已并入 ① 的 .ov-warn） ---- */
 </style>

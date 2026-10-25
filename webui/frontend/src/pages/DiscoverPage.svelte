@@ -353,9 +353,10 @@ import Toast from '../components/Toast.svelte';
 
 <style>
   .page {
-    padding: var(--space-6) var(--space-6) var(--space-8);
-    max-width: 820px;
-    margin: 0;
+    padding: var(--page-pad-y) var(--page-pad-x) var(--space-8);
+    max-width: var(--page-maxw);
+    margin: 0 auto;
+    width: 100%;
   }
 
   /* ---- 页头: 微标签 + 26px 主标题 + 说明 (与通讯录同一套骨架) ---- */
