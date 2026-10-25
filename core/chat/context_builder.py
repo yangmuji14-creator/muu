@@ -150,9 +150,7 @@ class PromptContextAssembler:
         thought: dict | None,
         retrieve_fallback: Callable[[str, str], Awaitable[list[str]]],
     ) -> PromptContext:
-        memory_query = content
-        if thought and thought.get("topic"):
-            memory_query = f"{thought['topic']} {content}"
+        memory_query = self._build_memory_query(content, thought)
         memory_context = self._memory_manager.get_context_prompt(
             user_id, limit=8, query=memory_query,
         )
@@ -232,3 +230,33 @@ class PromptContextAssembler:
             request_messages=request_messages,
             brain_active=brain_active,
         )
+
+    def _build_memory_query(self, content: str, thought: dict | None) -> str:
+        """拼出用于记忆检索的查询串。
+
+        历史缺陷：这里原本只有 ``thought["topic"]`` 一条分支，而
+        ``pipeline.py`` 传进来的 ``thought`` 恒为 ``None``
+        （``ENABLE_DIALOGUE_THINKER`` 关着，``DialogueThinker`` 不产出），
+        于是整个分支是死代码 —— 记忆检索永远只拿用户这一句话去查，
+        丢掉了「当前在聊什么」这个最有用的上下文。
+
+        改用 ``TopicTracker``：它在 ``pipeline.py`` 里紧挨着 ``build()``
+        之前调用 ``update(content)``，拿到的是**含本轮消息在内**的最新话题，
+        比 ``thought["topic"]`` 更及时，且不需要打开 DialogueThinker。
+
+        ``thought`` 分支保留：DialogueThinker 打开时它的 topic 更精确
+        （模型抽取 vs 关键词），优先用；没打开时回退到 TopicTracker。
+        """
+        if thought and thought.get("topic"):
+            return f"{thought['topic']} {content}"
+        topic = ""
+        if self._topic_tracker is not None:
+            try:
+                topic = self._topic_tracker.get_current_topic() or ""
+            except Exception as e:
+                # 话题追踪出问题不该影响记忆检索
+                logger.debug(f"topic lookup failed, using raw content: {e}")
+                topic = ""
+        if topic and topic not in content:
+            return f"{topic} {content}"
+        return content

@@ -113,3 +113,42 @@ class TestEmbedder:
         a = embedder.embed("完全一样的一句话")
         b = embedder.embed("完全一样的一句话")
         assert np.allclose(a, b, atol=1e-6)
+
+
+class TestLazyInitThreadSafety:
+    """并发首次加载只能真正加载一次。
+
+    历史 bug：``_lazy_init`` 开头只有一句
+    ``if self._ready or self._init_error: return``，没有锁。启动时后台回填
+    线程和主线程同时调 ``available``，两个线程都通过判断、一起进
+    ``SentenceTransformer(...)``，torch 在加载权重期间被并发写坏，报
+    ``Cannot copy out of meta tensor; no data!``。于是同一次启动里既有
+    「加载失败，回退关键词搜索」的 warning，又有 ``ready=True`` 的诊断，
+    谁都不知道到底能不能用。
+    """
+
+    def test_concurrent_available_loads_once(self, embedder, monkeypatch):
+        import threading
+
+        # 换一个全新的实例，确保 _lazy_init 还没跑过
+        fresh = SentenceTransformerEmbedder(embedder.model_source)
+        calls = []
+        original = fresh._lazy_init_locked
+
+        def counting():
+            calls.append(1)
+            original()
+
+        monkeypatch.setattr(fresh, "_lazy_init_locked", counting)
+
+        threads = [threading.Thread(target=lambda: fresh.available) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(calls) == 1, f"模型被加载了 {len(calls)} 次，应只加载 1 次"
+        assert fresh.available is True
+        assert fresh.init_error is None
+        assert fresh.dimension == 512
+

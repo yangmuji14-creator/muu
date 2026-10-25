@@ -481,6 +481,8 @@
     }
   }
   .qr-card { width: 100%; max-width: 320px; text-align: center; }
+  /* 二维码底必须是纯白: 扫码器靠黑白对比识别, 用 --surface 的冷调
+     会降低识别率。这是唯一允许写死 #fff 的地方。 */
   .qr-img { width: 200px; height: 200px; object-fit: contain; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; margin: var(--space-2) auto; display: block; }
   .qr-link { display: inline-block; margin: var(--space-3) auto; color: var(--accent); font-size: var(--text-sm); word-break: break-all; }
   .qr-wait { padding: var(--space-5); }

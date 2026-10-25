@@ -86,7 +86,11 @@
       {@render pageBody()}
     </ImmersiveShell>
   {:else}
-    <PhoneShell active={activePage} panel={layout.mode === 'panel' ? statePanel : undefined}>
+    <PhoneShell
+      active={activePage}
+      panel={layout.mode === 'panel' && activePage === 'chat' ? statePanel : undefined}
+      multiCol={activePage === 'chat'}
+    >
       {@render pageBody()}
     </PhoneShell>
   {/if}

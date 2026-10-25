@@ -8,10 +8,79 @@
 
 from core.chat.context_builder import (
     DEFAULT_CONTEXT_CHAR_BUDGET,
+    PromptContextAssembler,
     _llm_message,
     get_time_context,
     trim_messages_to_budget,
 )
+
+
+class _FakeTopicTracker:
+    def __init__(self, topic: str = "") -> None:
+        self._topic = topic
+        self.raise_on_get = False
+
+    def get_current_topic(self) -> str:
+        if self.raise_on_get:
+            raise RuntimeError("tracker broke")
+        return self._topic
+
+    def get_topic_context(self) -> str:
+        return ""
+
+
+def _assembler(topic_tracker) -> PromptContextAssembler:
+    return PromptContextAssembler(
+        memory_manager=None,
+        mood_engine=None,
+        topic_tracker=topic_tracker,
+        tool_registry=None,
+        brain=None,
+        config={},
+    )
+
+
+class TestBuildMemoryQuery:
+    """记忆检索查询串的拼接。
+
+    历史缺陷：这里原来只有 ``thought["topic"]`` 一条分支，而 pipeline 传进来的
+    ``thought`` 恒为 None（ENABLE_DIALOGUE_THINKER 关着），整段是死代码。
+    """
+
+    def test_uses_topic_tracker_when_thought_missing(self):
+        """thought 为 None 时改用 TopicTracker 的话题，而不是只发用户原话。"""
+        asm = _assembler(_FakeTopicTracker("养猫"))
+        q = asm._build_memory_query("它最近怎么样", None)
+        assert "养猫" in q and "它最近怎么样" in q
+
+    def test_thought_topic_wins_over_tracker(self):
+        """DialogueThinker 打开时它的 topic 更精确，优先用。"""
+        asm = _assembler(_FakeTopicTracker("养猫"))
+        q = asm._build_memory_query("它最近怎么样", {"topic": "宠物健康"})
+        assert "宠物健康" in q
+        assert "养猫" not in q
+
+    def test_empty_topic_falls_back_to_content(self):
+        asm = _assembler(_FakeTopicTracker(""))
+        assert asm._build_memory_query("随便聊聊", None) == "随便聊聊"
+
+    def test_no_tracker_falls_back_to_content(self):
+        asm = _assembler(None)
+        assert asm._build_memory_query("随便聊聊", None) == "随便聊聊"
+
+    def test_tracker_failure_falls_back_to_content(self):
+        """话题追踪出问题不该让记忆检索挂掉。"""
+        tracker = _FakeTopicTracker("养猫")
+        tracker.raise_on_get = True
+        asm = _assembler(tracker)
+        assert asm._build_memory_query("随便聊聊", None) == "随便聊聊"
+
+    def test_topic_already_in_content_not_duplicated(self):
+        """话题词已经在原话里时不再重复拼一遍。"""
+        asm = _assembler(_FakeTopicTracker("养猫"))
+        q = asm._build_memory_query("养猫要注意什么", None)
+        assert q == "养猫要注意什么"
+        assert q.count("养猫") == 1
 
 
 class TestLlmMessage:

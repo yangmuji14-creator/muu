@@ -13,10 +13,11 @@
   } from '../lib/chatApi.js';
   import { chatStream } from '../lib/chatStream.js';
   import { monitorApi } from '../lib/monitorApi.js';
-  import { navigate } from '../lib/router.js';
+  import { navigate, route } from '../lib/router.js';
   import { layout } from '../lib/layout.svelte.js';
   import { setActiveConversation, refreshState } from '../lib/session.svelte.js';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte.js';
+  import { shell } from '../lib/shell.svelte.js';
   import ConfigNotice from '../components/ConfigNotice.svelte';
 
   // 后端将配置缺失/出错"包装成 done 事件的友好文案，命中即渲染为配置提示卡片而非普通气泡。
@@ -98,6 +99,31 @@
   // 滚动锚点
   let messagesEl = $state(null);
   let bottomEl = $state(null);
+  let inputEl = $state(null);
+
+  // 输入框自适应高度: 单行起, 最多 6 行 (超过就滚动)。
+  //   固定 40px 的 input 装不下稍长的消息, 用户看不到自己写了什么,
+  //   这是「长文本可输入」这一条最直接的做法。
+  const INPUT_MAX_H = 148;
+  function autoGrow() {
+    const el = inputEl;
+    if (!el) return;
+    el.style.height = 'auto';
+    const next = Math.min(el.scrollHeight, INPUT_MAX_H);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > INPUT_MAX_H ? 'auto' : 'hidden';
+  }
+  // Enter 发送 / Shift+Enter 换行; 输入法组合中的 Enter 不发送。
+  function onInputKeydown(e) {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    if (canSend) send();
+  }
+  // 发送后清空输入并把高度收回单行
+  $effect(() => {
+    void input;
+    if (input === '') queueMicrotask(autoGrow);
+  });
 
   // ---------- 派生 ----------
   let activeConv = $derived(
@@ -210,12 +236,39 @@
   });
 
   // ---------- 生命周期 ----------
+  // 聊天页自己的紧凑断点比外壳（768）高：三栏在 900 以下时，
+  // 「导航 + 会话列 + 正文」会把正文压到 550 以下，读起来比手机还挤。
+  // 所以 899 以下直接收成单列 + 抽屉，正文拿回整宽。
   $effect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
+    const mq = window.matchMedia('(max-width: 899px)');
     const apply = () => (isMobile = mq.matches);
     apply();
     mq.addEventListener('change', apply);
     return () => mq.removeEventListener('change', apply);
+  });
+
+  // 窄屏顶栏由外壳统一渲一条: 页面把「汉堡 + 当前会话名 + 重命名」登记过去,
+  // 外壳的 TopBar 负责画。两条叠加的标题栏是这版之前最扎眼的毛病。
+  //
+  // 本页是常驻挂载的（切走只加 .page-hidden），所以必须看当前路由 ——
+  // 否则在通讯录/设置页上，外壳顶栏还会挂着聊天的重命名铅笔。
+  $effect(() => {
+    const onChat = ($route.page ?? 'chat') === 'chat';
+    if (!(onChat && isMobile && layout.mode !== 'immersive')) {
+      shell.chatHead = null;
+      return;
+    }
+    shell.chatHead = {
+      title: activeConv ? displayName(activeConv) : '聊天',
+      openList: () => (listOpen = true),
+      canRename: Boolean(activeConvId),
+      rename: () => {
+        if (activeConvId) renameConversation(activeConv);
+      },
+    };
+    return () => {
+      shell.chatHead = null;
+    };
   });
 
   $effect(() => {
@@ -769,18 +822,7 @@
   {/snippet}
 
   {#if isMobile && layout.mode !== 'immersive'}
-    <header class="mobile-head">
-      <button class="icon-btn" onclick={() => (listOpen = true)} aria-label="会话列表" title="会话列表">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-      </button>
-      <span class="head-title">{activeConv ? displayName(activeConv) : '聊天'}</span>
-      <button
-        class="icon-btn" onclick={() => { if (activeConvId) renameConversation(activeConv); }}
-        aria-label="重命名" title="重命名" disabled={!activeConvId}
-      >
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-      </button>
-    </header>
+    <!-- 窄屏不再自绘标题栏: 内容交给外壳 TopBar 统一渲染, 避免两条顶栏叠加 -->
   {/if}
 
   <div class="chat-body">
@@ -1034,23 +1076,26 @@
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 12h-6a3 3 0 0 0-3 3v6"/><circle cx="9" cy="10" r="0.5"/><circle cx="14" cy="8" r="0.5"/></svg>
           </button>
 
-          <input
+          <textarea
             class="text-input"
+            bind:this={inputEl}
             bind:value={input}
+            rows="1"
             placeholder={sending
               ? (pendingQueue.length ? `回复中…已排队 ${pendingQueue.length} 条` : '回复中…继续输入会排队')
               : '输入消息…'}
-            onkeydown={(e) => { if (e.key === 'Enter' && canSend) send(); }}
+            oninput={autoGrow}
+            onkeydown={onInputKeydown}
             disabled={uploading}
-          />
+          ></textarea>
 
-          {#if sending && !canSend}
-            <button class="send-btn disabled" disabled title="正在生成">
-              <span class="thinking-dot"></span>
+          {#if sending}
+            <button class="send-btn stop" onclick={abortStream} title="停止生成" aria-label="停止生成">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
             </button>
           {:else}
             <button class="send-btn {canSend ? 'active' : ''}" onclick={() => { if (canSend) send(); }} disabled={!canSend}
-              title={sending ? '发送（当前回复完成后一起送达）' : '发送'}>
+              title="发送">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3.4 20.4l17-8.4-17-8.4L8 12l-4.6 8.4z"/></svg>
             </button>
           {/if}
@@ -1167,33 +1212,6 @@
     padding-right: var(--space-4);
   }
 
-  /* 移动端聊天页原本是「顶栏 + 48px 聊天头」两条同色白条纵向叠着, 合计 92px,
-     读起来像把同一个页头印了两遍。改成二级上下文条:
-     高度收到 44px、标题左对齐降到 13px/500 灰字、底边用更轻的 --border,
-     与 TopBar(11px 品牌 + --border-strong)拉开一级, 层级才成立。 */
-  .mobile-head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    height: 44px;
-    padding: 0 var(--space-2) 0 var(--space-1);
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-  .head-title {
-    flex: 1;
-    min-width: 0;
-    font-weight: 500;
-    font-size: var(--text-13);
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-2);
-    text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .icon-btn {
     display: inline-flex;
     align-items: center;
@@ -1233,8 +1251,10 @@
     width: var(--conv-w);
     border-right: 1px solid var(--border);
     /* 会话栏是「浮在氛围层之上」的一列 chrome, 用玻璃而非纯色,
-       两列才有同一张纸上的前后关系, 而不是被一条硬线拼起来的两块。 */
-    background: var(--bg);
+       两列才有同一张纸上的前后关系, 而不是被一条硬线拼起来的两块。
+       兜底用列级实色而非 --bg: 不支持 backdrop-filter 时也要保住
+       四列的明度阶梯, 否则整页退回同一块底色。 */
+    background: var(--col-list-solid);
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -1243,10 +1263,19 @@
   }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .conv-panel {
-      background-color: var(--glass-1);
-      background-image: var(--glass-sheen);
-      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+      /* 列级玻璃: 会话列表是「可扫读的一层」, 明度介于右栏与正文之间。
+         之前和侧栏共用 --glass-1, 两列永远同一个色 —— 层次做不出来。
+         v7: 五层材质 (镜面边 + 厚度渐变 + 颗粒 + 双 hairline)。 */
+      background-color: var(--glass-list);
+      background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
+      background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
+      background-position: top left, center, center;
+      background-repeat: no-repeat, no-repeat, repeat;
+      background-clip: padding-box;
+      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
+      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
       /* 与 main-area 之间那条边界: 玻璃压玻璃时, 单靠 border-right
          会显得是"两块纸拼起来"; 加一条内高光让会话栏读作浮在上层的那一块。 */
       box-shadow: var(--glass-highlight);
@@ -1254,7 +1283,7 @@
   }
   @media (prefers-reduced-transparency: reduce) {
     .conv-panel {
-      background: var(--bg);
+      background: var(--col-list-solid);
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
@@ -1331,7 +1360,12 @@
     background: var(--row-hover);
   }
   .conv-row.is-active {
-    background: var(--surface);
+    /* v16: 原来是 background: var(--surface) —— 不透明中性色。
+       它在一列有色玻璃上直接「打一个洞」, 洞外面是淡紫, 洞里是纯灰白,
+       选中态看起来像贴纸, 而不是「这一行被提亮了」。
+       现在走 --row-active (accent 7% + 白 4.5% 的半透明幕),
+       行下面那层的色相继续透上来, 只有明度与一点点蓝在变。 */
+    background: var(--row-active);
     border-left-color: var(--accent);
   }
   .conv-dot {
@@ -1537,6 +1571,33 @@
     display: flex;
     flex-direction: column;
     position: relative;
+  }
+  /* 正文列自带玻璃: .main-area 在聊天页已让成透明(见 PhoneShell),
+     玻璃必须由这一列自己承担, 否则整页没有内容面。
+     一列一层, 氛围色才能透到屏幕上来。 */
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .chat-stage {
+      background-color: var(--glass-content);
+      /* v7: 正文列是内容层, 用 Apple 的 thin 档 (弥散 + 轻微压暗)。
+         旧值 blur(14px) saturate(1.08) 是在**放大**背景色 —— 方向与
+         Apple 的 muted/darkened 相反, 所以底色看着永远比该有的艳。 */
+      background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
+      background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
+      background-position: top left, center, center;
+      background-repeat: no-repeat, no-repeat, repeat;
+      background-clip: padding-box;
+      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
+      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
+    }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .chat-stage {
+      background: var(--col-content-solid);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
   .msgs {
     flex: 1;
@@ -1833,32 +1894,48 @@
   /* 输入区 */
   .input-area {
     flex: none;
-    border-top: 1px solid var(--border);
+    /* v18: 原来是 1px 中性 --border, 在紫玻璃上是一条灰线。改同相暗线。 */
+    border-top: 1px solid var(--bar-line);
     /* 玻璃而非 --surface: 输入区横跨整个内容区宽度, 若用不透明底,
        氛围层会在页面最下方被一条硬边切断 —— 底部渐变(藕紫)全部失效。
-       用 glass-1 让它与侧栏同属一层 chrome, 同时透出下方氛围。 */
-    background: var(--glass-1);
+       用 glass-1 让它与侧栏同属一层 chrome, 同时透出下方氛围。
+       v18 修正: glass-1 = rgba(246,248,252,0.66) 是「近白 66%」, 把底下
+       的氛围紫几乎全部洗掉, 输入条于是成了页面底部一条灰白带。
+       改用 --bar-fill (列色 content 的 34%), 输入条与正文列同材质同色相。 */
+    background: var(--bar-fill);
     position: relative;
     padding-bottom: env(safe-area-inset-bottom);
   }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .input-area {
-      background-color: var(--glass-1);
-      /* 输入区的光泽带方向要反过来: 它贴在页面底部, 受光面在上沿,
-         所以用 0deg 让亮度集中在上边一条, 而不是 160deg 斜着散开。 */
-      background-image: linear-gradient(
-        0deg,
-        rgba(255, 255, 255, 0) 60%,
-        rgba(255, 255, 255, 0.14) 100%
-      );
-      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+      background-color: var(--bar-fill);
+      /* 输入区是 chrome 层, 用 Apple 的 thin 档。
+         v18: 三层材质贴图全部撤掉, 只留底色 + 模糊。
+         实测原因 (1440x1000, 输入区高 69px):
+         - --mat-rim 的底色是 --mat-specular 白 0.92, 在这条 69px 的矮条上
+           直接画出一条 Y95.5 的纯白亮带, 而它上方的正文列只有 Y77.9 —— 
+           1px 的 rim 在高条上是「高光」, 在矮条上是「一条白边」。
+         - --mat-veil 起点是 --mat-specular-soft (白 0.40), 40px 的渐隐边
+           在这 69px 上占掉 58%, 把整条 bar 从 Y77.5 洗到 Y89.4、
+           饱和度从 S11.6 洗到 S4.7 —— 白幕把列色吃掉了。
+         - --mat-grain 是白色噪点 (alpha = 0.52*A - 0.16), 平均效果是
+           提亮 + 降饱和, 同样在吃色相。
+         三者叠加的净效果就是用户说的「灰灰的」。输入条只需要:
+         1 条同相暗线 (border-top) 交代上沿, 一层同列色的半透幕交代体量,
+         一次 backdrop blur 交代它压在内容之上。厚度感靠 --glass-highlight
+         的两条 inset 边就够了, 不需要噪声。 */
+      background-image: none;
+      background-clip: padding-box;
+      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
+      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+        brightness(var(--mat-bri-thin));
       box-shadow: var(--glass-highlight);
     }
   }
   @media (prefers-reduced-transparency: reduce) {
     .input-area {
-      background: var(--surface);
+      background: var(--col-content-solid);
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
@@ -1991,26 +2068,42 @@
   }
   /* 输入框: 34px 扁条 -> 40px 高度 + 微内阴影, 让输入区成一个「可写入的凹槽」,
      而不是页面上又一根 1px 细线的装饰。focus 时边框转冷蓝并带 2px 环,
-     是整页最明确的「你现在在这里」提示。 */
+     是整页最明确的「你现在在这里」提示。
+     v18: 背景从 var(--surface-2) (不透明 #edf0f5, H217.5 S3.3 Y86.9) 换成
+     --field-fill (text-1 6% 半透)。原来那块比所在正文列亮 9 个感知明度点、
+     色相偏 41°, 是「输入框灰灰的」的直接来源; 现在是同相压暗 9 点,
+     读成「材料被压进去了一道槽」而不是「贴了一张灰纸」。
+     边框同步换成同相暗线, 不再用中性 --border。 */
   .text-input {
     flex: 1;
     min-width: 0;
-    height: 40px;
-    padding: 0 var(--space-3);
-    border: 1px solid var(--input-border);
+    /* textarea: 高度由 JS 按内容伸缩 (单行 36px → 最多 6 行)。
+       固定 40px 的 input 装不下稍长的话, 用户看不到自己写了什么。 */
+    height: 36px;
+    min-height: 36px;
+    max-height: 148px;
+    padding: 7px var(--space-3);
+    border: 1px solid var(--field-line);
     border-radius: var(--input-radius);
-    background: var(--surface-2);
+    background: var(--field-fill);
     color: var(--input-text);
+    font-family: inherit;
     font-size: var(--text-15);
+    line-height: 1.5;
+    resize: none;
+    overflow-y: hidden;
     box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text-1) 5%, transparent);
     transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
   }
   .text-input:hover {
-    border-color: var(--border-strong);
+    border-color: var(--field-line-strong);
+    background: var(--field-fill-hover);
   }
   .text-input:focus {
     outline: none;
-    background: var(--surface);
+    /* v18: 原来 focus 跳回 var(--surface) —— 那是不透明白, 一聚焦就在
+       紫玻璃上挖出一块白板, 比静止态更突兀。改为同族加强一档。 */
+    background: var(--field-fill-focus);
     border-color: var(--input-focus-border);
     box-shadow: var(--focus-ring);
   }
@@ -2019,20 +2112,34 @@
   }
   /* 发送键: 可发送时用冷蓝实底, 而不是近黑。
      近黑是「破坏性/最高权重」的颜色, 用在发送这种高频动作上过重;
-     冷蓝是全站唯一的功能色, 留给唯一的主动作, 页面才有色彩呼吸点。 */
+     冷蓝是全站唯一的功能色, 留给唯一的主动作, 页面才有色彩呼吸点。
+     v18: 静止态从 --surface-2 (不透明中性) 换成 --field-fill, 与输入框同族,
+     两者共用一道「槽」的材质; 可发送时仍然是全页最亮的那点蓝。 */
   .send-btn {
     flex: none;
     width: 40px;
-    height: 40px;
+    height: 36px;
     border: none;
     border-radius: var(--radius-sm);
-    background: var(--surface-2);
+    background: var(--field-fill);
     color: var(--text-3);
     cursor: not-allowed;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     transition: background var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition);
+  }
+  /* 生成中: 同一个位置变成「停止」, 而不是留一个灰掉不可点的发送键。
+     会话跑一次长回复时, 用户最需要的是能叫停。 */
+  .send-btn.stop {
+    background: var(--field-fill);
+    color: var(--text-2);
+    cursor: pointer;
+    border: 1px solid var(--field-line-strong);
+  }
+  .send-btn.stop:hover {
+    background: var(--field-fill-hover);
+    color: var(--text-1);
   }
   .send-btn.active {
     background: var(--accent);
@@ -2046,8 +2153,10 @@
   .send-btn.active:active {
     transform: scale(0.94);
   }
-  .send-btn.disabled {
-    background: var(--surface-2);
+  .send-btn:disabled {
+    background: var(--field-fill);
+    color: var(--text-3);
+    cursor: not-allowed;
   }
   .thinking-dot {
     width: 10px;
@@ -2128,12 +2237,21 @@
     font-size: var(--text-sm);
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 899px) {
     .bubble-row {
       max-width: 86%;
     }
     .msgs {
       padding: var(--space-3);
+    }
+    .composer {
+      padding: var(--space-2) var(--space-3) var(--space-3);
+      gap: var(--optical-6);
+    }
+    /* 单列时正文铺到底，不再留 680 的居中框：
+       680 是「宽屏别把一行拉太长」的上限，窄屏本来就到不了。 */
+    .msgs.empty {
+      padding-top: clamp(var(--space-5), 7vh, 72px);
     }
   }
 </style>

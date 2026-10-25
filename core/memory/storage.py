@@ -243,6 +243,26 @@ class MemoryStorage:
         self._insert(memory, user_id)
         self._conn.commit()
 
+    def update_many(self, user_id: str, memories: list[Memory]) -> int:
+        """批量更新记忆（单事务）。
+
+        存在的原因：遗忘衰减需要把一批记忆的新 `forget_score` 一起写回，
+        逐条 `update()` 会做 N 次 commit；500 条记忆在 WAL 模式下等于 500 次
+        落盘。这里合到一个事务里，返回实际写入的条数。
+        """
+        if not memories:
+            return 0
+        conn = self._conn
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for mem in memories:
+                self._insert(mem, user_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return len(memories)
+
     def delete(self, user_id: str, memory_id: str) -> bool:
         """删除一条记忆"""
         cur = self._conn.execute(

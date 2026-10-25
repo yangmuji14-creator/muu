@@ -1,15 +1,16 @@
 /* ============================================================
    慕 · Ink — 极简冷峻设计系统
-   暖纸底 + 冷蓝点缀 · 细线分隔 · 无卡片阴影 · 高信息密度
+   冷钢蓝底 + 同族冷光点缀 · 细线分隔 · 无卡片阴影 · 高信息密度
 
    Layer 1: 基础 (字体/圆角/阴影/间距/过渡)  — 主题无关
    Layer 2: 语义色 (bg/surface/text/accent/status) — 按主题覆盖
    Layer 3: 组件级 token — 由 Layer 1 + Layer 2 组合派生, 主题自动跟随
 
    设计原则:
+   - 单一色相身份 H≈213 (冷钢蓝): 深浅两套主题只在明度上反转, 不换色相
    - 圆角克制 (2~6px), 靠 1px 细线而非阴影划分层次
-   - 底色暖 (#f7f5f2 纸白), 文字暖炭黑 (#1e1b18), 不用纯黑纯白
-   - 冷蓝 (#2f5d8a) 只作点缀: 链接/选中/焦点, 不铺面积
+   - 底色冷 (#eff2f6 钢蓝雾 / #0e141b 钢蓝夜), 文字冷黑 (#0f151c) 与冷白 (#e8edf3)
+   - 冷蓝 (#295182 浅 / #90b4df 深) 承担强调与"谁在说"的语义, 不铺大面积
    - 数字与时间戳走等宽字体, 拉开与正文的质感对比
    ============================================================ */
 
@@ -35,12 +36,19 @@
      平面元素一律 --shadow-0, 靠 1px 细线分层;
      只有真正浮在内容之上的东西才配拿到 2 档以上。 */
   --shadow-0: none;
-  --shadow-1: 0 1px 2px rgba(28, 22, 16, 0.04);          /* chip hover */
-  --shadow-2: 0 2px 8px rgba(28, 22, 16, 0.06);          /* 下拉 / popover */
-  --shadow-3: 0 8px 24px rgba(28, 22, 16, 0.10),
-              0 1px 3px rgba(28, 22, 16, 0.06);           /* 抽屉 / sheet */
-  --shadow-4: 0 20px 48px rgba(28, 22, 16, 0.16),
-              0 2px 8px rgba(28, 22, 16, 0.08);           /* 模态弹窗 */
+  /* 阴影色用冷调黑 rgba(13, 19, 25, x) —— 对齐新的中性冷底 H218,
+     不是纯黑也不是暖黑。纯黑阴影在冷灰底上会发灰、显得脏;
+     冷调黑把阴影压回同一色相家族, 视觉上像"光被挡住"。
+     每档都带一层 1px 贴边阴影: 大半径管"浮多高", 贴边管"边界在哪",
+     只给大半径会得到一圈糊掉的灰雾, 卡片反而更像脏的。 */
+  --shadow-1: 0 1px 2px rgba(13, 19, 25, 0.05),
+              0 0 1px rgba(13, 19, 25, 0.04);            /* chip hover */
+  --shadow-2: 0 2px 8px rgba(13, 19, 25, 0.08),
+              0 1px 2px rgba(13, 19, 25, 0.05);          /* 下拉 / popover */
+  --shadow-3: 0 8px 24px rgba(13, 19, 25, 0.12),
+              0 2px 6px rgba(13, 19, 25, 0.07);          /* 抽屉 / sheet */
+  --shadow-4: 0 20px 48px rgba(13, 19, 25, 0.18),
+              0 4px 12px rgba(13, 19, 25, 0.10);         /* 模态弹窗 */
   /* 旧名别名 —— 值已重定向到新阶梯, 存量引用不必逐处改写 */
   --shadow-sm: var(--shadow-1);
   --shadow: var(--shadow-2);
@@ -120,14 +128,18 @@
      conv 栏从 240 收到 232, 把省下的宽度还给消息区。
      chat-msg-maxw 从 720 降到 640: 720px 的中文行在 1440 视口下
      约 48 个汉字/行, 阅读时回行追踪成本偏高。 */
-  --sidebar-w: 196px;           /* 桌面侧边栏宽度 */
-  --conv-w: 232px;              /* 会话列表栏宽度 */
-  --panel-w: 244px;             /* 右侧「她的状态」栏宽度 */
+  --sidebar-w: 200px;           /* 桌面一级导航栏 */
+  --sidebar-rail: 64px;         /* 窄桌面收成图标轨 */
+  --conv-w: 256px;              /* 会话列表栏 */
+  --panel-w: 272px;             /* 右侧「她的状态」栏 */
   --topbar-h: 44px;             /* 顶栏高度 */
   --tabbar-h: 54px;             /* 底部 Tab 栏高度 */
   --phone-maxw: 520px;          /* 窄屏容器最大宽度 */
   --app-maxw: 100%;             /* 桌面铺满, 不再居中留白 */
-  --chat-msg-maxw: 640px;       /* 聊天消息最大宽度 */
+  --chat-msg-maxw: 680px;       /* 聊天消息阅读宽度 */
+  --page-maxw: 1040px;          /* 常规页面内容最大宽度 (通讯录/设置) */
+  --page-pad-x: var(--space-6); /* 常规页面左右留白 */
+  --page-pad-y: var(--space-5); /* 常规页面上留白 */
 
   /* ---- 字体尺寸与行高 ----
      补齐了原阶梯的两个断档:
@@ -136,7 +148,7 @@
           最终表现成「所有辅助信息都是 12px」, 层级被摊平。
        2) 13px 正文层 (--text-13)。原来 12px 之后直接跳到 14px,
           中文在 14px + 1.6 行高下偏松散, 而 12px 又太碎。
-          13px/1.62 是这套暖纸底上最耐读的一档。
+          13px/1.62 是这套冷钢蓝底上最耐读的一档。
      并补上真正的主标题档 --text-display(26px): 原来页面标题
      最高只用到 16px, 与正文同级, 这是「页面看起来没重点」的直接原因。 */
   --text-2xs: 0.6875rem;      /* 11px 微标签 */
@@ -166,272 +178,339 @@
 }
 
 /* ============================================================
-   Layer 2: 语义色 — 浅色（暖纸底）
-   色相锚定 H≈37（暖纸），与深色主题共享同一色相身份。
-   bg 与 surface 的明度差拉到 8%，surface 才能真正"浮"起来。
+   Layer 2: 语义色 — 浅色（冷钢蓝 H≈213）
+   色相锚定 H≈213（冷钢蓝），与深色主题共享同一色相身份。
+   原版是 H≈37 暖纸底，与深色主题的冷蓝上半/暖炭下半混在一起，
+   页面顶部暖、底部冷，读起来像两块不同产品拼在一起。
+   现在全站只有一个色相家族：H213，靠明度与饱和度分层，不靠色相跳变。
+
+   ---- 为什么 bg 压到 L90 而不是 L95 ----
+   第一版改色只换了色相、没换明度（bg #eff2f6 是 L95），结果整个界面
+   看着仍然"纯白" —— 因为 H213 在 L95 上的彩度只有 6/255，肉眼分辨率
+   以内，等于白。冷色要"读得出来"，靠的不是色相而是**明度差**：
+   L90 的 #dee5ed 与 L97 的 #f5f8fb 之间有 7 个明度点，
+   侧栏/正文/卡片才第一次出现能看见的层次。
+   代价是正文底不再是纸白 —— 这正是本次整改要的效果：
+   「纸张下面有光」，而不是「一张白纸」。
+
+   ---- 为什么玻璃不再用白色 ----
+   第二版把玻璃 alpha 从 .88 一路调到 .62，界面反而更白。
+   原因是白 × alpha 叠在任何底色上都只会**变浅**，alpha 越低越接近
+   底下那层，alpha 越高越接近纯白 —— 两条路都通向白。
+   所以玻璃底色必须是**带色的冷调**（#f2f6fa / #ebf0f7），
+   白色只留给 --glass-border 的内高光边。
    ============================================================ */
 [data-theme='light'] {
-  /* ---- 背景 ---- */
-  --bg: #f3efe8;            /* H38 S31 L93 暖纸底 */
-  --surface: #fdfbf8;       /* H36 S56 L98 比纯白柔, 去掉刺眼感 */
-  --surface-2: #ece6dc;     /* H37 S30 L89 次级面板 / hover */
-  --surface-3: #e0d8ca;     /* H38 S26 L84 再次级 / 按下 */
-  --surface-inset: #f6f2eb; /* 输入框 / 凹槽 */
+  /* ============================================================
+     Midnight Violet · 浅色对应版
+     深紫午夜是主方向；浅色不是「另一套配色」，而是同一条紫罗兰
+     色相家族被抬到高明度端的对照版本：色相带仍是 H218→H288，
+     只是彩度随明度线性衰减（明度越高，能表达的彩度越低 —— 这是
+     sRGB 色域的物理限制，不是审美选择）。
+     ============================================================ */
 
-  /* ---- 文字 (三档全部 ≥4.5:1 on surface) ----
-     原 text-3 #837b71 只有 4.17:1 —— 大量"次要说明"其实是不可读的。 */
-  --text-1: #191613;        /* 17.44 on surface */
-  --text-2: #4d473f;        /*  8.88 */
-  --text-3: #665e53;        /*  6.18 */
-  --text-inverse: #fdfbf8;
+  /* ---- 背景 / 面板 ----
+     surface 系列从旧的冷钢灰 (#fafbfd) 改为极淡紫 (#f8f6fc)。
+     旧值是 H212 的冷蓝灰，与深紫方向不属于同一家族；换到 H270 之后，
+     面板底色与强调紫、与氛围紫共享色相，界面才「同一种材料」。 */
+  --bg: #e9e4f0;            /* 页面底: 紫灰 */
+  --surface: #f8f6fc;       /* 面板: 近白但偏紫 */
+  --surface-2: #efeaf7;     /* 次级面板 / 输入底 */
+  --surface-3: #e2dbee;     /* 三级 / 分隔 */
+  --surface-inset: #f3f0f9; /* 内凹 (轨道/代码底) */
 
-  /* ---- 边框 ----
-     分「装饰线」与「结构线」两档: 装饰线只做分隔, 不承担边界语义;
-     结构线 (输入框/卡片边界) 必须 ≥3:1, 否则表单看着像没有边。 */
-  --border: #ded6c9;        /* 1.40 仅装饰 */
-  --border-strong: #8c8170; /* 3.70 结构线 */
-
-  /* ---- 强调 (冷蓝 H≈209, 只压深一档) ---- */
-  --accent: #2b567f;        /* 7.42 on surface */
-  --accent-strong: #1f4366; /* 9.90 */
-  --accent-soft: #e6eef6;
-  --on-accent: #ffffff;     /* 7.66 on accent */
-  --accent-contrast: #ffffff;
-
-  /* ---- 语义色 (全部 ≥4.5:1 on surface) ---- */
-  --success: #3d6b4c;       /* 5.97 */
-  --warning: #8a6626;       /* 5.07 */
-  --error: #98382f;         /* 6.91 */
-  --info: #2b567f;          /* 7.42 */
-  --on-success: #ffffff;    /* 6.17 on success */
-  --on-warning: #ffffff;    /* 5.24 */
-  --on-error: #ffffff;      /* 7.14 */
-
-  /* ---- 交互态 ---- */
-  --overlay: rgba(28, 22, 16, 0.38);
-  --hover-overlay: rgba(28, 22, 16, 0.045);
-  --active-overlay: rgba(28, 22, 16, 0.085);
-  --disabled-text: rgba(28, 22, 16, 0.32);
-  --disabled-bg: rgba(28, 22, 16, 0.05);
-  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
-
-  /* ---- 状态软底 ---- */
-  --success-soft: rgba(61, 107, 76, 0.12);
-  --warning-soft: rgba(138, 102, 38, 0.14);
-  --error-soft: rgba(152, 56, 47, 0.12);
-  --info-soft: rgba(43, 86, 127, 0.10);
-
-  /* ---- 骨架屏 ---- */
-  --skeleton-bg: color-mix(in srgb, var(--surface-3) 70%, transparent);
-  --skeleton-hi: color-mix(in srgb, var(--surface) 70%, transparent);
-
-  /* ---- 进度条 ---- */
-  --progress-track: var(--surface-3);
-  --progress-fill: var(--accent);
-
-  /* ---- 遮罩 ---- */
-  --scrim: rgba(28, 22, 16, 0.38);
-
-  /* ---- 氛围层 (ambient) — v3 补上的关键缺失 ----
-     这是此前完全不存在的一层, 也是「磨砂玻璃做了却看不见」的根因:
-     --bg 原本是一个纯色, 而 backdrop-filter 模糊纯色 = 纯色。
-     玻璃 token 写得再细, 底下没有内容可透, 视觉上就等于没做。
-
-     构造上踩过两次坑, 都记在这里:
-
-     坑一(空洞): 最初只用了三个锚在四角的 radial-gradient, transparent 停在 62%。
-     内容区中心到锚点的归一化距离已经 0.66, 直接落在透明区之外 ——
-     页面正中一片纯白, 只有四个角有颜色。修法: 加一层全幅底渐变兜底。
-
-     坑二(仍像纯色): 加了全幅渐变后测出来 ΔE 跨度有 8, 数字达标了,
-     但截图看着还是"一块米色的纸"。原因是**色团边界太柔** ——
-     20px 以上的模糊会把 200px 内平缓过渡的渐变抹平成纯色。
-     磨砂玻璃之所以"看得出是玻璃", 靠的不是底色的明暗, 而是
-     底下有**边界可辨的形状**被柔化后形成的色晕。
-
-     所以现在每个色团的尺寸收到视口的 30~46%, 且用 ellipse 明确收边,
-     transparent 停在 58~64% (而不是 76%)。模糊 14px 后,
-     色团边缘仍保留一圈可感知的亮度变化 —— 这才是玻璃能"磨"的东西。
-
-     强度按「透过内容玻璃后还剩多少」反推: 内容玻璃 alpha .62,
-     保留 38% 环境光, 故色团自身需要 ΔE ≈ 21 才能透出 ΔE ≈ 8。 */
-  --ambient-a: rgba(222, 154, 62, 0.80);   /* 暖琥珀 — 左上主光, 最浓 */
-  --ambient-b: rgba(96, 150, 216, 0.72);   /* 冷蓝 — 右上, 与 accent 同源 */
-  --ambient-c: rgba(196, 138, 200, 0.62);  /* 藕紫 — 底部, 破开黄蓝二元 */
-  --ambient-d: rgba(120, 186, 172, 0.48);  /* 灰绿 — 左下, 第四个色相让底不单调 */
-  /* 全幅底渐变: 160deg 让暖色压在左上、冷色沉在右下, 整页有一条对角线走向。
-     中段不再留 42%~58% 的纯透明带 —— 那正是坑一里正文区发白的位置,
-     现在只留 46%~54% 的窄过渡, 保证任何一行都有色。 */
-  --ambient-base: linear-gradient(
-    160deg,
-    var(--ambient-a) 0%,
-    rgba(222, 154, 62, 0.22) 26%,
-    rgba(0, 0, 0, 0) 47%,
-    rgba(96, 150, 216, 0.20) 72%,
-    var(--ambient-b) 100%
-  );
-  /* 四个色团: 尺寸收到 30~46% 视口, 边界收到 58~64%,
-     让模糊后仍有可辨的色晕层次, 而不是一片均匀的米色。 */
-  --ambient-image:
-    radial-gradient(ellipse 44% 34% at 2% -4%, var(--ambient-a), transparent 62%),
-    radial-gradient(ellipse 38% 30% at 98% 4%, var(--ambient-b), transparent 60%),
-    radial-gradient(ellipse 52% 36% at 44% 106%, var(--ambient-c), transparent 64%),
-    radial-gradient(ellipse 30% 26% at -2% 88%, var(--ambient-d), transparent 58%),
-    var(--ambient-base);
-
-  /* ---- 玻璃四档 (light) ----
-     alpha 从 .78~.90 收到 .72~.88:
-     原值是在「底下是纯色」的前提下算出来的, 那时候 alpha 必须高,
-     因为唯一的对比度风险来自用户发的图片。现在底下有了氛围层,
-     玻璃终于有东西可透, 可以放薄一点让材质显形 —— 但仍守住 .70 下限,
-     因为图片依然可能滚到玻璃下方。
-     数值由 tools/check_contrast.py 按 WCAG 公式校验, 改这里请重跑。 */
-  --glass-0: rgba(28, 22, 16, 0.38);    /* scrim */
-  --glass-1: rgba(253, 251, 248, 0.72); /* 顶栏/底栏/侧栏 */
-  --glass-2: rgba(253, 251, 248, 0.80); /* 抽屉/sheet/popover */
-  --glass-3: rgba(253, 251, 248, 0.88); /* 模态弹窗 */
-  /* 内容面玻璃: 主体区不是浮层, 不该用 chrome 档的厚度,
-     否则中间那块会重新变成一张不透明的白纸 —— 正是原状的问题。
-     这档更薄, 让氛围层以极淡的方式透上来, 页面才有"纸张下面有光"的层次。 */
-  --glass-content: rgba(253, 251, 248, 0.62);
-  --glass-border: rgba(255, 255, 255, 0.62);  /* 内高光边 */
-  --glass-border-2: rgba(140, 129, 112, 0.28);/* 外结构边 */
-  --glass-strong: var(--glass-3);      /* 旧名别名 */
-}
-
-/* ============================================================
-   Layer 2: 语义色 — 深色（暖炭，与浅色同色相）
-   原状是 H=0 的纯中性灰 (#0f0f0f/#161616/#1e1e1e),
-   与浅色的 H37 差了 37° —— 这就是"换了个产品"的量化解释。
-   ============================================================ */
-[data-theme='dark'] {
-  /* ---- 背景 ---- */
-  --bg: #14110e;            /* H30 S18 L7 */
-  --surface: #1c1815;       /* H26 S14 L10 */
-  --surface-2: #262019;     /* H32 S21 L12 */
-  --surface-3: #322b22;     /* H34 S19 L16 */
-  --surface-inset: #100e0b;
-
-  /* ---- 文字 ---- */
-  --text-1: #f0ebe3;        /* 14.86 on surface 暖白而非纯白 */
-  --text-2: #b8afa2;        /*  8.14 */
-  --text-3: #b3aa9c;        /*  7.09; 原 #7a7a7a 只有 4.22 */
-  --text-inverse: #14110e;
+  /* ---- 文字 ----
+     三级文字必须一路压到 worst-case 底 (灰玻璃 #bcbabe) 上仍 ≥4.5。
+     text-3 #563f76 在最坏底上是 4.60 —— 这是把紫罗兰色相保留下来的
+     同时能做到的最亮值，再亮就掉线。 */
+  --text-1: #191123;        /* 主文字: H268 S34 L10 */
+  --text-2: #413256;        /* 次级 */
+  --text-3: #563f76;        /* 弱化 (微标签/时间戳) */
+  --text-inverse: #fbf9ff;
 
   /* ---- 边框 ---- */
-  --border: #352e26;        /* 1.32 装饰线 */
-  --border-strong: #776c5c; /* 3.43 结构线 */
+  --border: #d2c9e2;        /* 装饰线 */
+  --border-strong: #6d6188; /* 结构线 (3:1 以上) */
 
-  /* ---- 强调 ---- */
-  --accent: #8ab3d8;        /* 7.99 on surface */
-  --accent-strong: #a9cae8; /* 10.33 */
-  --accent-soft: #1b2430;
-  /* 深色下 accent 是浅蓝, 白字压上去只有约 2.6:1 —— on-accent 必须是深色 */
-  --on-accent: #0d1117;     /* 8.58 on accent */
-  --accent-contrast: #0d1117;
+  /* ---- 强调: 紫罗兰 ----
+     主操作与选中态用紫，蓝色降为辅助 (--info)。
+     浅色下 accent 比深色深两档，才能在近白面板上压出 6.78:1。 */
+  --accent: #6d3fd4;
+  --accent-strong: #5730b0;
+  --accent-soft: #ece5fb;
+  --on-accent: #ffffff;
+  --accent-contrast: #ffffff;
 
-  /* ---- 语义色 (深色下是浅色, 文字必须反过来) ---- */
-  --success: #8cbb9b;       /* 8.14 */
-  --warning: #d4b46c;       /* 8.85 */
-  --error: #e08f87;         /* 7.09 */
-  --info: #8ab3d8;          /* 7.99 */
-  --on-success: #0d1117;
-  --on-warning: #0d1117;
-  --on-error: #0d1117;
+  /* ---- 语义色 (紫底上重新选过, 不沿用旧冷蓝版的绿/黄/红) ---- */
+  --success: #1f6b4f;
+  --warning: #7a5a12;
+  --error: #a3342f;
+  --info: #4a3f9e;          /* 辅助强调 = 靛蓝, 与紫同族 */
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --on-error: #ffffff;
 
   /* ---- 交互态 ---- */
-  --overlay: rgba(0, 0, 0, 0.64);
-  --hover-overlay: rgba(255, 245, 230, 0.06);
-  --active-overlay: rgba(255, 245, 230, 0.11);
-  --disabled-text: rgba(255, 245, 230, 0.30);
-  --disabled-bg: rgba(255, 245, 230, 0.05);
+  --overlay: rgba(25, 17, 35, 0.40);
+  --hover-overlay: rgba(25, 17, 35, 0.05);
+  --active-overlay: rgba(25, 17, 35, 0.10);
+  --disabled-text: rgba(25, 17, 35, 0.32);
+  --disabled-bg: rgba(25, 17, 35, 0.05);
   --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
 
   /* ---- 状态软底 ---- */
-  --success-soft: rgba(140, 187, 155, 0.14);
-  --warning-soft: rgba(212, 180, 108, 0.14);
-  --error-soft: rgba(224, 143, 135, 0.14);
-  --info-soft: rgba(138, 179, 216, 0.14);
+  --success-soft: rgba(31, 107, 79, 0.12);
+  --warning-soft: rgba(122, 90, 18, 0.12);
+  --error-soft: rgba(163, 52, 47, 0.12);
+  --info-soft: rgba(74, 63, 158, 0.12);
 
-  /* ---- 骨架屏 ---- */
+  /* ---- 骨架屏 / 进度 ---- */
   --skeleton-bg: color-mix(in srgb, var(--surface-3) 80%, transparent);
   --skeleton-hi: color-mix(in srgb, var(--surface) 60%, transparent);
-
-  /* ---- 进度条 ---- */
   --progress-track: var(--surface-3);
   --progress-fill: var(--accent);
 
   /* ---- 遮罩 ---- */
-  --scrim: rgba(0, 0, 0, 0.64);
+  --scrim: rgba(25, 17, 35, 0.44);
 
-  /* ---- 氛围层 (ambient, dark) ----
-     深色下的色团必须更暗更沉: 同样的琥珀在 #14110e 上会亮成一块污渍。
-     这里用「提亮一档」而非「加饱和」, 让暗部有深度但不发灰。
-     尺寸/收边与浅色一致 —— 深色玻璃 alpha 更高(.76), 环境光只剩 24%,
-     所以色团本身的 deltaE 要拉到浅色的 1.4 倍才透得出来。 */
-  --ambient-a: rgba(178, 118, 46, 0.86);
-  --ambient-b: rgba(40, 100, 172, 0.90);
-  --ambient-c: rgba(124, 76, 140, 0.74);
-  --ambient-d: rgba(52, 118, 108, 0.60);
+  /* ---- 氛围层: 蓝 → 靛 → 紫罗兰 → 紫红 ----
+     四团色晕的位置与四列一一对应，合成后四列各读到自己的色相：
+       nav H223 蓝  → aside H288 紫红 → list H247 靛 → content H265 紫罗兰
+     色相跨度 65°，满足「横向读得出蓝→紫」这条设计承诺。
+     明度阶梯 74.0 / 79.0 / 85.0 / 91.0（nav 最暗、正文最亮）。 */
+  --ambient-a: rgba(109, 133, 182, 1);  /* nav     → 合成 #b2bdd9 H223 */
+  --ambient-b: rgba(185, 145, 190, 1);  /* aside   → 合成 #d8c3dd H288 */
+  --ambient-c: rgba(223, 215, 232, 1);  /* content → 合成 #ebe6f2 H265 */
+  --ambient-d: rgba(187, 185, 212, 1);  /* list    → 合成 #d9d7e8 H247 */
+
   --ambient-base: linear-gradient(
-    160deg,
+    100deg,
     var(--ambient-a) 0%,
-    rgba(178, 118, 46, 0.24) 26%,
-    rgba(0, 0, 0, 0) 47%,
-    rgba(40, 100, 172, 0.22) 72%,
+    var(--ambient-d) 30%,
+    var(--ambient-c) 68%,
     var(--ambient-b) 100%
   );
   --ambient-image:
-    radial-gradient(ellipse 44% 34% at 2% -4%, var(--ambient-a), transparent 62%),
-    radial-gradient(ellipse 38% 30% at 98% 4%, var(--ambient-b), transparent 60%),
-    radial-gradient(ellipse 52% 36% at 44% 106%, var(--ambient-c), transparent 64%),
-    radial-gradient(ellipse 30% 26% at -2% 88%, var(--ambient-d), transparent 58%),
+    radial-gradient(ellipse 44% 34% at 4% -4%, var(--ambient-a), transparent 62%),
+    radial-gradient(ellipse 40% 32% at 97% 6%, var(--ambient-b), transparent 60%),
+    radial-gradient(ellipse 52% 36% at 58% 106%, var(--ambient-c), transparent 64%),
+    radial-gradient(ellipse 32% 28% at 20% 88%, var(--ambient-d), transparent 58%),
     var(--ambient-base);
 
-  /* ---- 玻璃四档 (dark) ----
-     深色玻璃的 alpha 必须比浅色更高才能压住最坏底: 深底 + 中位灰图片
-     会把玻璃"提亮"到 (54,51,49), 此时 text-3 只有 4.08:1。
-     glass-1 提到 .78 后回到 4.85。text-3 同时从 #9a9287 提到 #a49b8f,
-     因为它要在 glass-1 上承担 hint 文案 —— 这是深色下最紧的一处。 */
-  --glass-0: rgba(0, 0, 0, 0.64);
-  /* 深色玻璃 alpha 从 .76/.84/.90 收到 .70/.80/.88:
-     原值是在"底下是纯色"时算的, 那时必须够厚才压得住。
-     现在底下有氛围层, .76 只让 24% 的环境光透上来 ——
-     实测侧栏 R-G 只有 +3, 等于玻璃底下还是一片炭黑, 白做了。
+  /* ---- 玻璃四档 ----
+     「白霜」策略不变：玻璃自己保持接近中性，颜色交给氛围层。
+     alpha .50 是浅色下限 —— 再低，弱化文字叠最坏底会跌破 4.5。 */
+  --glass-0: rgba(25, 17, 35, 0.38);
+  --glass-1: rgba(247, 245, 252, 0.66);
+  --glass-2: rgba(247, 245, 252, 0.74);
+  --glass-3: rgba(247, 245, 252, 0.82);
+  --glass-ultrathin: rgba(247, 245, 252, 0.42);
+  --glass-thin: rgba(247, 245, 252, 0.58);
+  --glass-regular: rgba(247, 245, 252, 0.68);
+  --glass-thick: rgba(247, 245, 252, 0.78);
+  --glass-ultrathick: rgba(247, 245, 252, 0.87);
 
-     .70 是硬下限, 不是审美选择: tests/test_design_tokens.py 的
-     test_glass_alpha_is_thick_enough 守着这条线, 低于 .70 直接红。
-     它守的是 text-3 压在 glass-1 上、底下又是最亮内容时的可读性。
-     所以"让玻璃更透"这条路走不通 —— 环境光要靠加浓色团来补,
-     而不是靠减薄玻璃。 */
-  --glass-1: rgba(28, 24, 21, 0.70);
-  --glass-2: rgba(28, 24, 21, 0.80);
-  --glass-3: rgba(28, 24, 21, 0.88);
-  /* 内容面玻璃: 深色下比浅色更需要这档 —— 纯 #1c1815 会让整页像一块
-     黑布, 氛围层的暖光完全透不出来。 */
-  --glass-content: rgba(28, 24, 21, 0.52);
-  --glass-border: rgba(255, 245, 230, 0.10);
-  --glass-border-2: rgba(255, 245, 230, 0.16);
+  /* ---- 列级玻璃 ----
+     四列必须完全相同：玻璃若各带色相，它会和脚下氛围互相稀释，
+     反解公式失效 —— 这是前二十几轮打转的根因，测试也守着这一条。 */
+  --glass-nav: rgba(247, 245, 252, 0.50);
+  --glass-aside: rgba(247, 245, 252, 0.50);
+  --glass-list: rgba(247, 245, 252, 0.50);
+  --glass-content: rgba(247, 245, 252, 0.50);
+
+  /* 减弱透明模式的兜底 = 合成色 (不是玻璃色)。差 0。 */
+  --col-nav-solid: #b2bdd9;
+  --col-aside-solid: #d8c3dd;
+  --col-list-solid: #d9d7e8;
+  --col-content-solid: #ebe6f2;
+
+  --glass-border: rgba(255, 255, 255, 0.66);
+  --glass-border-2: rgba(103, 88, 133, 0.24);
+
+  /* ---- 材质物理参数 ---- */
+  --mat-specular: rgba(255, 255, 255, 0.42);
+  --mat-shade: rgba(74, 61, 100, 0.18);
+  --mat-specular-soft: rgba(255, 255, 255, 0.16);
+  --mat-shade-soft: rgba(74, 61, 100, 0.08);
+  --mat-lit: rgba(255, 255, 255, 0.92);
+  --mat-hairline: rgba(255, 255, 255, 0.62);
+  --mat-hairline-dark: rgba(74, 61, 100, 0.20);
+  --mat-grain: none;
+  --mat-veil-peak: 0.84;
+
+  --mat-bri-ultrathin: 1.00;
+  --mat-bri-thin: 0.99;
+  --mat-bri-regular: 0.97;
+  --mat-bri-thick: 0.95;
+  --mat-bri-ultrathick: 0.93;
+
   --glass-strong: var(--glass-3);
-  /* 深色下不能沿用浅色的白色内高光 (0.55 会在暗底上跳成一条发光缝)。
-     降到 0.10 —— 只够让人"感觉到有一条边", 看不出是线。
-     光泽带同理压到浅色的三分之一: 深色玻璃的厚度感来自明暗过渡,
-     不是来自亮度。 */
-  --glass-highlight: inset 0 1px 0 rgba(255, 245, 230, 0.10);
-  --glass-sheen: linear-gradient(
-    160deg,
-    rgba(255, 245, 230, 0.09) 0%,
-    rgba(255, 245, 230, 0.025) 16%,
-    rgba(255, 245, 230, 0) 38%
-  );
+}
 
-  /* ---- 深色阴影 ----
-     暖黑 rgba(30,27,24,x) 在 #1c1815 的深底上会变成偏黄的脏晕;
-     纯黑 + 顶部内高光才能表达"浮起来"。 */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.40);
-  --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.50), inset 0 1px 0 rgba(255, 245, 230, 0.06);
-  --shadow-4: 0 20px 48px rgba(0, 0, 0, 0.60), inset 0 1px 0 rgba(255, 245, 230, 0.08);
+
+/* ============================================================
+   Layer 2: 语义色 — 深色（冷钢蓝 H≈213）
+   原状是 H≈30 的暖炭 (#14110e/#1c1815) —— 深色偏黄、浅色偏蓝,
+   两个主题的色相身份差了 180°, 切换主题像换了产品。
+   现在深浅共用 H213: 深色是把浅色的同一色相压到 L6~L21,
+   亮度反转但色相不动, 主题切换因此是"同一个空间里关灯", 而不是"换房间"。
+   ============================================================ */
+[data-theme='dark'] {
+  /* ============================================================
+     Midnight Violet · 主方向
+     深海军蓝 → 深紫黑的空间底，紫罗兰作主操作色，靛蓝作辅助。
+     关键取舍：**玻璃只出现在侧栏与浮层**，正文/表单/列表走稳定的
+     深色面板 (--surface 系列)，不让高信息密度区域泡在渐变里。
+     ============================================================ */
+
+  /* ---- 背景 / 面板 ----
+     bg 从旧冷黑 #0d1319 (H212) 换到 #0a0812 (H262) —— 色相右移 50°，
+     整页从「冷钢」变成「午夜紫」。surface 系列同步右移并轻微提彩。 */
+  --bg: #0a0812;            /* H262 S25 L5 */
+  --surface: #161123;       /* H262 S36 L10 —— 正文/表单的稳定底 */
+  --surface-2: #1f1a30;     /* H264 S29 L15 */
+  --surface-3: #2a2440;     /* H262 S27 L21 */
+  --surface-inset: #0d0a17; /* 内凹 */
+
+  /* ---- 文字 ----
+     深色下三级必须拉开：旧版 text-2/text-3 只差 4.5 个明度点，读不出层级。 */
+  --text-1: #ece8f5;        /* 15.31 on surface */
+  --text-2: #c3bcd6;        /* 10.09 */
+  --text-3: #9a92b0;        /*  6.25 */
+  --text-inverse: #0a0812;
+
+  /* ---- 边框 ---- */
+  --border: #3a3352;        /* 装饰线 (仅 1.4:1, 只作分隔) */
+  --border-strong: #7c74a0; /* 结构线 4.27 on surface */
+
+  /* ---- 强调: 紫罗兰 ----
+     #a78bfa 是 400 档紫，在 #161123 上有 6.78:1，够做正文级强调。
+     on-accent 必须是深色 (#160f28) —— 浅紫底上白字只有 2.7:1。 */
+  --accent: #a78bfa;
+  --accent-strong: #c4b1fd;
+  --accent-soft: #241b3d;
+  --on-accent: #160f28;
+  --accent-contrast: #160f28;
+
+  /* ---- 语义色 ---- */
+  --success: #6fcf97;
+  --warning: #e0b25c;
+  --error: #f08a8a;
+  --info: #8fa8ff;          /* 辅助强调 = 靛蓝, 比 accent 冷、比 accent 弱 */
+  --on-success: #160f28;
+  --on-warning: #160f28;
+  --on-error: #160f28;
+
+  /* ---- 交互态 ---- */
+  --overlay: rgba(4, 2, 10, 0.72);
+  --hover-overlay: rgba(196, 177, 253, 0.07);
+  --active-overlay: rgba(196, 177, 253, 0.12);
+  --disabled-text: rgba(236, 232, 245, 0.28);
+  --disabled-bg: rgba(236, 232, 245, 0.05);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* ---- 状态软底 ---- */
+  --success-soft: rgba(111, 207, 151, 0.14);
+  --warning-soft: rgba(224, 178, 92, 0.14);
+  --error-soft: rgba(240, 138, 138, 0.14);
+  --info-soft: rgba(143, 168, 255, 0.14);
+
+  /* ---- 骨架屏 / 进度 ---- */
+  --skeleton-bg: color-mix(in srgb, var(--surface-3) 80%, transparent);
+  --skeleton-hi: color-mix(in srgb, var(--surface) 60%, transparent);
+  --progress-track: var(--surface-3);
+  --progress-fill: var(--accent);
+
+  /* ---- 遮罩 ---- */
+  --scrim: rgba(4, 2, 10, 0.72);
+
+  /* ---- 氛围层: 深海军蓝 → 紫黑 → 紫红晕 ----
+     四团色晕对应四列，合成后：
+       content H259 紫黑 (最暗) → nav H218 海军蓝 → aside H288 紫红 → list H240 靛
+     明度阶梯 3.1 / 5.3 / 7.4 / 9.5（正文最暗、会话列最亮）——
+     深色下「正文后退、chrome 前移」的方向与浅色相反，这是刻意的：
+     阅读区要沉下去，导航要浮起来。
+     玻璃 alpha .70 是硬下限 (测试守着)，所以环境光只剩 30%，
+     色团必须自己够浓，否则透不上来。 */
+  --ambient-a: rgba(43, 77, 105, 1);   /* nav     → 合成 #141d2c H218 rel 11.0 */
+  --ambient-b: rgba(131, 67, 129, 1);  /* aside   → 合成 #2e1a33 H288 rel 12.5 */
+  --ambient-c: rgba(65, 40, 114, 1);   /* content → 合成 #1a122f H257 rel  8.5 */
+  --ambient-d: rgba(87, 92, 188, 1);   /* list    → 合成 #212145 H240 rel 14.0 */
+
+  --ambient-base: linear-gradient(
+    100deg,
+    var(--ambient-a) 0%,
+    var(--ambient-d) 34%,
+    var(--ambient-c) 70%,
+    var(--ambient-b) 100%
+  );
+  /* 色团尺寸比旧版收小、边界收近，避免整屏糊成一片均匀的紫雾。
+     大面积的「紫」比点状的「紫光」廉价得多。 */
+  --ambient-image:
+    radial-gradient(ellipse 40% 30% at 2% -6%, var(--ambient-a), transparent 64%),
+    radial-gradient(ellipse 36% 28% at 99% 2%, var(--ambient-b), transparent 62%),
+    radial-gradient(ellipse 48% 34% at 62% 108%, var(--ambient-c), transparent 66%),
+    radial-gradient(ellipse 28% 24% at 16% 92%, var(--ambient-d), transparent 60%),
+    var(--ambient-base);
+
+  /* ---- 玻璃四档 ---- */
+  --glass-0: rgba(4, 2, 10, 0.62);
+  --glass-1: rgba(10, 8, 18, 0.74);
+  --glass-2: rgba(10, 8, 18, 0.81);
+  --glass-3: rgba(10, 8, 18, 0.87);
+  --glass-ultrathin: rgba(10, 8, 18, 0.50);
+  --glass-thin: rgba(10, 8, 18, 0.64);
+  --glass-regular: rgba(10, 8, 18, 0.74);
+  --glass-thick: rgba(10, 8, 18, 0.83);
+  --glass-ultrathick: rgba(10, 8, 18, 0.90);
+
+  /* ---- 列级玻璃: 四列完全相同 ----
+     alpha .70 是测试下限 (深色薄玻璃会让文字对比度随底层内容波动)。 */
+  --glass-nav: rgba(10, 8, 18, 0.70);
+  --glass-aside: rgba(10, 8, 18, 0.70);
+  --glass-list: rgba(10, 8, 18, 0.70);
+  --glass-content: rgba(10, 8, 18, 0.70);
+
+  --col-nav-solid: #141d2c;
+  --col-aside-solid: #2e1a33;
+  --col-list-solid: #212145;
+  --col-content-solid: #1a122f;
+
+  --glass-border: rgba(196, 177, 253, 0.14);
+  --glass-border-2: rgba(196, 177, 253, 0.20);
+
+  /* ---- 材质物理参数 ----
+     高光染成紫罗兰而不是冷白：一块「白色高光」的玻璃放在紫夜里，
+     边缘会读成灰；只有高光本身带色，材质才和整页同一族。 */
+  --mat-specular: rgba(206, 190, 255, 0.18);
+  --mat-shade: rgba(0, 0, 0, 0.38);
+  --mat-specular-soft: rgba(206, 190, 255, 0.08);
+  --mat-shade-soft: rgba(0, 0, 0, 0.18);
+  --mat-lit: rgba(206, 190, 255, 0.26);
+  --mat-hairline: rgba(206, 190, 255, 0.24);
+  --mat-hairline-dark: rgba(0, 0, 0, 0.50);
+  --mat-grain: none;
+  --mat-veil-peak: 0.90;
+
+  --mat-bri-ultrathin: 1.04;
+  --mat-bri-thin: 1.06;
+  --mat-bri-regular: 1.08;
+  --mat-bri-thick: 1.10;
+  --mat-bri-ultrathick: 1.12;
+
+  --glass-strong: var(--glass-3);
+  --glass-highlight: inset 0 1px 0 var(--mat-specular-soft),
+                     inset 0 -1px 0 var(--mat-hairline-dark);
+  --glass-sheen: linear-gradient(to bottom, var(--mat-specular-soft), transparent 40%);
+  --glass-sheen-up: linear-gradient(to top, var(--mat-shade-soft), transparent 40%);
+
+  /* ---- 阴影 ----
+     旧阴影是纯黑 (0,0,0)。午夜紫的阴影必须带一点紫，
+     否则面板边缘在紫底上会读成一块「脏掉的黑」。 */
+  --shadow-1: 0 1px 2px rgba(4, 2, 10, 0.48);
+  --shadow-2: 0 2px 8px rgba(4, 2, 10, 0.52), inset 0 1px 0 rgba(206, 190, 255, 0.05);
+  --shadow-3: 0 8px 24px rgba(4, 2, 10, 0.58), inset 0 1px 0 rgba(206, 190, 255, 0.07);
+  --shadow-4: 0 20px 48px rgba(4, 2, 10, 0.66), inset 0 1px 0 rgba(206, 190, 255, 0.08);
 }
 
 /* ============================================================
@@ -451,14 +530,21 @@
      列表看着「一行一行的, 但连不成片」。8px 时行高 38px, 落在文档
      「高密度行高 30-40px」的目标区间里。 */
   --row-bg: transparent;
-  --row-hover: var(--surface-2);
-  --row-active: var(--surface-3);
+  /* 【v16】行态不再用不透明的 --surface-2/3。
+     不透明的中性灰铺在有色玻璃上, 读起来是「在玻璃上贴了一张灰纸」——
+     列自己的色相在那块矩形被切断, 边界处出现一条生硬的口子。
+     改成「同色相的 lift」: 底色仍是透的 (color-mix 到 transparent),
+     只叠一层 4.5% 的白/黑来抬/压明度, 色相从玻璃底下自然透上来。
+     accent 只贡献 7%, 出现在左侧 2px 指示条上, 不铺满整行 ——
+     铺满的饱和蓝是整页最扎眼的元素, 而它承担的信息只是「当前选中」。 */
+  --row-hover: color-mix(in srgb, var(--text-1) 4.5%, transparent);
+  --row-active: color-mix(in srgb, var(--accent) 9%, color-mix(in srgb, var(--text-1) 5%, transparent));
   --row-border: var(--border);
   --row-radius: var(--radius);
   --row-pad-x: var(--space-4);
   --row-pad-y: var(--space-2);
 
-  /* ---- 按钮 (主按钮用炭黑, 冷蓝只做链接/选中) ----
+  /* ---- 按钮 (主按钮走强调色, 与"谁在说"共用同一个蓝) ----
      原来 md=30px / lg=36px, 比 --input-h(34px) 还矮, 于是「输入框看着比
      按钮壮」。抬到 md=32 / lg=38, 让表单里 input 与 button 齐腰,
      这是表单看起来「不精致」的一个隐性来源。 */
@@ -492,7 +578,7 @@
   --avatar-shadow: none;
 
   /* ---- 聊天气泡 ----
-     用户气泡原来是「近黑底 + 纯白字」的实心块, 在整片暖纸白里是一块
+     用户气泡原来是「近黑底 + 纯白字」的实心块, 在整片浅色底里是一块
      最重的东西 —— 一屏只要出现两条, 视线就全被拉过去, 而真正该被读的
      是 AI 的回答。
      现在改成冷蓝实底: 全站只有「用户说的话」和「发送键」是蓝的,
@@ -501,12 +587,23 @@
      AI 气泡去掉左 3px 冷蓝硬边 (那是装饰而非语义, 每条挂一根蓝条
      会让页面显得脏), 改为 --surface-2 浅底 + 细边。 */
   --bubble-self-bg: var(--accent);
-  /* 深色主题里 accent 是浅蓝 (#7ba6cd), 白字压上去只有约 2.6:1。
-     用 on-accent token: 浅色主题给 #fff, 深色主题给近黑 #0b0d10。 */
+  /* 深色主题里 accent 是浅蓝 (#90b4df), 白字压上去只有约 2.6:1。
+     用 on-accent token: 浅色主题给 #fff, 深色主题给近黑 #0a0e14。 */
   --bubble-self-text: var(--on-accent);
-  --bubble-friend-bg: var(--surface-2);
+  /* v18: 旧值是 var(--surface-2) —— 不透明 #edf0f5 在浅色主题实测
+     H217.5 S3.3 Y86.9, 比它所在的正文列 (H259 S11 Y77.7) 亮 9 个感知明度点
+     且几乎没有色相, 于是每条 AI 回复都读成「一张灰卡片」。
+     深色主题更糟: #1e252d 的 H212 与正文列 H256 差 44° 色相, 还更暗,
+     气泡读成「灰白纸片」。
+     v18 改用材质的受光面 (--mat-specular) 取 20%:
+     浅色 → 白 18.4%, 深色 → #e9eef4 6% —— 两个主题各自都在「同色相微提亮」
+     的区间内, 既保留纸的轻盈, 又不把色相洗成中性。 */
+  --bubble-friend-bg: color-mix(in srgb, var(--mat-lit) 20%, transparent);
   --bubble-friend-text: var(--text-1);
-  --bubble-border: var(--border);
+  /* 边框同理: --border 是不带色相的中性线, 压在紫玻璃上像贴了一条灰胶带。
+     改用 text-1 的 12% —— 在浅色是 H247.6 S12.9 的淡紫灰, 深色是 H246.3 S36,
+     与气泡同相, 读作「材料的边缘」而不是「画的线」。 */
+  --bubble-border: color-mix(in srgb, var(--text-1) 12%, transparent);
   --bubble-radius-lg: var(--radius-md);
   --bubble-radius-sm: var(--radius-xs);
   --bubble-time: var(--text-3);
@@ -520,6 +617,38 @@
   --input-placeholder: var(--text-3);
   --input-radius: var(--radius-sm);
   --input-h: 36px;
+
+  /* ---- v18 交互面填充 (半透幕, 不是实色) ----
+     背景: 聊天页的输入框 / 发送键 / 输入条原来全部读 --surface-2,
+     那是一块不透明中性色。实测浅色渲染成 #edf0f5 H217.5 S3.3 Y86.9,
+     周围正文列是 #e9e0fc H259 S11.1 Y77.7 —— 输入框比它的底亮 9 个明度点
+     且色相偏了 41°, 所以整条底栏读成「一条灰槽横在紫色页面上」。
+
+     修法: 不再自己造一个色, 直接借材质的受光面 --mat-specular 降 alpha。
+     这个 token 两个主题各有一份 (浅色 white .92 / 深色 #e9eef4 .30),
+     所以同一句 color-mix 自动落到「浅色加白 29%」「深色加白 10%」——
+     浅色读成被照亮的白面, 深色读成被照亮的玻璃面, 都不脱离所在列的色相。
+     第一版试过用 --text-1 的低 alpha 压暗 (6%/7.5%/9%), 实测下来是
+     「同相压暗」没错, 但把输入框压到了 Y71.9 —— 比正文列 77.9 还暗,
+     于是它从「贴了一张灰纸」变成了「挖了一道灰槽」, 用户看到的仍然是灰。
+     朝亮走才对: 现在静止态 Y86.4 (比正文列亮 8.5 点)、色相 H261.4 与
+     正文列 H260.7 只差 0.7° —— 同一个材料, 只是这一块被光照到。 */
+  --field-fill: color-mix(in srgb, var(--mat-lit) 32%, transparent);
+  --field-fill-hover: color-mix(in srgb, var(--mat-lit) 42%, transparent);
+  --field-fill-focus: color-mix(in srgb, var(--mat-lit) 56%, transparent);
+  /* 交互面的边框: 中性 --border 在紫玻璃上是灰色胶带感, 改为同相细线。
+     压到 7% —— 白面上再重就会勾出一条灰框, 把「面」切成「格子」。 */
+  --field-line: color-mix(in srgb, var(--text-1) 7%, transparent);
+  --field-line-strong: color-mix(in srgb, var(--text-1) 13%, transparent);
+  /* 输入条这一整条 chrome 的底色: 用列色 (--col-content-solid) 的 30%。
+     旧值 --glass-1 是 rgba(246,248,252,0.66) 近白, 66% 的白把底下紫全部洗掉,
+     实测在输入区上沿打出一条 Y93.4-98.4 的近白亮带 (正文列才 Y77.9)。
+     换成同列色的半透幕之后, 输入条与它上方的正文列是同一块材料的上下段;
+     30% 是「看得出来是一条独立的 chrome」与「不与正文列断开」之间的量 ——
+     34% 时接缝仍偏硬, 18% 时几乎看不出输入条在哪。 */
+  --bar-fill: color-mix(in srgb, var(--col-content-solid) 30%, transparent);
+  /* 输入条顶部那条 1px: 原 --border 是中性灰, 这里改用列色加深。 */
+  --bar-line: color-mix(in srgb, var(--text-1) 10%, transparent);
 
   /* ---- 顶栏 / 底栏 ----
      这些 token 是「组件按角色取色」的入口, 现在指向玻璃四档里的对应档位。
@@ -555,7 +684,7 @@
   --empty-title: var(--text-2);
 
   /* ---- Toast ----
-     状态色在深色主题里是**浅色**(#8cbb9b 绿 / #e08f87 红), 白字压上去只有
+     状态色在深色主题里是**浅色**(#89c8b1 绿 / #e19289 红), 白字压上去只有
      2.17 / 2.49:1 —— 这是深色主题下最容易漏的一处。所以文字色必须跟着
      状态色走 --on-success / --on-error, 而不是写死 #ffffff。
      浅色主题下 on-* 恰好也是白字 (6.17 / 7.14), 两个主题共用一条规则。 */
@@ -584,7 +713,12 @@
      accent 原来只以「文字色」出现, 所以整页几乎没有色彩呼吸点。
      补两级中性化的蓝: wash 做底色块(侧栏选中/标签), line 做 1px 细线。
      都掺了底色, 不会变成高饱和的蓝条。 */
-  --accent-wash: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  /* 【v15 修】wash 原来是 `color-mix(accent 8%, --surface)`, 混的是**不透明的
+     --surface (#fafbfd)** —— 于是它落在蓝紫玻璃上就是一块近白补丁。
+     实测深色 nav 选中项 L15.5 压在 L18.2 的列上、浅色 L93.7 压在 L77.8 上,
+     两端都是「贴纸」。改成混 `transparent`: 同样 8% 的 accent, 但保留底下
+     那列自己的色相, 选中态于是永远是「这列被点亮了一点」而不是外来色块。 */
+  --accent-wash: color-mix(in srgb, var(--accent) 10%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 32%, var(--border));
 
   /* ---- 玻璃材质: 模糊半径 / 饱和度 / 高光 (与 --glass-0..3 配合) ---- */
@@ -595,30 +729,115 @@
   --glass-sat-1: 1.10;
   --glass-sat-2: 1.15;
   --glass-sat-3: 1.20;
-  /* 顶部 1px 内高光: 模拟受光边缘, 是玻璃"有厚度"的唯一来源。
-     没有这条线, 半透明面板会读成"没画完的色块"而不是"一块材质"。
-     浅色下用纯白 0.55 就够; 深色下不能用白 —— 白线在暗底上会跳成
-     一条发光缝, 显得脏。深色主题里单独覆盖成更低的 alpha (见 dark 段)。 */
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  /* 玻璃"厚度"的第二来源: 沿左/上边缘的窄光泽带。
-     1px 内高光只解决"上边有光", 但真实玻璃是"越靠边越亮",
-     所以再叠一条 12px 的极淡渐变 —— 它让面板看起来是被磨过的实体,
-     而不是一张 50% 透明度的纸。
-     用 linear-gradient 而非第二个 box-shadow: inset 阴影在圆角处会露边,
-     渐变 background 不会。 */
-  --glass-sheen: linear-gradient(
-    160deg,
-    rgba(255, 255, 255, 0.30) 0%,
-    rgba(255, 255, 255, 0.08) 14%,
-    rgba(255, 255, 255, 0) 34%
+  /* ---- 镜面高光边 (specular rim) ----
+     Apple 的材质里, "有厚度"不是靠一条 1px 内高光说出来的, 而是靠
+     **上下两条不对称的边**: 上沿受光 → 亮; 下沿背光 → 暗。
+     只做上沿 (旧实现) 的结果是面板读成"半透明色块"。
+     这里把两条边拆开, 让 .mat-* 按档位各自决定强度。 */
+  --mat-rim: linear-gradient(
+    to bottom,
+    var(--mat-specular) 0,
+    var(--mat-specular-soft) 40%,
+    transparent 100%
   );
+  /* rim 的固定高度。用 px 而不是 %: 百分比在 900px 高的正文列上会
+     变成 72px 的白色渐变带 —— 那块"白雾"正是旧的 160deg sheen 被
+     评价为"有点丑"的直接原因之一。 */
+  --mat-rim-h: 1px;
+
+  /* ---- 厚度渐变 (thickness veil) ----
+     Apple standard materials 的图注用的是 darkened / muted 这两个词:
+     材质是把背景**压暗压灰**得到的, 不是把背景盖白。
+     所以除了 fill 的中性色膜, 还需要一条方向一致的上下渐变:
+     上沿微亮 (受光), 下沿微暗 (厚度底部), 中间是介质本身。
+
+     【为什么停止点必须是 px 而不是 %】
+     真实材料的边缘厚度是**固定**的 —— 一块玻璃的倒角不会因为板子
+     变高就跟着变厚。用 % 会让 900px 高的正文列在顶部摊出 230px 的
+     白雾 (26% × 900), 而 60px 高的顶栏只有 15px ——
+     同一套材质在两个尺寸上变成两种东西。实测截图里那条白雾
+     就是 % 停止点造成的, 与旧的 160deg 斜向扫白是同一类缺陷。
+     px 停止点让"边缘"成为一件与尺寸无关的物理事实。 */
+  --mat-veil: linear-gradient(
+    to bottom,
+    var(--mat-specular-soft) 0px,
+    transparent var(--mat-veil-edge),
+    transparent calc(100% - var(--mat-veil-edge)),
+    var(--mat-shade-soft) 100%
+  );
+  /* 边缘过渡带的高度。40px 是"一眼能看出有过渡、但不觉得有雾"的分界:
+     低于 24px 读成一条硬线, 高于 72px 就开始像渐变蒙版。 */
+  --mat-veil-edge: 40px;
+
+  /* ---- 颗粒层 ----
+     磨砂玻璃的质感一半来自散射噪声。没有它, 大半径 blur 会留下
+     可见的色带 (banding), 读起来就是"塑料"。128px 平铺, 肉眼
+     只感知到"表面不干净", 这正是要的效果。 */
+
+  /* ---- 材质档位几何 (Apple standard materials 的 CSS 映射) ----
+     档位语义完全照 HIG 的定义, 不按数值拍脑袋:
+       ultra-thin  = 弥散的背景渐变, 几乎不压暗   → 内容层/大面积
+       thin        = 弥散 + 轻微压暗             → 常驻 chrome (栏)
+       regular     = 弥散 + 压暗                 → 列表/次级面板
+       thick       = 暗且 muted 的渐变            → 抽屉/sheet
+       ultra-thick = 接近不透明                  → 模态
+
+     blur 与 saturate/brightness 必须成对解释, 这是 Apple 与
+     "随手写的 glassmorphism" 最本质的差别:
+       · blur 只决定"看不清多少", 不决定质感;
+       · saturate(<1) 把背景压灰 —— 材质是 muted 的;
+       · brightness 把背景的明度范围压向中值 —— 材质是 darkened 的。
+     旧实现只有 blur + saturate(>1), 也就是"更艳、更亮、更清楚",
+     方向完全相反: 那是在放大背景, 而不是在它前面放一块材料。 */
+  --mat-blur-ultrathin: 18px;
+  --mat-blur-thin: 24px;
+  --mat-blur-regular: 30px;
+  --mat-blur-thick: 38px;
+  --mat-blur-ultrathick: 48px;
+
+  /* 【v16】saturate 从 1.18→1.54 全线收到 1.00~1.06。
+     旧值是在「氛围层近中性」的前提下写的 —— 那时需要靠滤镜把残余色相顶出来。
+     现在氛围层本身已经是 Sat90+ 的高彩度粉彩, 再叠 1.34 会把 #b0d2fd 推成
+     #9cc8ff 这种荧光蓝, 且四列饱和度被同时放大后, 明度阶梯的差看起来更小。
+     滤镜回到 1.0 附近, 颜色该由颜色本身决定, 不该由滤镜二次加工。 */
+  --mat-sat-ultrathin: 1.00;
+  --mat-sat-thin: 1.02;
+  --mat-sat-regular: 1.04;
+  --mat-sat-thick: 1.05;
+  --mat-sat-ultrathick: 1.06;
+
+  /* brightness 的档位值在**主题块**里定义, 不在这里 ——
+     `:root` 与 `[data-theme='dark']` 的优先级相同 (都是 0,1,0),
+     谁在后面谁生效。Layer 3 的 :root 在主题块之后, 如果把它写在这里,
+     深色的 1.04~1.12 会被浅色的 0.93~1.00 覆盖掉, 于是深色材质
+     永远在压暗 —— 这正是"深色玻璃看着像油布"的那类静默 bug。 */
+
+  /* 上沿镜面高光是**唯一**允许明显发亮的东西, 而且只在 1px 上。
+     它的强度按档位递增: 越厚的材料边缘越挺, 高光越硬。
+     这一组是主题无关的几何量, 所以放在 Layer 3。 */
+  --mat-rim-a-ultrathin: 0.24;
+  --mat-rim-a-thin: 0.34;
+  --mat-rim-a-regular: 0.42;
+  --mat-rim-a-thick: 0.50;
+  --mat-rim-a-ultrathick: 0.58;
+
   /* 玻璃的外结构边: 与 --glass-border-2 同一色, 但单独命名,
      因为"玻璃的边"和"普通分隔线"是两件事 —— 前者要同时有亮暗两侧,
      才像一块有厚度的材料贴在背景上。 */
   --glass-edge: 1px solid var(--glass-border-2);
-  /* 注: 曾想加 feTurbulence 噪点压掉大面积模糊的塑料感, 但在 alpha ≥ .78
-     的厚玻璃上噪点几乎不可见, 却要多一层合成与一个伪元素 —— 收益为零
-     成本非零, 故不引入。薄玻璃才需要噪点, 而本项目的配色撑不住薄玻璃。 */
+
+  /* ---- 旧名兼容层 ----
+     全站 15 处组件写的是 --glass-sheen / --glass-highlight。
+     它们现在指向新的材质层, 于是"改 tokens 一处, 所有氷面同时升级"
+     —— 不必逐组件改材质, 改的只是档位。 */
+  --glass-sheen: var(--mat-veil);
+  --glass-sheen-up: var(--mat-veil);
+  --glass-highlight: inset 0 var(--mat-rim-h) 0 var(--mat-specular-soft),
+    inset 0 calc(-1 * var(--mat-rim-h)) 0 var(--mat-shade-soft);
+  /* 注: 早先判断过"噪点收益为零" —— 那个判断的前提是所有玻璃都做到
+     alpha ≥ .78 的厚档, 而厚档本来就吃得掉噪声。本轮把材质按
+     ultra-thin → ultra-thick 分档之后, 薄档的 blur 半径大、渐变跨度宽,
+     没有颗粒就一定会出现色带。所以颗粒层重新引入, 且只按档位调强度。 */
 }
 
 /* ============================================================
@@ -644,31 +863,150 @@
   background: var(--surface);
 }
 
+/* ============================================================
+   Apple standard materials —— 五档材质类
+   ------------------------------------------------------------
+   命名直接对齐 Apple 的 Material API, 而不是自造 tier-1/2/3:
+     .mat-ultrathin   Material.ultraThin   "mostly translucent"
+     .mat-thin        Material.thin        "more translucent than opaque"
+     .mat-regular     Material.regular     "somewhat translucent"  (默认档)
+     .mat-thick       Material.thick       "more opaque than translucent"
+     .mat-ultrathick  Material.ultraThick  "mostly opaque"
+
+   每一档都由**同一个五层结构**组成, 只有参数不同。这是 Apple 材质
+   与"随手写的玻璃"最本质的差别: 材质不是一种效果, 是一组按厚度
+   连续变化的参数。任何一档单独看都成立, 相邻两档必须能被区分。
+
+   五层 (自下而上):
+     1. fill       中性色膜  —— 决定这层材质把背景压到多亮
+     2. veil       上下渐变  —— 上沿受光、下沿背光, 提供"厚度"
+     3. grain      散射噪声  —— 打散 blur 留下的色带
+     4. rim        1px 镜面边 —— 只在最上沿, 是最硬的那条高光
+     5. border     亮暗双 hairline —— 材料的轮廓, 不用实色
+
+   为什么用 background-image 叠而不是伪元素: 玻璃元素普遍已占用
+   ::before/::after (图标、分隔线), 抢槽位会破坏现有组件。
+   ============================================================ */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .mat-ultrathin,
+  .mat-thin,
+  .mat-regular,
+  .mat-thick,
+  .mat-ultrathick {
+    /* 三层 image 的叠放顺序 = 书写顺序 (上面的先画在最上层)。
+       所以 rim 写在最前 (最上层), grain 在底 —— 噪声必须被压在
+       veil 之下, 否则它会盖住渐变、让面板看起来蒙了一层砂。 */
+    background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
+    background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
+    background-position: top left, center, center;
+    background-repeat: no-repeat, no-repeat, repeat;
+    /* 关键: rim 必须被裁进圆角内, 否则 1px 高光会在圆角处画出一个直角。 */
+    background-clip: padding-box;
+    /* 双 hairline: 亮侧 (上/左) 是受光面, 暗侧 (下/右) 是材料投在背景上的边。
+       这是 Apple 材质"有轮廓但不画线"的做法 —— 用半透明而不是实色。 */
+    border: 1px solid var(--mat-hairline);
+    border-bottom-color: var(--mat-hairline-dark);
+    border-right-color: var(--mat-hairline-dark);
+  }
+
+  .mat-ultrathin {
+    background-color: var(--glass-ultrathin, var(--glass-1));
+    -webkit-backdrop-filter: blur(var(--mat-blur-ultrathin)) saturate(var(--mat-sat-ultrathin))
+      brightness(var(--mat-bri-ultrathin));
+    backdrop-filter: blur(var(--mat-blur-ultrathin)) saturate(var(--mat-sat-ultrathin))
+      brightness(var(--mat-bri-ultrathin));
+    box-shadow: inset 0 var(--mat-rim-h) 0 rgba(255, 255, 255, var(--mat-rim-a-ultrathin));
+  }
+  .mat-thin {
+    background-color: var(--glass-thin, var(--glass-1));
+    -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+      brightness(var(--mat-bri-thin));
+    backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
+      brightness(var(--mat-bri-thin));
+    box-shadow: inset 0 var(--mat-rim-h) 0 rgba(255, 255, 255, var(--mat-rim-a-thin));
+  }
+  .mat-regular {
+    background-color: var(--glass-regular, var(--glass-2));
+    -webkit-backdrop-filter: blur(var(--mat-blur-regular)) saturate(var(--mat-sat-regular))
+      brightness(var(--mat-bri-regular));
+    backdrop-filter: blur(var(--mat-blur-regular)) saturate(var(--mat-sat-regular))
+      brightness(var(--mat-bri-regular));
+    box-shadow: inset 0 var(--mat-rim-h) 0 rgba(255, 255, 255, var(--mat-rim-a-regular)),
+      var(--shadow-3);
+  }
+  .mat-thick {
+    background-color: var(--glass-thick, var(--glass-2));
+    -webkit-backdrop-filter: blur(var(--mat-blur-thick)) saturate(var(--mat-sat-thick))
+      brightness(var(--mat-bri-thick));
+    backdrop-filter: blur(var(--mat-blur-thick)) saturate(var(--mat-sat-thick))
+      brightness(var(--mat-bri-thick));
+    box-shadow: inset 0 var(--mat-rim-h) 0 rgba(255, 255, 255, var(--mat-rim-a-thick)),
+      var(--shadow-3);
+  }
+  .mat-ultrathick {
+    background-color: var(--glass-ultrathick, var(--glass-3));
+    -webkit-backdrop-filter: blur(var(--mat-blur-ultrathick)) saturate(var(--mat-sat-ultrathick))
+      brightness(var(--mat-bri-ultrathick));
+    backdrop-filter: blur(var(--mat-blur-ultrathick)) saturate(var(--mat-sat-ultrathick))
+      brightness(var(--mat-bri-ultrathick));
+    box-shadow: inset 0 var(--mat-rim-h) 0 rgba(255, 255, 255, var(--mat-rim-a-ultrathick)),
+      var(--shadow-4);
+  }
+}
+
+/* 材质类的无色兜底: 不支持 backdrop-filter 时退成不透明, 但**保留**
+   亮暗双 hairline —— 否则无障碍环境下所有材料塌成同一个平面灰。 */
+.mat-ultrathin,
+.mat-thin,
+.mat-regular,
+.mat-thick,
+.mat-ultrathick {
+  background: var(--surface);
+  border: 1px solid var(--mat-hairline);
+  border-bottom-color: var(--mat-hairline-dark);
+  border-right-color: var(--mat-hairline-dark);
+}
+
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-1 {
     background-color: var(--glass-1);
     /* 光泽带用 background-image 叠在色值之上, 而不是再写一层伪元素:
        玻璃元素常常已经占用了 ::before/::after (图标、分隔线),
-       用 background 分层是唯一不抢伪元素槽位的做法。 */
-    background-image: var(--glass-sheen);
-    -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-    backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
+       用 background 分层是唯一不抢伪元素槽位的做法。
+       v7: 光泽带从"斜向扫白"换成"上下对称的厚度渐变 + 颗粒",
+       方向与 Apple 材质一致 (上受光/下背光), 不再是 160deg 塑料反光。 */
+    background-image: var(--mat-veil), var(--mat-grain);
+    background-size: 100% 100%, 128px 128px;
+    background-repeat: no-repeat, repeat;
+    -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--mat-sat-thin))
+      brightness(var(--mat-bri-thin));
+    backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--mat-sat-thin))
+      brightness(var(--mat-bri-thin));
     /* 一档玻璃也要有内高光 —— 原来只有 2/3 档有, 于是侧栏/输入区
-       看着是"半透明色块"而不是"玻璃", 这是"磨砂玻璃做了却看不出"的第二个原因。 */
+       看着是"半透明色块"而不是"玻璃", 这是"磨砂玻璃做了却看不出"的第二个原因。
+       v7: 上沿亮 + 下沿暗, 两条边一起说厚度。 */
     box-shadow: var(--glass-highlight);
   }
   .glass-2 {
     background-color: var(--glass-2);
-    background-image: var(--glass-sheen);
-    -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-    backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
+    background-image: var(--mat-veil), var(--mat-grain);
+    background-size: 100% 100%, 128px 128px;
+    background-repeat: no-repeat, repeat;
+    -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--mat-sat-regular))
+      brightness(var(--mat-bri-regular));
+    backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--mat-sat-regular))
+      brightness(var(--mat-bri-regular));
     box-shadow: var(--glass-highlight), var(--shadow-3);
   }
   .glass-3 {
     background-color: var(--glass-3);
-    background-image: var(--glass-sheen);
-    -webkit-backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
-    backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
+    background-image: var(--mat-veil), var(--mat-grain);
+    background-size: 100% 100%, 128px 128px;
+    background-repeat: no-repeat, repeat;
+    -webkit-backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--mat-sat-thick))
+      brightness(var(--mat-bri-thick));
+    backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--mat-sat-thick))
+      brightness(var(--mat-bri-thick));
     box-shadow: var(--glass-highlight), var(--shadow-4);
   }
 }
@@ -677,7 +1015,12 @@
 @media (prefers-reduced-transparency: reduce) {
   .glass-1,
   .glass-2,
-  .glass-3 {
+  .glass-3,
+  .mat-ultrathin,
+  .mat-thin,
+  .mat-regular,
+  .mat-thick,
+  .mat-ultrathick {
     background: var(--surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -687,7 +1030,12 @@
 /* 用户主动关闭玻璃 (设置项 / 低端机降级) */
 [data-glass='off'] .glass-1,
 [data-glass='off'] .glass-2,
-[data-glass='off'] .glass-3 {
+[data-glass='off'] .glass-3,
+[data-glass='off'] .mat-ultrathin,
+[data-glass='off'] .mat-thin,
+[data-glass='off'] .mat-regular,
+[data-glass='off'] .mat-thick,
+[data-glass='off'] .mat-ultrathick {
   background: var(--surface);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;

@@ -14,11 +14,15 @@
    (模板里几十处 class="card card-pad" 无需变动), 泄漏面直接归零。
    ============================================================ */
 
-/* ---- 页面容器 (左对齐: 桌面端左侧已有设置分类栏, 居中会留大片空白) ---- */
+/* ---- 页面容器 ----
+   桌面端左侧已有 200px 一级导航 + 分类栏, 内容仍要居中:
+   原来 margin:0 让 860px 的表单贴在导航右侧, 屏幕越宽右侧空白越大。
+   居中后表单和导航之间才有「页」的感觉。 */
 .settings-main {
-  padding: var(--space-5) var(--space-6) var(--space-8);
-  max-width: 860px;
-  margin: 0;
+  padding: var(--page-pad-y) var(--page-pad-x) var(--space-8);
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 /* ---- 卡片 ----
@@ -154,7 +158,9 @@
 }
 .settings-main .btn-primary {
   background: var(--accent);
-  color: #fff;
+  /* 必须走 on-accent: 深色主题下 accent 是浅钢蓝 (#90b4df),
+     白字压上去只有约 2.6:1 —— 与 tokens.css 里 toast 那条同一个坑。 */
+  color: var(--on-accent);
   border: 1px solid transparent;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 28%, transparent);
 }

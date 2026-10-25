@@ -159,9 +159,15 @@ def parse_theme(css: str, theme: str) -> dict[str, str]:
 WORST_BG = (128, 128, 128)
 
 GLASS_TIERS = [
-    ("glass-1", "chrome 档：顶栏/底栏/侧栏", 4.5),
+    ("glass-1", "chrome 档：顶栏/底栏/浮层通用", 4.5),
     ("glass-2", "sheet 档：抽屉/底部面板", 4.5),
     ("glass-3", "modal 档：模态弹窗", 4.5),
+    # 列级玻璃：四列各用一档，明度阶梯靠它们撑开。
+    # 这几档是主界面停留时间最长的表面，必须和最薄的 chrome 档同等要求。
+    ("glass-nav", "列级：侧栏（四列里最暗/最亮的一端）", 4.5),
+    ("glass-list", "列级：会话列表栏", 4.5),
+    ("glass-content", "列级：正文区（明度阶梯的锚点）", 4.5),
+    ("glass-aside", "列级：右栏（她的状态）", 4.5),
 ]
 
 

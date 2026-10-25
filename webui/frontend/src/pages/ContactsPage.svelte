@@ -712,7 +712,7 @@ import Avatar from '../components/Avatar.svelte';
 
 <Toast {toast} />
 
-<div class="page">
+<div class="page" class:detail={selected != null}>
   {#if selected == null}
     <!-- ================= 列表视图 ================= -->
     <header class="page-top">
@@ -1010,10 +1010,19 @@ import Avatar from '../components/Avatar.svelte';
 <style>
   /* 页面骨架 (padding / max-width): 通讯录 / 发现 / 记忆 三页共用同一套数值,
      改动时三处要一起改, 否则页头基线会在切页时跳一下。 */
+  /* ---- 页面容器 ----
+     原来 max-width 820px + margin:0 是最刺眼的一处：1440 宽的窗口里
+     内容全挤在左上角，右侧留下 600px 纯空白，读起来像「没铺满」。
+     改成居中 + 960px：一行角色能放下更多信息，页面也不再偏左。
+     详情视图是纵向表单，宽了不好读，单独收窄到 760px。 */
   .page {
-    padding: var(--space-6) var(--space-6) var(--space-8);
-    max-width: 820px;
-    margin: 0;
+    padding: var(--page-pad-y) var(--page-pad-x) var(--space-8);
+    max-width: var(--page-maxw);
+    margin: 0 auto;
+    width: 100%;
+  }
+  .page.detail {
+    max-width: 760px;
   }
 
   /* ---- 页头 ----

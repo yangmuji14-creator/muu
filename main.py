@@ -231,6 +231,53 @@ def _doctor() -> int:
     except Exception as e:
         warnings.append(f"settings.json 读取失败：{e}")
 
+    # 7. 语义记忆（向量记忆）
+    #    这一项以前没有：用户装了模型也看不出语义记忆到底有没有生效，
+    #    只能靠「AI 好像记不住意思相近的话」来猜。这里把三件事分开报：
+    #    依赖装没装 / 模型在不在 / 能不能真的产出向量。
+    try:
+        from core.memory.embedder import (
+            DEFAULT_MODEL,
+            LOCAL_MODEL_DIRNAME,
+            SentenceTransformerEmbedder,
+            resolve_model_source,
+        )
+
+        source = resolve_model_source()
+        is_local = source != DEFAULT_MODEL
+
+        try:
+            import sentence_transformers  # noqa: F401
+
+            has_deps = True
+        except ImportError:
+            has_deps = False
+
+        if not has_deps:
+            warnings.append(
+                "未安装语义记忆依赖 —— 记忆将以关键词匹配运行，"
+                "记不住「意思相近但字面不同」的话\n"
+                f"       修复：python -m pip install -r requirements-vector.txt"
+            )
+        elif not is_local:
+            warnings.append(
+                f"没有本地向量模型（models/{LOCAL_MODEL_DIRNAME}）—— "
+                "首次检索会尝试联网下载，无网时降级为关键词匹配\n"
+                "       修复：python -m tools.fetch_embedding_model"
+            )
+        else:
+            embedder = SentenceTransformerEmbedder()
+            if embedder.available:
+                dim = embedder.dimension
+                ok.append(f"语义记忆已启用（{dim} 维向量，模型：{Path(source).name}）")
+            else:
+                warnings.append(
+                    "向量模型加载失败 —— 语义记忆降级为关键词匹配，"
+                    "启动日志里有具体原因（通常是内存不足或模型文件损坏）"
+                )
+    except Exception as e:
+        warnings.append(f"语义记忆自检失败：{e}")
+
     print()
     print("=" * 52)
     print("  慕 · 环境自检")
