@@ -150,10 +150,17 @@ class PromptContextAssembler:
         thought: dict | None,
         retrieve_fallback: Callable[[str, str], Awaitable[list[str]]],
     ) -> PromptContext:
-        memory_query = self._build_memory_query(content, thought)
-        memory_context = self._memory_manager.get_context_prompt(
-            user_id, limit=8, query=memory_query,
-        )
+        # 记忆召回是「锦上添花」，绝不能成为整轮对话的单点故障：向量维度不匹配、
+        # 索引表损坏、embedder 半初始化等都会从 get_context_prompt 一路抛到
+        # SSE 层的兜底 except，用户看到的是「暂时无法生成回复」。
+        try:
+            memory_query = self._build_memory_query(content, thought)
+            memory_context = self._memory_manager.get_context_prompt(
+                user_id, limit=8, query=memory_query,
+            )
+        except Exception as e:
+            logger.warning(f"Memory context build failed, continuing without it: {e}")
+            memory_context = ""
         relevant_context = ""
         if not memory_context:
             relevant = await retrieve_fallback(user_id, content)
@@ -249,6 +256,11 @@ class PromptContextAssembler:
         """
         if thought and thought.get("topic"):
             return f"{thought['topic']} {content}"
+        # 本轮消息的关键词交集为空时，TopicTracker 不会更新（`update()` 直接
+        # return），`get_current_topic()` 返回的仍是**上一轮**的话题。把它拼进
+        # 查询串会让「今天好累」这类短消息被上一轮话题（比如「猫 粮」）带偏，
+        # 在 RELATIVE_SIMILARITY_RATIO 相对闸门下把真正的匹配挤掉。
+        # 只有本轮消息确实延续了当前话题（关键词有交集）才拼接。
         topic = ""
         if self._topic_tracker is not None:
             try:
@@ -258,5 +270,13 @@ class PromptContextAssembler:
                 logger.debug(f"topic lookup failed, using raw content: {e}")
                 topic = ""
         if topic and topic not in content:
-            return f"{topic} {content}"
+            try:
+                overlap = (
+                    self._topic_tracker._extract_keywords(topic)
+                    & self._topic_tracker._extract_keywords(content)
+                )
+            except Exception:
+                overlap = set()
+            if overlap:
+                return f"{topic} {content}"
         return content

@@ -23,6 +23,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 from loguru import logger
 
@@ -243,12 +244,25 @@ class MemoryStorage:
         self._insert(memory, user_id)
         self._conn.commit()
 
-    def update_many(self, user_id: str, memories: list[Memory]) -> int:
+    def update_many(
+        self, user_id: str, memories: list[Memory],
+        columns: Iterable[str] | None = None,
+    ) -> int:
         """批量更新记忆（单事务）。
 
         存在的原因：遗忘衰减需要把一批记忆的新 `forget_score` 一起写回，
         逐条 `update()` 会做 N 次 commit；500 条记忆在 WAL 模式下等于 500 次
         落盘。这里合到一个事务里，返回实际写入的条数。
+
+        Args:
+            columns: 只更新这些列（``None`` 表示整行 upsert）。
+
+        为什么要能限定列：``_insert`` 是 ``INSERT OR REPLACE`` 整行覆盖，
+        而调用方拿到的 ``Memory`` 对象可能来自几十毫秒前的 ``load()``。
+        这期间别的线程可能刚把 ``superseded_by`` / ``archived`` / ``access_count``
+        写进库，整行覆盖会把这些更新悄悄回滚（lost update）——
+        典型症状是「刚被取代的记忆又冒出来」「访问计数归零」。
+        读路径（``get_memories`` 落衰减）和清理路径都必须只写自己改过的列。
         """
         if not memories:
             return 0
@@ -256,12 +270,39 @@ class MemoryStorage:
         try:
             conn.execute("BEGIN IMMEDIATE")
             for mem in memories:
-                self._insert(mem, user_id)
+                if columns is None:
+                    self._insert(mem, user_id)
+                else:
+                    self._update_columns(mem, user_id, columns)
             conn.commit()
         except Exception:
             conn.rollback()
             raise
         return len(memories)
+
+    def _update_columns(
+        self, memory: Memory, user_id: str, columns: Iterable[str],
+    ) -> None:
+        """按列部分更新（列名由调用方以常量给出，不来自外部输入）"""
+        assignments: list[str] = []
+        values: list = []
+        for column in columns:
+            assignments.append(f"{column}=?")
+            if column == "tags":
+                values.append(json.dumps(memory.tags, ensure_ascii=False))
+            elif column == "related_ids":
+                values.append(json.dumps(memory.related_memory_ids))
+            elif column == "archived":
+                values.append(1 if memory.archived else 0)
+            elif column in ("confidence", "forget_score"):
+                values.append(float(getattr(memory, column)))
+            else:
+                values.append(getattr(memory, column))
+        values.extend([user_id, memory.id])
+        self._conn.execute(
+            f"UPDATE memories SET {', '.join(assignments)} WHERE user_id=? AND id=?",
+            values,
+        )
 
     def delete(self, user_id: str, memory_id: str) -> bool:
         """删除一条记忆"""

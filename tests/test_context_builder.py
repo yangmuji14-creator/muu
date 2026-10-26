@@ -28,6 +28,11 @@ class _FakeTopicTracker:
     def get_topic_context(self) -> str:
         return ""
 
+    def _extract_keywords(self, text: str) -> set[str]:
+        # 真实实现按 2-gram 抽词；这里用「话题里的字出现在正文里即算有交集」
+        # 的等价近似，测试关心的只是「拼接前有没有校验本轮是否延续话题」。
+        return {ch for ch in text if ch.strip()}
+
 
 def _assembler(topic_tracker) -> PromptContextAssembler:
     return PromptContextAssembler(
@@ -48,10 +53,25 @@ class TestBuildMemoryQuery:
     """
 
     def test_uses_topic_tracker_when_thought_missing(self):
-        """thought 为 None 时改用 TopicTracker 的话题，而不是只发用户原话。"""
+        """thought 为 None 时改用 TopicTracker 的话题，而不是只发用户原话。
+
+        前提是本轮消息确实延续了该话题（关键词有交集）——
+        否则 ``get_current_topic()`` 返回的是**上一轮**的话题，见
+        ``test_stale_topic_does_not_contaminate_query``。
+        """
         asm = _assembler(_FakeTopicTracker("养猫"))
-        q = asm._build_memory_query("它最近怎么样", None)
+        q = asm._build_memory_query("养 猫 它最近怎么样", None)
         assert "养猫" in q and "它最近怎么样" in q
+
+    def test_stale_topic_does_not_contaminate_query(self):
+        """本轮消息与当前话题无关时，不能把上一轮的话题拼进查询串。
+
+        ``TopicTracker.update()`` 在本轮抓不到关键词时直接 return，
+        ``get_current_topic()`` 于是仍返回上一轮话题。无条件拼接会让
+        「今天好累」被上一次的「养猫」带偏，在相对闸门下挤掉真正的匹配。
+        """
+        asm = _assembler(_FakeTopicTracker("养猫"))
+        assert asm._build_memory_query("今天好累", None) == "今天好累"
 
     def test_thought_topic_wins_over_tracker(self):
         """DialogueThinker 打开时它的 topic 更精确，优先用。"""

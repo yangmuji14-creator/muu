@@ -410,9 +410,9 @@ class TestDecayFlush:
         calls: list[int] = []
         real = mgr._storage.update_many
 
-        def spy(user_id, memories):
+        def spy(user_id, memories, columns=None):
             calls.append(len(memories))
-            return real(user_id, memories)
+            return real(user_id, memories, columns=columns)
 
         monkeypatch.setattr(mgr._storage, "update_many", spy)
         mgr.get_memories("u")  # 节流窗口内：不应再写
@@ -423,11 +423,10 @@ class TestDecayFlush:
         mgr.get_memories("u")  # 把节流窗口打开
 
         calls: list[int] = []
-        real = mgr._storage.update_many
 
-        def spy(user_id, memories):
+        def spy(user_id, memories, columns=None):
             calls.append(len(memories))
-            return real(user_id, memories)
+            return real(user_id, memories, columns=columns)
 
         monkeypatch.setattr(mgr._storage, "update_many", spy)
         mgr.apply_decay("u")  # 显式调用必须立即写库
@@ -436,12 +435,39 @@ class TestDecayFlush:
     def test_flush_failure_does_not_raise(self, mgr, monkeypatch) -> None:
         mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
 
-        def boom(user_id, memories):
+        def boom(user_id, memories, columns=None):
             raise RuntimeError("db gone")
 
         monkeypatch.setattr(mgr._storage, "update_many", boom)
         # 衰减落库失败不能把整轮对话搞挂
         assert len(mgr.get_memories("u")) == 1
+
+    def test_flush_failure_does_not_arm_throttle(self, mgr, monkeypatch) -> None:
+        """写库失败后不能在 5 分钟内「假装已经写过」。
+
+        早先实现先更新节流时间戳再写库，失败路径把时间戳留了下来，
+        于是注释承诺的「下一轮会再试一次」实际是「5 分钟后再试一次」，
+        一次瞬时锁冲突就能让衰减在这一窗口内完全不落盘。
+        """
+        mgr._storage.save("u", [_old("stale", days=200, level=2, category="other")])
+
+        def boom(user_id, memories, columns=None):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(mgr._storage, "update_many", boom)
+        mgr.get_memories("u")  # 第一次写失败
+        assert "u" not in mgr._decay_flushed_at
+
+        calls: list[int] = []
+        real = mgr._storage.update_many
+
+        def spy(user_id, memories, columns=None):
+            calls.append(len(memories))
+            return real(user_id, memories, columns=columns)
+
+        monkeypatch.setattr(mgr._storage, "update_many", spy)
+        mgr.get_memories("u")  # 下一轮必须真的重试
+        assert calls == [1]
 
     def test_skips_archived_and_superseded(self, mgr) -> None:
         mgr._storage.save("u", [
@@ -928,6 +954,43 @@ class TestVectorStoreRanking:
 
         assert fast == slow
 
+    def test_stale_dimension_vectors_skipped(self, mgr) -> None:
+        """索引里残留旧维度向量时，快路径要跳过它们而不是崩掉。
+
+        换 embedding 模型（或改 `dim`）后，旧行仍留在 vectors.db 里，
+        维度与当前 query 向量不一致。早先 ``_hybrid_rank_prompt`` 直接
+        ``np.dot(query, mem.T)``，维度不等抛 ``ValueError: shapes not aligned``，
+        而这个调用点没有被 try 包住，异常一路冒到 SSE 循环，
+        用户看到的是整轮对话失败（"暂时无法生成回复"）。
+        """
+        mgr.add_memory_sync("u", "相关内容", level=4)
+        mgr.add_memory_sync("u", "另外的内容", level=4)
+
+        # 把其中一条改写成别的维度，模拟模型换代留下的陈旧行
+        stale = mgr._storage.load("u")[0]
+        mgr._vector_store.add("u", stale.id, "相关内容", unit(7, dim=16))
+
+        prompt = mgr.get_context_prompt("u", query="查询")
+        assert prompt, "维度不匹配不能让上下文构建整体返回空"
+
+    def test_all_vectors_stale_falls_back(self, mgr, monkeypatch) -> None:
+        """候选向量全是旧维度 → 快路径返回 None，回退现算，不能返回空上下文。"""
+        mgr.add_memory_sync("u", "相关内容", level=4)
+        for mem in mgr._storage.load("u"):
+            mgr._vector_store.add("u", mem.id, mem.content, unit(9, dim=16))
+
+        batch_calls: list[int] = []
+        real_batch = mgr._embedder.embed_batch
+
+        def spy(texts):
+            batch_calls.append(len(texts))
+            return real_batch(texts)
+
+        monkeypatch.setattr(mgr._embedder, "embed_batch", spy)
+        prompt = mgr.get_context_prompt("u", query="查询")
+        assert "相关内容" in prompt
+        assert batch_calls, "旧维度向量被全部跳过时应回退到现算路径"
+
 
 # --------------------------------------------------------------------------- #
 # 分类 / 导入导出
@@ -1016,6 +1079,43 @@ class TestOrphanVectors:
         )
         assert [m.id for m in out] == ["m_keep"]
         assert vs.count("u") == 1, "没传 user_id 时不应误删别的向量"
+
+    def test_new_memory_dropped_by_cleanup_is_not_indexed(self, tmp_path, vs) -> None:
+        """新记忆自己刚被裁掉时，不能再给它写向量。
+
+        写入顺序原本是「落库 → 清理（可能把这条新记忆自己裁掉）→ 索引」，
+        于是刚被删掉的记忆又拿到一行向量，`embedding_status` 会把它报成
+        orphaned，`semantic_search` 得靠 `_filter_searchable` 兜底才不召回。
+        """
+        mgr = MemoryManager(tmp_path, max_memories=1, embedder=FakeEmbedder(), vector_store=vs)
+        mgr._storage.save("u", [_old("old", content="旧的压舱记忆", level=5, days=30)])
+        # 同等重要度、但更新的一条把旧记忆挤出配额（裁剪按 level/forget_score/时间排）
+        survivor = mgr.add_memory_sync("u", "刚说的重要的事", level=5)
+
+        alive = {m.id for m in mgr._storage.load("u")}
+        indexed = {r["memory_id"] for r in vs.list_all("u")}
+        assert survivor is not None and survivor.id in alive, "前提：新记忆保留下来"
+        assert "old" not in alive, "前提：旧记忆被裁掉了"
+        assert indexed == alive, "被裁掉的记忆不能留下向量"
+
+    def test_trim_keeps_newest_when_otherwise_equal(self, tmp_path, vs) -> None:
+        """重要度、新鲜度都一样时，裁剪必须淘汰旧的而不是刚写进来的。
+
+        早先排序后截断对「新写入的行」天然不利：同一时刻写入的多条
+        ``created_at`` / ``last_accessed`` 完全相同，先后取决于列表顺序，
+        再加上 SQLite 的时间串精度，刚加进来的记忆可能刚写完就被自己踢掉。
+        """
+        mgr = MemoryManager(tmp_path, max_memories=2, embedder=FakeEmbedder(), vector_store=vs)
+        mgr._storage.save("u", [
+            _old("old1", content="旧内容一", level=5, days=60),
+            _old("old2", content="旧内容二", level=5, days=30),
+        ])
+        new = mgr.add_memory_sync("u", "刚刚说的重要的事", level=5)
+
+        alive = {m.id for m in mgr._storage.load("u")}
+        assert new is not None
+        assert new.id in alive, "刚写入的记忆不该被自己触发的裁剪淘汰"
+        assert "old1" not in alive
 
     def test_vector_delete_failure_is_swallowed(self, tmp_path, vs, monkeypatch) -> None:
         """单条向量删除失败不能打断整轮清理。"""
