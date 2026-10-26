@@ -269,6 +269,88 @@ class TestCrud:
         assert store.get("b", "m1") is None
 
 
+class TestUpdateMany:
+    """批量 / 按列更新。
+
+    按列更新存在的原因：``_insert`` 是 ``INSERT OR REPLACE`` 整行覆盖，
+    调用方手里的 ``Memory`` 可能是几十毫秒前 ``load()`` 出来的快照，
+    整行覆盖会把别的线程刚写进去的 ``superseded_by`` / ``access_count``
+    悄悄回滚（lost update）。
+    """
+
+    def test_returns_count(self, store) -> None:
+        store.add("u", _mem("m1"))
+        store.add("u", _mem("m2"))
+        mems = store.load("u")
+        assert store.update_many("u", mems) == 2
+
+    def test_empty_list_noop(self, store) -> None:
+        assert store.update_many("u", []) == 0
+
+    def test_full_row_upsert_when_columns_none(self, store) -> None:
+        store.add("u", _mem("m1", "旧"))
+        store.update_many("u", [_mem("m1", "新")])
+        got = store.get("u", "m1")
+        assert got is not None and got.content == "新"
+
+    def test_columns_only_updates_listed(self, store) -> None:
+        store.add("u", _mem("m1", "原文"))
+        stale = store.get("u", "m1")
+        assert stale is not None
+
+        # 别的线程在这之后写了 content / access_count
+        fresh = store.get("u", "m1")
+        assert fresh is not None
+        fresh.content = "别人刚写的内容"
+        fresh.access_count = 7
+        store.update("u", fresh)
+
+        # 手里这条陈旧快照只改 forget_score 并落库
+        stale.forget_score = 0.75
+        store.update_many("u", [stale], columns=("forget_score",))
+
+        after = store.get("u", "m1")
+        assert after is not None
+        assert after.forget_score == pytest.approx(0.75)
+        assert after.content == "别人刚写的内容", "未被列出的列不能被回滚"
+        assert after.access_count == 7, "未被列出的列不能被回滚"
+
+    def test_columns_json_and_bool_roundtrip(self, store) -> None:
+        store.add("u", _mem("m1"))
+        mem = store.get("u", "m1")
+        assert mem is not None
+        mem.tags = ["标签甲", "b"]
+        mem.related_memory_ids = ["x1"]
+        mem.archived = True
+        store.update_many("u", [mem], columns=("tags", "related_ids", "archived"))
+
+        after = store.get("u", "m1")
+        assert after is not None
+        assert after.tags == ["标签甲", "b"]
+        assert after.related_memory_ids == ["x1"]
+        assert after.archived is True
+
+    def test_rollback_on_error(self, store, monkeypatch) -> None:
+        store.add("u", _mem("m1", "原文"))
+        mem = store.get("u", "m1")
+        assert mem is not None
+        mem.content = "改了一半"
+
+        calls = {"n": 0}
+        real = store._update_columns
+
+        def boom(*args, **kwargs):
+            calls["n"] += 1
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(store, "_update_columns", boom)
+        with pytest.raises(RuntimeError):
+            store.update_many("u", [mem], columns=("content",))
+        assert calls["n"] == 1
+        after = store.get("u", "m1")
+        assert after is not None and after.content == "原文"
+
+
 class TestQueries:
     def test_search_like(self, store) -> None:
         store.add("u", _mem("m1", "我喜欢跑步"))

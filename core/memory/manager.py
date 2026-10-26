@@ -33,6 +33,16 @@ TOKEN_RE = re.compile(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{2,}|\d+', re.UNICODE)
 # 会被相似度阈值整条丢掉。这里对中文串再切 2-gram，让子串重叠能被识别。
 _CJK_RE = re.compile(r'[\u4e00-\u9fff]+', re.UNICODE)
 
+# 部分更新用到的列白名单。
+#
+# 背景：`MemoryStorage._insert` 是 `INSERT OR REPLACE` 整行覆盖，而调用方手里
+# 的 `Memory` 快照可能已经过期（load 之后别的线程写过同一行）。凡是「只改了
+# 少数几个字段」的批量写，都必须用这份列清单，否则会把并发写入的
+# `superseded_by` / `archived` / `access_count` 一起回滚掉。
+DECAY_COLUMNS = ("forget_score", "last_accessed")
+CLEANUP_COLUMNS = ("forget_score", "archived", "last_accessed")
+ACCESS_COLUMNS = ("access_count", "last_accessed")
+
 
 def _keyword_tokens(text: str) -> set[str]:
     """抽取用于「关键词重叠」判定的 token（中文补 2-gram）。"""
@@ -235,6 +245,7 @@ class MemoryManager:
         # 删除被裁剪的。
         self._storage.add(user_id, memory)
 
+        dropped_ids: set[str] = set()
         if len(memories) > self._max_memories:
             # 必须把 user_id 传进去：裁剪掉的记忆若不同步删向量，就会在
             # memory_vectors 里留下孤儿 —— 语义检索仍能召回「已经不存在的
@@ -251,9 +262,13 @@ class MemoryManager:
                 if (m.forget_score, m.archived) != snapshot.get(m.id)
             ]
             if dirty:
-                self._storage.update_many(user_id, dirty)
+                # 只写 forget_score / archived / access 这几列：整行 INSERT OR REPLACE
+                # 会把同一时刻别的线程刚写进去的 superseded_by 覆盖回旧值。
+                self._storage.update_many(user_id, dirty, columns=CLEANUP_COLUMNS)
+            dropped_ids = set()
             for m in dropped:
                 self._storage.delete(user_id, m.id)
+                dropped_ids.add(m.id)
             logger.debug(
                 f"Trimmed {len(dropped)} memories, {len(dirty)} archived"
             )
@@ -263,8 +278,16 @@ class MemoryManager:
         for conflict in conflicts:
             self._storage.update(user_id, conflict)
 
-        # 向量索引
-        self._index_memory(user_id, memory)
+        # 向量索引。唯一例外：新记忆自己在裁剪中被丢掉（`max_memories` 设得
+        # 很小、或者一条低 level 的新记忆刚好排在末尾），这时主表已经没有这行，
+        # 再写向量就制造了本次提交正要消灭的「孤儿向量」——
+        # semantic_search 会把它召回，管理界面却看不到。
+        if memory.id in dropped_ids:
+            logger.debug(
+                f"Skip vector indexing for trimmed memory [{memory.id}]"
+            )
+        else:
+            self._index_memory(user_id, memory)
 
         logger.info(
             f"Added memory [{memory.id}] level={level} cat={category}: "
@@ -383,18 +406,19 @@ class MemoryManager:
             last = self._decay_flushed_at.get(user_id)
             if not force and last is not None and now - last < self.DECAY_FLUSH_INTERVAL:
                 return 0
-            self._decay_flushed_at[user_id] = now
 
         changed = [m for m in memories if not m.archived and not m.is_superseded]
         if not changed:
             return 0
         try:
-            written = self._storage.update_many(user_id, changed)
+            written = self._storage.update_many(user_id, changed, columns=DECAY_COLUMNS)
         except Exception as e:
             # 衰减落库失败不该让整轮对话挂掉：内存里的值仍然是对的，
-            # 下一轮会再试一次。
+            # 下一轮会再试一次（**不更新**节流时间戳，下一轮真的重试）。
             logger.warning(f"Failed to persist forget_score for {user_id}: {e}")
             return 0
+        with self._decay_lock:
+            self._decay_flushed_at[user_id] = now
         logger.debug(f"Persisted forget_score for {written} memories of {user_id}")
         return written
 
@@ -836,9 +860,43 @@ class MemoryManager:
         if not stored or not cand_ids <= set(stored):
             return None
 
-        ordered_vecs = [stored[m.id] for m in candidates]
+        # 维度必须与 query 一致：换过 embedding 模型时库里会同时存在旧维度
+        # （如 768）和新维度（如 512）的向量，`np.dot` 会抛
+        # ``ValueError: shapes not aligned``，而这条路径没有被 try 包住，
+        # 异常会一路冒到 SSE 兜底 except —— 用户看到「暂时无法生成回复」。
+        # ``VectorStore.search`` 早就有同样的保护（跳过维度不符的行），
+        # 这里补齐：维度不符 = 这条向量过期，交给 reindex 修，本轮忽略它。
+        query_dim = len(query_vec)
+        stale_dims: set[int] = set()
+        ordered_vecs: list[list[float]] = []
+        kept_candidates: list[Memory] = []
+        for mem in candidates:
+            vec = stored[mem.id]
+            if len(vec) != query_dim:
+                stale_dims.add(len(vec))
+                continue
+            kept_candidates.append(mem)
+            ordered_vecs.append(vec)
+        if stale_dims:
+            # 过期向量是「索引需要重建」的信号，但没人会去看 debug 日志，
+            # 所以每个进程说一次，之后降到 debug。
+            if not getattr(self, "_stale_dim_warned", False):
+                self._stale_dim_warned = True
+                logger.warning(
+                    "Vector index has stale dimensions %s (query dim=%d) for %s — "
+                    "skipping them; run reindex_all(force=True) to rebuild",
+                    sorted(stale_dims), query_dim, user_id,
+                )
+            else:
+                logger.debug(
+                    "Skip stale vectors %s for %s", sorted(stale_dims), user_id
+                )
+        if not kept_candidates:
+            # 一条可用向量都没有 = 索引整体过期，退回现算路径。
+            return None
+
         return self._hybrid_rank_prompt(
-            candidates, ordered_vecs, query_vec, limit, query, user_id=user_id,
+            kept_candidates, ordered_vecs, query_vec, limit, query, user_id=user_id,
         )
 
     def _hybrid_rank_prompt(
@@ -857,6 +915,14 @@ class MemoryManager:
 
         for mem, vec in zip(candidates, cand_vecs):
             mem_np = np.array(vec, dtype=np.float32).reshape(1, -1)
+            if mem_np.shape[1] != query_np.shape[1]:
+                # 逐条再兜一次：调用方（尤其是现算路径）未必校验过维度，
+                # 一条脏向量不该让整轮打分挂掉。
+                logger.debug(
+                    f"Skip memory [{mem.id}] in ranking: dim {mem_np.shape[1]} "
+                    f"!= query {query_np.shape[1]}"
+                )
+                continue
             sim = float(np.dot(query_np, mem_np.T)[0, 0])
             keyword_overlap = bool(_keyword_tokens(query) & _keyword_tokens(mem.content))
             if sim < self.MIN_SEMANTIC_SIMILARITY and not keyword_overlap:
@@ -941,7 +1007,10 @@ class MemoryManager:
         for mem in memories:
             mem.touch()
         try:
-            self._storage.update_many(user_id, memories)
+            # 只写 access_count / last_accessed：这里拿到的 Memory 来自本轮
+            # 的 load 快照，整行覆盖会把这期间别的线程写入的
+            # superseded_by / archived / forget_score 回滚掉。
+            self._storage.update_many(user_id, memories, columns=ACCESS_COLUMNS)
         except Exception as e:
             # 计数失败不该让整轮对话挂掉
             logger.warning(f"Failed to persist access_count for {user_id}: {e}")
@@ -1029,6 +1098,10 @@ class MemoryManager:
             return candidates + superseded + archived
 
         # 按综合评分排序：(level, 1-forget_score, last_accessed)
+        #
+        # 反向排序时 last_accessed 越大越靠前 —— 对「同样重要、同样新鲜度」的
+        # 两条记忆，较新的一条会排在前面（ISO 时间串可直接比大小），
+        # 于是被裁掉的是更旧的那条，而不是刚进来的这条。
         candidates.sort(
             key=lambda m: (m.level, 1.0 - m.forget_score, m.last_accessed),
             reverse=True,
