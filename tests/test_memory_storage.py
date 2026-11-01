@@ -156,6 +156,46 @@ class TestMigrateFromJson:
         assert (json_dir / "u.json.migrated").exists()
         assert not (json_dir / "u.json").exists()
 
+    def test_migrated_data_survives_close_and_reopen(self, tmp_path) -> None:
+        json_dir = tmp_path / "memories"
+        json_dir.mkdir()
+        (json_dir / "u.json").write_text(
+            json.dumps({"memories": [{"id": "m1", "content": "durable"}]}),
+            encoding="utf-8",
+        )
+
+        store = MemoryStorage(tmp_path)
+        store.close()
+        reopened = MemoryStorage(tmp_path)
+
+        assert [memory.content for memory in reopened.load("u")] == ["durable"]
+        assert (json_dir / "u.json.migrated").exists()
+
+    def test_migration_marker_finishes_rename_after_restart(self, tmp_path) -> None:
+        """标记已提交但重命名失败时，重启应补完重命名而不是重新迁移。
+
+        不能自己 INSERT 标记：构造 MemoryStorage 时首次迁移已经写过同名标记，
+        再插一次会撞 PRIMARY KEY，测试就变成在验证 fixture 而不是产品行为。
+        正确复现方式是迁移完成后把文件改回未重命名状态。
+        """
+        json_dir = tmp_path / "memories"
+        json_dir.mkdir()
+        source = json_dir / "u.json"
+        source.write_text(json.dumps({"memories": []}), encoding="utf-8")
+
+        store = MemoryStorage(tmp_path)
+        store.close()
+
+        # 模拟「数据已提交 + 标记已落库，但重命名那一步没跑完」
+        migrated = json_dir / "u.json.migrated"
+        assert migrated.exists()
+        migrated.rename(source)
+        assert not migrated.exists()
+
+        MemoryStorage(tmp_path).close()
+        assert not source.exists()
+        assert migrated.exists()
+
     def test_skips_when_sqlite_nonempty(self, tmp_path) -> None:
         store = MemoryStorage(tmp_path)
         store.add("u", _mem())

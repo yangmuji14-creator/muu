@@ -93,6 +93,20 @@ class MemoryManager:
     """
 
     DECAY_FLUSH_INTERVAL = 300.0
+
+    RECALL_CANDIDATE_LIMIT = 200
+    """每轮召回时先取多少条记忆进语义打分的候选池。
+
+    历史值是 30，而 ``get_memories`` 内部是「先按 (level, last_accessed)
+    排序再截断」—— 所以语义打分只在这 30 条里做。记忆超过 30 条后，一条
+    level=2 的新记忆即使和当前话题高度相关，也进不了候选池：语义检索的
+    天花板不是向量质量，是这个数字。
+
+    提到 200 的前提是 ``_rank_from_vector_store`` 走的是已建好的向量索引
+    （一次 embed(query) + 矩阵点积），候选数增加几乎不影响耗时；只有
+    「向量表覆盖不全」的回退路径会按候选数做 embed_batch，那条路径本来就
+    是异常路径，慢一点可以接受。
+    """
     """衰减值写回数据库的最小间隔（秒）。
 
     `get_memories` 每轮对话都会调，衰减值一天才变一点点；每次请求都
@@ -764,7 +778,8 @@ class MemoryManager:
         用户写入的向量索引在主对话里从未被使用过。
         """
         candidates = self.get_memories(
-            user_id, level_min=2, limit=30, include_archived=False
+            user_id, level_min=2, limit=self.RECALL_CANDIDATE_LIMIT,
+            include_archived=False,
         )
         if not candidates:
             return ""

@@ -740,7 +740,7 @@
                 {#if roles.vision?.model_name === entry.model_name && !entry.is_current}<span class="badge">识别</span>{/if}
               </div>
               <div class="entry-controls">
-                <label class="check-line" title="勾选 = 该模型是多模态：看图、听语音这类识别都直接发给它（快）">
+                <label class="check-line" title="勾选 = 该模型是多模态：看图、听语音这类识别都直接发给它（快）。是否真的支持以实测为准——勾错的模型收到图片会报错">
                   <input
                     type="checkbox"
                     checked={entry.multimodal}

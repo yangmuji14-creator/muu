@@ -134,9 +134,13 @@ def make_pipeline(registry=None, mcp=None, replies=None, native=None, native_rai
     pipeline._mcp_manager = mcp
     pipeline.calls = []
 
-    async def _llm_call(messages, system_prompt, on_token=None, on_event=None):
+    async def _llm_call(messages, system_prompt, on_token=None, on_event=None,
+                        max_tokens=None):
         pipeline.calls.append(
-            {"messages": messages, "system_prompt": system_prompt, "on_event": on_event}
+            {
+                "messages": messages, "system_prompt": system_prompt,
+                "on_event": on_event, "max_tokens": max_tokens,
+            }
         )
         if not replies:
             return "（默认回复）"

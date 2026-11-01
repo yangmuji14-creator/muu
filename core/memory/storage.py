@@ -91,6 +91,12 @@ class MemoryStorage:
                 CREATE INDEX IF NOT EXISTS idx_memories_level
                 ON memories(user_id, level DESC)
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS memory_json_migrations (
+                    filename TEXT PRIMARY KEY,
+                    migrated_at TEXT NOT NULL
+                )
+            """)
             conn.commit()
 
     def _ensure_columns(self, conn: sqlite3.Connection) -> None:
@@ -150,27 +156,54 @@ class MemoryStorage:
         json_files = list(json_dir.glob("*.json"))
         if not json_files:
             return
-        # 检查 SQLite 是否已有数据
-        cur = self._conn.execute("SELECT COUNT(*) FROM memories")
-        if cur.fetchone()[0] > 0:
+        conn = self._conn
+        # Resume file-by-file migrations interrupted after earlier files committed.
+        markers = conn.execute(
+            "SELECT COUNT(*) FROM memory_json_migrations"
+        ).fetchone()[0]
+        cur = conn.execute("SELECT COUNT(*) FROM memories")
+        if cur.fetchone()[0] > 0 and markers == 0:
             logger.info("SQLite 已有数据，跳过 JSON 迁移")
             return
         migrated = 0
         for json_file in json_files:
             user_id = json_file.stem
+            marker = conn.execute(
+                "SELECT 1 FROM memory_json_migrations WHERE filename=?",
+                (json_file.name,),
+            ).fetchone()
+            if marker:
+                self._rename_migrated_json(json_file)
+                continue
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 memories = data.get("memories", [])
+                conn.execute("BEGIN IMMEDIATE")
                 for mem in memories:
                     self._insert(Memory.from_dict(mem), user_id)
+                conn.execute(
+                    "INSERT INTO memory_json_migrations (filename, migrated_at) "
+                    "VALUES (?, ?)",
+                    (json_file.name, datetime.now().isoformat()),
+                )
+                conn.commit()
                 migrated += len(memories)
-                # 迁移后重命名旧文件防止重复迁移
-                json_file.rename(json_file.with_suffix(".json.migrated"))
+                self._rename_migrated_json(json_file)
             except Exception as e:
+                conn.rollback()
                 logger.warning(f"迁移 {json_file.name} 失败: {e}")
         if migrated:
             logger.info(f"从 JSON 迁移了 {migrated} 条记忆到 SQLite")
+
+    @staticmethod
+    def _rename_migrated_json(json_file: Path) -> None:
+        migrated_file = json_file.with_suffix(".json.migrated")
+        if json_file.exists() and not migrated_file.exists():
+            try:
+                json_file.rename(migrated_file)
+            except OSError as e:
+                logger.warning(f"迁移数据已提交，但无法重命名 {json_file.name}: {e}")
 
     def _insert(self, memory: Memory, user_id: str | None = None):
         """插入一条记忆到数据库"""

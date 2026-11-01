@@ -12,6 +12,8 @@ from webui.routes.common import __all__ as _COMMON_ALL  # noqa: F401
 import asyncio  # noqa: F401
 import io  # noqa: F401
 import inspect  # noqa: F401
+import hmac
+import ipaddress
 import json  # noqa: F401
 import os  # noqa: F401
 import re  # noqa: F401
@@ -21,7 +23,66 @@ import uuid  # noqa: F401
 from pathlib import Path  # noqa: F401
 from loguru import logger  # noqa: F401
 
-def _make_app(app_components):
+
+def _web_auth_config(host: str) -> tuple[str, str] | None:
+    """Require credentials whenever the server binds beyond loopback."""
+    normalized_host = host.strip("[]").lower()
+    try:
+        is_loopback = ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        is_loopback = normalized_host == "localhost"
+    if is_loopback:
+        return None
+
+    username = os.getenv("MU_WEB_AUTH_USER", "")
+    password = os.getenv("MU_WEB_AUTH_PASSWORD", "")
+    if not username or not password:
+        raise RuntimeError(
+            "WebUI non-loopback binding requires MU_WEB_AUTH_USER and "
+            "MU_WEB_AUTH_PASSWORD"
+        )
+    if len(password) < 16:
+        raise RuntimeError(
+            "MU_WEB_AUTH_PASSWORD must contain at least 16 characters "
+            "for non-loopback WebUI binding"
+        )
+    return username, password
+
+
+def _web_auth_middleware(host: str):
+    credentials = _web_auth_config(host)
+    if credentials is None:
+        return None
+
+    from aiohttp import BasicAuth, web
+
+    @web.middleware
+    async def auth_middleware(request, handler):
+        try:
+            supplied = BasicAuth.decode(
+                request.headers.get("Authorization", ""), encoding="utf-8"
+            )
+        except (ValueError, UnicodeDecodeError):
+            supplied = None
+        valid = supplied is not None and hmac.compare_digest(
+            supplied.login.encode("utf-8"), credentials[0].encode("utf-8")
+        ) and hmac.compare_digest(
+            supplied.password.encode("utf-8"), credentials[1].encode("utf-8")
+        )
+        if not valid:
+            return web.Response(
+                status=401,
+                text="Authentication required",
+                headers={
+                    "WWW-Authenticate": 'Basic realm="Cyber Companion", charset="UTF-8"'
+                },
+            )
+        return await handler(request)
+
+    return auth_middleware
+
+
+def _make_app(app_components, host: str | None = None):
     from aiohttp import web
 
     try:
@@ -74,9 +135,15 @@ def _make_app(app_components):
             return web.json_response({"error": message}, status=response.status)
         return response
 
+    host = host or os.getenv("MU_WEB_HOST") or os.getenv("CC_WEB_HOST", "127.0.0.1")
+    auth_middleware = _web_auth_middleware(host)
+    middlewares = [friendly_error_middleware]
+    if auth_middleware is not None:
+        middlewares.append(auth_middleware)
+
     aio_app = web.Application(
         client_max_size=512 * 1024 * 1024,
-        middlewares=[friendly_error_middleware],
+        middlewares=middlewares,
     )
     aio_app.add_routes(routes)
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,6 +168,8 @@ def _make_app(app_components):
 async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> None:
     """启动网页服务（阻塞直到取消）。"""
     from aiohttp import web
+
+    _web_auth_config(host)
 
     # 打包模式(EXE)首次启动时自动写入内置 MCP 服务器, 保证开箱即用
     _seed_default_mcp_config()
@@ -129,7 +198,7 @@ async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> 
         except Exception as e:
             logger.warning(f"WebUI: inject message handler failed: {e}")
 
-    aio_app = _make_app(app_components)
+    aio_app = _make_app(app_components, host=host)
     runner = web.AppRunner(aio_app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
@@ -197,17 +266,121 @@ async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> 
                 # 必须把回调挂上去，否则发布器拿不到 LLM 生成能力
                 # （此前漏了这一行，导致永远走兜底文案）
                 poster_gen = _gen
+            def _moment_state(persona_id: str) -> str:
+                """朋友圈生成时附带的「她此刻的状态」。
+
+                只用能稳定拿到的两样：精力与心情。作用域取 ``web::<persona>``
+                （回退作用域）——带 conversation_id 的会话作用域是另一套，
+                朋友圈没有会话上下文，拿不到那边的主力状态。这一点等
+                作用域统一后再补。
+                """
+                parts: list[str] = []
+                mood_engine = getattr(app_components, "mood_manager", None)
+                if mood_engine is not None and persona_id:
+                    try:
+                        mood = mood_engine.get_mood(f"web::{persona_id}")
+                    except Exception:
+                        mood = None
+                    if mood is not None:
+                        energy = getattr(mood, "energy", 0.5) or 0.0
+                        valence = getattr(mood, "valence", 0.0) or 0.0
+                        if energy < 0.35:
+                            parts.append("这会儿有点累，提不起劲")
+                        elif energy > 0.75:
+                            parts.append("精力挺好")
+                        if valence <= -0.3:
+                            parts.append("心情有点低")
+                        elif valence >= 0.3:
+                            parts.append("心情不错")
+                return "；".join(parts)
+
             poster = MomentsAutoPoster(
                 saver=_moment_saver,
                 get_settings=_load_settings,
                 generate_fn=poster_gen,
                 persona_name_fn=_moment_poster_persona_name,
+                state_fn=_moment_state,
             )
             app_components.moments_poster = poster
             asyncio.get_running_loop().create_task(poster.run())
             logger.info("WebUI: moments auto-poster started")
     except Exception as e:
         logger.warning(f"WebUI: moments auto-poster start failed: {e}")
+
+    # ── 主动消息调度 ──
+    # 此前 proactive 只有一个调用点：CLI 的输入超时分支。用网页端和微信时
+    # `proactive_enabled: true` 是空配置 —— 她一次都不会主动找你。
+    # 这里补上调度层，交付动作按平台分流：Web 写库 + SSE，微信走 adapter.send。
+    try:
+        from core.proactive_runner import ProactiveRunner
+        from core.runtime import event_bus
+
+        async def _deliver_proactive(target, text: str) -> bool:
+            memory_uid = target.scope_id or target.user_id
+
+            # 微信：先发后落。发送失败就不落库——发都没发出去的消息，
+            # 不能让她"记得自己说过"（历史与微信端必须一致）。
+            if target.platform == "wechat":
+                mgr = getattr(app_components, "adapter_manager", None)
+                adapter = mgr.get("wechat", target.account_id) if mgr else None
+                if adapter is None:
+                    logger.info(
+                        f"Proactive: no wechat adapter for {target.account_id!r}, "
+                        f"message dropped (not persisted)"
+                    )
+                    return False
+                sent = await adapter.send(target.user_id, text)
+                if not sent:
+                    logger.warning(
+                        f"Proactive: wechat send failed for {target.user_id}, "
+                        f"message dropped (not persisted)"
+                    )
+                    return False
+                try:
+                    app_components.chat_history.add_message(
+                        memory_uid, "assistant", text,
+                        platform=target.platform,
+                        persona_id=target.persona_id,
+                        account_id=target.account_id,
+                    )
+                except Exception as e:
+                    # 已发出去但落库失败：历史缺失比虚假历史好，只记日志
+                    logger.warning(f"Proactive: persist-after-send failed: {e}")
+                return True
+
+            # Web：先落库再推给订阅了这个作用域的前端（前端收到即刷新聊天列表）
+            try:
+                app_components.chat_history.add_message(
+                    memory_uid, "assistant", text,
+                    platform=target.platform,
+                    persona_id=target.persona_id,
+                    account_id=target.account_id,
+                )
+            except Exception as e:
+                logger.warning(f"Proactive: persist failed for {memory_uid}: {e}")
+                return False
+            event_bus.publish_history_changed(memory_uid, source="proactive")
+            return True
+
+        runner = ProactiveRunner(
+            proactive=app_components.proactive,
+            conversation_store=app_components.conversation_store,
+            chat_history=app_components.chat_history,
+            advanced_config=getattr(app_components, "advanced_config", {}) or {},
+            deliver=_deliver_proactive,
+            tick_seconds=int(
+                (getattr(app_components, "advanced_config", {}) or {})
+                .get("proactive_tick_seconds", 120)
+            ),
+            quiet_minutes=int(
+                (getattr(app_components, "advanced_config", {}) or {})
+                .get("proactive_quiet_minutes", 15)
+            ),
+        )
+        app_components.proactive_runner = runner
+        runner.start()
+    except Exception as e:
+        logger.warning(f"WebUI: proactive runner start failed: {e}")
 
     url = f"http://{host}:{port}"
     print(f"\n  🌐 网页端已启动：{url}")
@@ -219,6 +392,13 @@ async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> 
     try:
         await asyncio.Event().wait()
     finally:
+        # 停止主动消息调度
+        runner = getattr(app_components, "proactive_runner", None)
+        if runner is not None:
+            try:
+                await runner.stop()
+            except Exception as e:
+                logger.warning(f"WebUI: proactive runner stop failed: {e}")
         # 停止所有适配器（微信长轮询等后台任务）
         adapter_manager = getattr(app_components, "adapter_manager", None)
         if adapter_manager is not None:

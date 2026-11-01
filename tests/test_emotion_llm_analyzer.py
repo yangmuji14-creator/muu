@@ -183,9 +183,17 @@ class TestDefaultEnriched:
     def test_shape(self) -> None:
         data = _default_enriched()
         assert set(data) == {
+            "emotion", "intensity",
             "emotion_understanding", "emotional_needs", "affection_impact",
             "personality_shift", "response_guidance",
         }
+
+    def test_structured_emotion_defaults_are_empty(self) -> None:
+        """默认值必须让 `parse_emotion_label` 返回 None、强度回落到 0.5，
+        否则 analyze() 会把「没分析出结果」误当成「判定为中性」。"""
+        data = _default_enriched()
+        assert LLMEmotionAnalyzer.parse_emotion_label(data["emotion"]) is None
+        assert LLMEmotionAnalyzer.parse_emotion_intensity(data["intensity"]) == 0.5
 
     def test_no_old_keys(self) -> None:
         assert "_old_emotion" not in _default_enriched()
@@ -647,3 +655,86 @@ class TestAccessors:
 
     def test_max_failures_default(self) -> None:
         assert LLMEmotionAnalyzer()._max_failures == 3
+
+
+# --------------------------------------------------------------------------- #
+# 结构化 emotion / intensity —— 让情绪终于能"动"
+# --------------------------------------------------------------------------- #
+
+
+class TestParseEmotionLabel:
+    """模型直接给枚举，代替「8 个中文词去子串匹配自由文本」。
+
+    历史缺陷的实测数据：8 条真实风格的 emotion_understanding 里只有 2 条
+    命中非 neutral（"用户有点委屈"、"被工作压得喘不过气" 全被判成 neutral），
+    而 neutral 的坐标正好是 (0.0, 0.0)，所以每次误判都在把她清零。
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("难过", EmotionType.SAD),
+        ("焦虑", EmotionType.ANXIOUS),
+        ("爱意", EmotionType.LOVE),
+        ("sad", EmotionType.SAD),
+        ("ANXIOUS", EmotionType.ANXIOUS),
+        ("  开心。 ", EmotionType.HAPPY),
+        ("「孤独」", EmotionType.LONELY),
+    ])
+    def test_accepts_both_label_forms(self, raw, expected) -> None:
+        assert LLMEmotionAnalyzer.parse_emotion_label(raw) is expected
+
+    @pytest.mark.parametrize("raw", [None, "", "  ", "有点说不上来", 42, ["sad"]])
+    def test_rejects_unknown(self, raw) -> None:
+        assert LLMEmotionAnalyzer.parse_emotion_label(raw) is None
+
+
+class TestParseEmotionIntensity:
+    @pytest.mark.parametrize("raw,expected", [
+        (0.82, 0.82),
+        ("0.4", 0.4),
+        (2, 1.0),
+        (-1, 0.0),
+        (None, 0.5),
+        ("很强", 0.5),
+        (True, 0.5),
+    ])
+    def test_clamps_and_falls_back(self, raw, expected) -> None:
+        assert LLMEmotionAnalyzer.parse_emotion_intensity(raw) == expected
+
+
+class TestStructuredEmotionWins:
+    """analyze() 必须优先采信结构化 emotion 字段。"""
+
+    async def test_uses_structured_emotion_over_free_text(self) -> None:
+        llm = FakeLLM(json.dumps({
+            "emotion": "难过",
+            "intensity": 0.8,
+            # 自由描述里一个情感词都不出现 —— 旧实现会判成 neutral
+            "emotion_understanding": "用户在说一件已经过去的事，语气很平",
+            "affection_impact": {"direction": "neutral", "level": "low", "reason": ""},
+        }, ensure_ascii=False))
+        analyzer = LLMEmotionAnalyzer(llm)
+
+        result, _ = await analyzer.analyze("算了，都过去了")
+
+        assert result.emotion is EmotionType.SAD
+        assert result.intensity == 0.8
+
+    async def test_falls_back_to_substring_when_field_missing(self) -> None:
+        """模型没给 emotion 字段时，仍要能用旧的子串匹配兜住。"""
+        llm = FakeLLM(json.dumps({
+            "emotion_understanding": "用户很开心",
+            "affection_impact": {"direction": "positive", "level": "low", "reason": ""},
+        }, ensure_ascii=False))
+        analyzer = LLMEmotionAnalyzer(llm)
+
+        result, _ = await analyzer.analyze("今天真好")
+
+        assert result.emotion is EmotionType.HAPPY
+        assert result.intensity == 0.5  # 无从得知强度时用中性默认
+
+    async def test_prompt_asks_for_enum_and_intensity(self) -> None:
+        """提示词本身必须索要这两个字段 —— 否则解析器写得再好也拿不到数据。"""
+        prompt = LLMEmotionAnalyzer.ENRICHED_ANALYZE_PROMPT
+        assert '"emotion"' in prompt
+        assert '"intensity"' in prompt
+        assert "开心" in prompt and "焦虑" in prompt

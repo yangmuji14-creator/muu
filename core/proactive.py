@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Callable, Awaitable
 
 from loguru import logger
 
+from core.persona.emoji_policy import persona_allows_emoji
+
 if TYPE_CHECKING:
     from core.persona.loader import PersonaLoader
     from core.memory.manager import MemoryManager
@@ -42,12 +44,14 @@ class ProactiveMessenger:
         config: dict | None = None,
         chat_history=None,
         mood_engine=None,
+        open_loop=None,
     ):
         self._persona_loader = persona_loader
         self._memory_mgr = memory_mgr
         self._affection_storage = affection_storage
         self._chat_history = chat_history
         self._mood_engine = mood_engine
+        self._open_loop = open_loop
 
         cfg = config or {}
         self.enabled = cfg.get("proactive_enabled", True)
@@ -66,17 +70,22 @@ class ProactiveMessenger:
         # LLM 生成回调（由 app 注入）
         self._llm_generate: Callable[..., Awaitable[str]] | None = None
 
-        # ── 状态 ──
-        self._last_proactive_at: datetime | None = None  # 上次触发时间
-        self._next_proactive_after: datetime | None = None  # 下次允许触发的最早时间
-        # 当天已触发记录
+        # ── 状态（全部按 user_id 隔离）──
+        # 历史缺陷：这些计数器原本是单实例全局变量，key 里没有 user_id。
+        # 只有一个 CLI 用户时看不出来，一旦真的接多个微信联系人：
+        # A 触发过 "scheduled"，B 当天就再也拿不到定时主动消息；
+        # A 的待追问话术还会被发给 B。多用户接入前必须先隔离。
+        self._last_proactive_at: dict[str, datetime] = {}
+        self._next_proactive_after: dict[str, datetime] = {}
+        # 当天已触发记录：{user_id|date_period: 触发时间}
         self._fired_today: dict[str, datetime] = {}
         # 连续负面情绪计数
         self._consecutive_negative: dict[str, int] = {}
         # 已追问过的记忆 ID
         self._recalled_memory_ids: set[str] = set()
-        # 待追问的话题
-        self._pending_recall_topic: str = ""
+        # 待追问的话题 / 未闭合事件话术
+        self._pending_recall_topic: dict[str, str] = {}
+        self._pending_follow_up: dict[str, str] = {}
 
     def set_llm_generator(self, generate: Callable[..., Awaitable[str]]):
         """注入 LLM 生成回调"""
@@ -84,14 +93,14 @@ class ProactiveMessenger:
 
     # ── 内部：当日去重 ──
 
-    def _today_key(self, period: str) -> str:
-        return f"{datetime.now().date()}_{period}"
+    def _today_key(self, user_id: str, period: str) -> str:
+        return f"{user_id}|{datetime.now().date()}_{period}"
 
-    def _already_fired(self, period: str) -> bool:
-        return self._today_key(period) in self._fired_today
+    def _already_fired(self, user_id: str, period: str) -> bool:
+        return self._today_key(user_id, period) in self._fired_today
 
-    def _mark_fired(self, period: str):
-        self._fired_today[self._today_key(period)] = datetime.now()
+    def _mark_fired(self, user_id: str, period: str):
+        self._fired_today[self._today_key(user_id, period)] = datetime.now()
 
     def _cleanup_old_markers(self):
         today = datetime.now().date()
@@ -111,14 +120,15 @@ class ProactiveMessenger:
         """当前时间是否在活跃窗口内"""
         return self._active_start <= now.hour < self._active_end
 
-    def _can_fire(self, now: datetime) -> bool:
-        """检查间隔是否已过，可以触发"""
-        if self._next_proactive_after is None:
+    def _can_fire(self, user_id: str, now: datetime) -> bool:
+        """检查间隔是否已过，可以触发（按用户独立计时）"""
+        next_at = self._next_proactive_after.get(user_id)
+        if next_at is None:
             # 第一次，可以触发
-            self._next_proactive_after = now + self._pick_next_interval()
+            self._next_proactive_after[user_id] = now + self._pick_next_interval()
             return True
-        if now >= self._next_proactive_after:
-            self._next_proactive_after = now + self._pick_next_interval()
+        if now >= next_at:
+            self._next_proactive_after[user_id] = now + self._pick_next_interval()
             return True
         return False
 
@@ -155,9 +165,9 @@ class ProactiveMessenger:
         now = datetime.now()
 
         # 1) 定时触发：在活跃窗口内 + 间隔已过 → "scheduled"
-        if self._is_in_active_window(now) and self._can_fire(now):
-            self._mark_fired("scheduled")
-            self._last_proactive_at = now
+        if self._is_in_active_window(now) and self._can_fire(memory_user_id, now):
+            self._mark_fired(memory_user_id, "scheduled")
+            self._last_proactive_at[memory_user_id] = now
             return "scheduled"
 
         # 2) 长时间未联系（独立逻辑，不受间隔限制）
@@ -165,34 +175,60 @@ class ProactiveMessenger:
         days_known = stats.days_known
         msg_count = stats.message_count
         if msg_count > 0 and days_known > self.missing_days:
-            if not self._already_fired("missing"):
+            if not self._already_fired(memory_user_id, "missing"):
                 last = self._affection_storage.get_last_interaction(memory_user_id, persona_id)
                 if last:
                     try:
                         last_dt = datetime.fromisoformat(last)
                         days_idle = (now - last_dt).total_seconds() / 86400
                         if days_idle >= self.missing_days:
-                            self._mark_fired("missing")
-                            self._last_proactive_at = now
+                            self._mark_fired(memory_user_id, "missing")
+                            self._last_proactive_at[memory_user_id] = now
                             return "missing"
                     except (ValueError, TypeError):
                         pass
 
-        # 3) 记忆追问
+        # 3) 未闭合事件追问：「上次说的面试怎么样了？」
+        #    open_loop.get_follow_up() 早就写好了（含 ask_count / last_asked 节流），
+        #    但全项目零调用点 —— 她"知道你下周要面试"，却永远不主动问一句。
+        #    放在泛化的记忆召回之前：具体的事比"我记起你提过什么"更像真人。
+        if self._open_loop is not None:
+            follow_up = self._check_open_loop_follow_up(memory_user_id)
+            if follow_up:
+                self._last_proactive_at[memory_user_id] = now
+                return "open_loop_follow_up"
+
+        # 4) 记忆追问
         if self.memory_recall_enabled and level >= 40:
             recall_msg = self._check_memory_recall(memory_user_id, persona, level)
             if recall_msg:
-                self._last_proactive_at = now
+                self._last_proactive_at[memory_user_id] = now
                 return recall_msg
 
-        # 4) 持续关怀
+        # 5) 持续关怀
         if level >= 50:
             care_msg = self._check_continuous_care(memory_user_id, persona, level)
             if care_msg:
-                self._last_proactive_at = now
+                self._last_proactive_at[memory_user_id] = now
                 return care_msg
 
         return None
+
+    def _check_open_loop_follow_up(self, user_id: str) -> bool:
+        """取一条到期的未闭合事件，暂存话术供 generate_message 使用。
+
+        节流（几天问一次、最多问两次）由 ``get_follow_up`` 自己维护，
+        这里只负责调用与暂存，不重复实现一套计数。
+        """
+        try:
+            question = self._open_loop.get_follow_up(user_id)
+        except Exception as e:
+            logger.debug(f"Open loop follow-up check failed: {e}")
+            return False
+        if not question:
+            return False
+        self._pending_follow_up[user_id] = question
+        return True
 
     # ── LLM 生成 ──
 
@@ -268,10 +304,17 @@ class ProactiveMessenger:
                 f"就像你们只是隔了一小会儿没聊一样，自然地开始聊天。"
             )
         elif trigger_type == "memory_recall":
-            recall_topic = self._pending_recall_topic or "之前聊过的事"
+            recall_topic = self._pending_recall_topic.get(memory_user_id) or "之前聊过的事"
             scenario = (
                 f"{persona_name}突然想起了用户之前提到的「{recall_topic}」，想主动问问。"
                 f"像是随口想起来一样，不要太刻意。"
+            )
+        elif trigger_type == "open_loop_follow_up":
+            question = self._pending_follow_up.get(memory_user_id) or "之前提过的那件事"
+            scenario = (
+                f"{persona_name}想起用户之前提过的一件事还没结果，想问问进展。"
+                f"可以自然地这样问：{question}"
+                f"不要像查户口，问完可以顺口带一句自己的事，别让整条消息只剩提问。"
             )
         elif trigger_type == "care":
             scenario = (
@@ -331,7 +374,7 @@ class ProactiveMessenger:
             except Exception as e:
                 logger.warning(f"LLM proactive generation failed: {e}")
 
-        return self._fallback_message(trigger_type, persona_name, level)
+        return self._fallback_message(trigger_type, persona_name, level, persona=persona)
 
     # ── 记忆追问 ──
 
@@ -358,28 +401,28 @@ class ProactiveMessenger:
 
                 if "生日" in content and created.month == now.month and created.day == now.day:
                     self._recalled_memory_ids.add(candidate.id)
-                    self._mark_fired(f"birthday_{candidate.id}")
-                    self._pending_recall_topic = "生日"
+                    self._mark_fired(user_id, f"birthday_{candidate.id}")
+                    self._pending_recall_topic[user_id] = "生日"
                     return "birthday"
 
                 if any(kw in content for kw in ("考试", "面试", "比赛", "答辩")):
                     if 0.08 <= days_old <= 2:
                         self._recalled_memory_ids.add(candidate.id)
-                        self._mark_fired(f"recall_{candidate.id}")
-                        self._pending_recall_topic = content[:30]
+                        self._mark_fired(user_id, f"recall_{candidate.id}")
+                        self._pending_recall_topic[user_id] = content[:30]
                         return "memory_recall"
 
                 if any(kw in content for kw in ("旅行", "搬家", "入职", "手术", "体检")):
                     if 1 <= days_old <= 7:
                         self._recalled_memory_ids.add(candidate.id)
-                        self._mark_fired(f"recall_{candidate.id}")
-                        self._pending_recall_topic = content[:30]
+                        self._mark_fired(user_id, f"recall_{candidate.id}")
+                        self._pending_recall_topic[user_id] = content[:30]
                         return "memory_recall"
 
                 if level >= 60 and 1 <= days_old <= 3:
                     self._recalled_memory_ids.add(candidate.id)
-                    self._mark_fired(f"recall_{candidate.id}")
-                    self._pending_recall_topic = content[:30]
+                    self._mark_fired(user_id, f"recall_{candidate.id}")
+                    self._pending_recall_topic[user_id] = content[:30]
                     return "memory_recall"
 
         except Exception as e:
@@ -411,8 +454,8 @@ class ProactiveMessenger:
                 self._consecutive_negative[user_id] = 0
 
             consecutive = self._consecutive_negative.get(user_id, 0)
-            if consecutive >= 3 and not self._already_fired("care"):
-                self._mark_fired("care")
+            if consecutive >= 3 and not self._already_fired(user_id, "care"):
+                self._mark_fired(user_id, "care")
                 self._consecutive_negative[user_id] = 0
                 return "care"
 
@@ -423,32 +466,65 @@ class ProactiveMessenger:
 
     # ── 兜底消息 ──
 
-    def _fallback_message(self, trigger_type: str, name: str, level: int) -> str:
-        """LLM 不可用时的兜底消息"""
-        messages = {
-            "scheduled": [
-                f"嗨~ 突然想跟你聊聊天！你今天怎么样呀？",
-                f"刚刚看了一个超好笑的视频，等下发给你看~",
-                f"突然想到你了，你在干嘛呀？✨",
-            ],
-            "missing": [
-                f"今天看到一只超可爱的猫，突然好想发给你看！",
-                f"刚刚刷到一个超好笑的视频，等你有空发给你~",
-                f"突然想到你了，今天过得怎么样呀？",
-            ],
-            "care": [
-                f"最近天气忽冷忽热的，注意别感冒了哦~ 🥺",
-                f"今天看到一朵好看的云，希望你心情也能变好~",
-                f"不管发生什么，我都在你身边呢 💕",
-            ],
-            "birthday": [
-                f"生日快乐呀！🎂 希望你今天特别开心！",
-                f"生日快乐！🎉 新的一岁要更加幸福哦~",
-            ],
-            "memory_recall": [
-                f"诶对了，我突然想起来之前那事，后来怎么样了呀？",
-            ],
-        }
+    def _fallback_message(self, trigger_type: str, name: str, level: int,
+                          persona=None) -> str:
+        """LLM 不可用时的兜底消息。
+
+        分两套语气：人设明确要求「不用颜文字 / 不卖萌」时用平实版。
+        历史行为是只有一套「嗨~ 你今天怎么样呀？」，模型一挂就按最撒娇的
+        口吻发出去 —— 和 written persona 直接冲突，而且每轮一模一样。
+        """
+        plain = not persona_allows_emoji(persona)
+
+        if plain:
+            messages = {
+                "scheduled": [
+                    "突然想起你。今天过得怎么样。",
+                    "在忙吗。",
+                    "刚看到个东西，想到你了。",
+                ],
+                "missing": [
+                    "好久没聊了，最近怎么样。",
+                    "今天看到一只猫，还挺像你。",
+                    "你这阵子在忙什么。",
+                ],
+                "care": [
+                    "最近降温，别感冒了。",
+                    "早点休息。",
+                    "别硬撑，累了就歇会儿。",
+                ],
+                "birthday": ["生日快乐。", "生日快乐，今年顺一点。"],
+                "memory_recall": ["对了，之前那事后来怎么样了。"],
+                "open_loop_follow_up": ["之前说的事有结果了吗。"],
+            }
+        else:
+            messages = {
+                "scheduled": [
+                    f"嗨~ 突然想跟你聊聊天！你今天怎么样呀？",
+                    f"刚刚看了一个超好笑的视频，等下发给你看~",
+                    f"突然想到你了，你在干嘛呀？✨",
+                ],
+                "missing": [
+                    f"今天看到一只超可爱的猫，突然好想发给你看！",
+                    f"刚刚刷到一个超好笑的视频，等你有空发给你~",
+                    f"突然想到你了，今天过得怎么样呀？",
+                ],
+                "care": [
+                    f"最近天气忽冷忽热的，注意别感冒了哦~ 🥺",
+                    f"今天看到一朵好看的云，希望你心情也能变好~",
+                    f"不管发生什么，我都在你身边呢 💕",
+                ],
+                "birthday": [
+                    f"生日快乐呀！🎂 希望你今天特别开心！",
+                    f"生日快乐！🎉 新的一岁要更加幸福哦~",
+                ],
+                "memory_recall": [
+                    f"诶对了，我突然想起来之前那事，后来怎么样了呀？",
+                ],
+                "open_loop_follow_up": [
+                    f"诶，之前说的那事后来怎么样了呀？",
+                ],
+            }
 
         options = messages.get(trigger_type, messages["scheduled"])
         return random.choice(options)

@@ -278,12 +278,18 @@ class TestMoodAndTopic:
         ctx = await _build(_assembler(mood_engine=mood))
         assert "【当前情绪指导】" in ctx.dynamic_context
 
-    async def test_mood_style_is_skipped_when_brain_active(self):
+    async def test_mood_style_also_applies_when_brain_active(self):
+        """runtime 块与情绪风格指导是互补的，不是互斥的。
+
+        历史缺陷：这里是 `elif`，只要 brain 返回非空 runtime（深夜 / 有未闭合事件 /
+        非中性情绪都会返回），17 条情绪表达规则整块被跳过。
+        """
         from core.emotion.mood import MoodState, MoodType
         mood = FakeMoodEngine(MoodState(mood=MoodType.HAPPY, intensity=0.9))
         brain = FakeBrain(runtime_context="独白")
         ctx = await _build(_assembler(mood_engine=mood, brain=brain))
-        assert "【当前情绪指导】" not in ctx.dynamic_context
+        assert "独白" in ctx.dynamic_context
+        assert "【当前情绪指导】" in ctx.dynamic_context
 
     async def test_topic_context_is_appended(self):
         ctx = await _build(_assembler(topic_tracker=FakeTopicTracker("【话题】在聊面试")))
@@ -451,3 +457,56 @@ class TestTrimHelperRegression:
 
     def test_empty_messages(self):
         assert trim_messages_to_budget([], max_chars=100) == []
+
+
+# ---------------- 上下文窗口（max_messages）----------------
+
+
+class TestMaxMessages:
+    """`max_messages` 决定模型能看到多少条历史。
+
+    这条配置长期是死的（赋值后无读者），修复后它才真正生效 —— 于是
+    默认值直接决定「她记不记得刚才说过什么」。这里锁住三条契约：
+    0/缺省=不截断、超限时保留最近、截断后仍以当前这条用户消息结尾。
+    """
+
+    @staticmethod
+    def _history(turns: int) -> list[dict]:
+        messages = []
+        for i in range(turns):
+            messages.append({"role": "user", "content": f"第{i}句用户消息"})
+            messages.append({"role": "assistant", "content": f"第{i}句回复"})
+        return messages
+
+    async def test_zero_means_no_truncation(self) -> None:
+        messages = self._history(40)  # 80 条
+        ctx = await _build(
+            _assembler(config={"max_messages": 0}), messages=messages,
+        )
+        # 80 条历史 + 1 条插入的 system 上下文
+        assert len(ctx.request_messages) >= 80
+
+    async def test_keeps_newest_turns(self) -> None:
+        messages = self._history(40)
+        ctx = await _build(
+            _assembler(config={"max_messages": 20}), messages=messages,
+        )
+        contents = [m.get("content", "") for m in ctx.request_messages]
+        assert any("第39句用户消息" in c for c in contents)
+        assert not any("第0句用户消息" in c for c in contents)
+
+    async def test_ends_with_current_user_message(self) -> None:
+        messages = self._history(30)
+        ctx = await _build(
+            _assembler(config={"max_messages": 10}), messages=messages,
+        )
+        non_system = [m for m in ctx.request_messages if m.get("role") != "system"]
+        assert non_system[-1]["role"] == "assistant"
+
+    async def test_invalid_value_does_not_crash(self) -> None:
+        messages = self._history(5)
+        for bad in ("abc", None, 2.7):
+            ctx = await _build(
+                _assembler(config={"max_messages": bad}), messages=messages,
+            )
+            assert ctx.request_messages

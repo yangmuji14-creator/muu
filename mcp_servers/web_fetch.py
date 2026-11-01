@@ -1,4 +1,5 @@
 """MCP Web Fetch Server — 网页抓取 (SSRF 防护)"""
+import http.client
 import ipaddress
 import json
 import re
@@ -28,49 +29,64 @@ def err(rid, code, msg): _send({"jsonrpc": "2.0", "id": rid, "error": {"code": c
 
 # ── SSRF 防护 ──
 _BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
-_BLOCKED_NETS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("fc00::/7"),
-]
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
-def _is_internal_url(url: str) -> bool:
-    """检测 URL 是否指向内网地址（SSRF 防护）"""
+def _resolve_public_address(url: str) -> tuple[str, str] | None:
+    """Resolve once, reject mixed/private results, and return a pinned address."""
     try:
         parsed = urllib.parse.urlparse(url)
         host = parsed.hostname
-        if not host:
-            return False
-        # 主机名黑名单
-        host_lower = host.lower()
-        if host_lower in _BLOCKED_HOSTS:
-            return True
-        # IP 地址黑名单
+        if not host or parsed.scheme not in ("http", "https"):
+            return None
+        if host.lower() in _BLOCKED_HOSTS:
+            return None
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
         try:
-            addr = ipaddress.ip_address(host)
-            if addr.is_private or addr.is_loopback or addr.is_link_local:
-                return True
-            for net in _BLOCKED_NETS:
-                if addr in net:
-                    return True
+            addresses = [ipaddress.ip_address(host)]
         except ValueError:
-            pass  # 不是 IP 地址，跳过
-        # DNS 解析后再次检查（防止 DNS rebinding）
-        try:
-            resolved = socket.gethostbyname(host)
-            addr = ipaddress.ip_address(resolved)
-            if addr.is_private or addr.is_loopback or addr.is_link_local:
-                return True
-            for net in _BLOCKED_NETS:
-                if addr in net:
-                    return True
-        except Exception:
-            return True  # 解析失败，fail-safe
-        return False
+            results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            addresses = list(dict.fromkeys(
+                ipaddress.ip_address(result[4][0]) for result in results
+            ))
+        if not addresses or any(not address.is_global for address in addresses):
+            return None
+        return host, str(addresses[0])
     except Exception:
-        return True
+        return None
+
+
+def _is_internal_url(url: str) -> bool:
+    """检测 URL 是否未能解析为仅含公网地址的目标（SSRF 防护）"""
+    return _resolve_public_address(url) is None
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, *, address, **kwargs):
+        super().__init__(host, **kwargs)
+        self._pinned_address = address
+
+    def connect(self):
+        self.sock = socket.create_connection(
+            (self._pinned_address, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self._tunnel()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, *, address, **kwargs):
+        super().__init__(host, **kwargs)
+        self._pinned_address = address
+
+    def connect(self):
+        sock = socket.create_connection(
+            (self._pinned_address, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+            sock = self.sock
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -80,24 +96,54 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _open_public_url(request: urllib.request.Request):
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, address):
+        super().__init__()
+        self._address = address
+
+    def http_open(self, request):
+        return self.do_open(_PinnedHTTPConnection, request, address=self._address)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, address):
+        super().__init__()
+        self._address = address
+
+    def https_open(self, request):
+        return self.do_open(
+            _PinnedHTTPSConnection, request, address=self._address,
+            context=self._context,
+        )
+
+
+def _open_public_url(request: urllib.request.Request, address: str):
     """Fetch one already-validated public URL without following redirects."""
-    opener = urllib.request.build_opener(_NoRedirectHandler())
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirectHandler(),
+        _PinnedHTTPHandler(address), _PinnedHTTPSHandler(address),
+    )
     return opener.open(request, timeout=15)
+
+
+def _read_limited(response) -> bytes:
+    return response.read(_MAX_RESPONSE_BYTES + 1)[:_MAX_RESPONSE_BYTES]
+
 
 def fetch(args):
     url = args.get("url", "")
     if not url: return "请提供 URL"
     if not url.startswith(("http://", "https://")): url = "https://" + url
     # SSRF 检查
-    if _is_internal_url(url):
+    resolved = _resolve_public_address(url)
+    if resolved is None:
         return "安全限制: 不允许访问内网地址"
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
-        with _open_public_url(req) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+        with _open_public_url(req, resolved[1]) as resp:
+            html = _read_limited(resp).decode("utf-8", errors="replace")
             # 提取文本（去标签）
             text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
             text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
@@ -116,11 +162,14 @@ def search(args):
     try:
         q = urllib.parse.quote(keyword)
         url = f"https://www.bing.com/search?q={q}&mkt=zh-CN"
+        resolved = _resolve_public_address(url)
+        if resolved is None:
+            return "安全限制: 搜索服务地址不可用"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
+        with _open_public_url(req, resolved[1]) as resp:
+            html = _read_limited(resp).decode("utf-8", errors="replace")
             results = []
             for m in re.finditer(r'<li class="b_algo"[^>]*>.*?<h2[^>]*>.*?<a[^>]*>(.*?)</a>', html, re.DOTALL):
                 title = re.sub(r"<[^>]+>", "", m.group(1)).strip()

@@ -26,7 +26,7 @@ _PERSONA_DEFAULTS = {
     "music_taste": "", "food_preferences": "", "nickname_for_user": "",
     "persona_prompt": "", "output_examples": "",
     "sticker_enabled": True, "sticker_probability": 0.18,
-    "sticker_pack": "builtin",
+    "sticker_pack": "builtin", "emoji_enabled": None,
 }
 
 
@@ -86,6 +86,7 @@ class PersonaLoader:
         "background", "speaking_style", "legacy_speaking_style", "core_memories",
         "relationship_level", "system_prompt", "persona_prompt", "output_examples",
         "sticker_enabled", "sticker_probability", "sticker_pack",
+        "emoji_enabled",
         "hard_rules", "identity_anchor", "emotional_patterns", "relationship_behavior",
     "example_dialogs",
     }
@@ -105,6 +106,7 @@ class PersonaLoader:
         "pet_names", "favorite_topics", "avoided_topics", "question_tendency",
         "background", "relationship_level",
         "sticker_enabled", "sticker_probability", "sticker_pack",
+        "emoji_enabled",
     }
 
     # 高级字段（前端折叠区，需"如果不懂请保持默认"提示）

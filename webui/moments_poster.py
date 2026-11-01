@@ -69,11 +69,13 @@ class MomentsAutoPoster:
         get_settings: Callable[[], dict],
         generate_fn: Callable[..., Awaitable[str]] | None = None,
         persona_name_fn: Callable[[str], str] | None = None,
+        state_fn: Callable[[str], str] | None = None,
     ):
         self._saver = saver
         self._get_settings = get_settings
         self._generate_fn = generate_fn
         self._persona_name_fn = persona_name_fn
+        self._state_fn = state_fn
         self._last_posted_at: datetime | None = None
         self._stop = False
 
@@ -96,15 +98,30 @@ class MomentsAutoPoster:
             return None
         try:
             now = datetime.now()
+            # 朋友圈是她唯一会自己发生的行为。此前 prompt 里只有「名字 + 当前时间」，
+            # 于是 24 条全是天气、火锅、通勤 —— 换成任何一个角色都会发出同样的内容。
+            # 这里补一截「她此刻的状态」：心情、精力、最近在挂心的事。
+            state_line = ""
+            if self._state_fn is not None:
+                try:
+                    state = (self._state_fn(cfg.get("persona_id", "")) or "").strip()
+                except Exception as e:
+                    logger.debug(f"moments poster: state lookup skipped: {e}")
+                    state = ""
+                if state:
+                    state_line = f"你现在的状态：{state}\n"
             system_prompt = (
                 f"你是{persona_name}，一个有血有肉的真人。"
                 f"请以{persona_name}的身份发布一条微信朋友圈动态文案。\n"
                 f"现在是{now.strftime('%Y年%m月%d日 %H:%M')}。\n"
+                f"{state_line}"
                 f"要求：\n"
                 f"1. 像真人随手发的朋友圈，自然、有生活气息，不要 AI 味\n"
                 f"2. 只输出文案正文，不加引号、标题或前缀\n"
                 f"3. 40 字以内\n"
                 f"4. 可以适当用 emoji（别太多）\n"
+                f"5. 不要每次都写天气、吃饭、通勤。状态里提到的事优先，"
+                f"想不出具体的事就写一个很小的、只有你自己会注意到的细节\n"
             )
             text = await self._generate_fn(
                 system_prompt=system_prompt,

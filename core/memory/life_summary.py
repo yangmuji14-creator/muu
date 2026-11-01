@@ -32,6 +32,11 @@ from loguru import logger
 from core.utils import atomic_write_json, parse_json_response
 
 
+# 日记回灌 prompt 时的节选长度（字符）。实测三条日记 60–196 字，
+# 120 字足够带出一个具体场景，又不会把 300 token 的运行时预算撑爆。
+DIARY_PROMPT_SNIPPET_CHARS = 120
+
+
 def _coerce_str_list(value) -> list[str]:
     """把「可能是 JSON 数组文本 / 逗号分隔文本」的值还原成字符串列表。
 
@@ -173,23 +178,56 @@ class LifeSummary:
             summary_text=data.get("summary_text", ""),
         )
 
-    def to_prompt(self) -> str:
-        """生成摘要 prompt（新 API）"""
-        parts = ["【用户长期画像】"]
-        # The diary is a user-facing artifact, not hidden model reasoning. Only
-        # its structured facts are reused in future prompts.
+    def to_prompt(self, include_diary: bool = False) -> str:
+        """生成摘要 prompt（新 API）
+
+        ``include_diary=True`` 时额外附上最近一篇日记的**节选**。
+
+        历史行为是把 diary 整类排除（只保留结构化字段），理由是「日记是给用户
+        看的成品」。但实测三条日记全是 diary 类型、结构化字段为空，于是
+        ``get_context()`` 返回空串 —— 她写得最好的那段文字从没回到她自己
+        的上下文里。日记用的是第一人称，本来就是她的连续性，所以改为默认
+        附节选：不灌全文（省 token），也不会因为类型是 diary 就整段丢掉。
+        """
+        profile: list[str] = []
         if self.summary and self.summary_type != "diary":
-            parts.append(self.summary)
+            profile.append(self.summary)
         if self.recent_status:
-            parts.append(f"近期状态：{self.recent_status}")
+            profile.append(f"近期状态：{self.recent_status}")
         if self.current_goals:
-            parts.append(f"当前目标：{', '.join(self.current_goals)}")
+            profile.append(f"当前目标：{', '.join(self.current_goals)}")
         if self.interest_changes or self.interest_changes_list:
             items = self.interest_changes_list or [self.interest_changes]
-            parts.append(f"兴趣变化：{', '.join(items)}")
+            profile.append(f"兴趣变化：{', '.join(items)}")
         if self.emotion_trend or self.emotional_trends:
-            parts.append(f"情绪趋势：{self.emotion_trend or self.emotional_trends}")
-        return "\n".join(parts) if len(parts) > 1 else ""
+            profile.append(f"情绪趋势：{self.emotion_trend or self.emotional_trends}")
+
+        parts: list[str] = []
+        # 标题只在真有画像内容时挂：库里现在三条摘要全是 diary，画像部分为空，
+        # 单独一个「【用户长期画像】」空标题会让模型以为后面应该跟个人简介。
+        if profile:
+            parts.append("【用户长期画像】")
+            parts.extend(profile)
+        if include_diary:
+            snippet = self.diary_snippet()
+            if snippet:
+                parts.append(f"【我最近写的日记（节选）】\n{snippet}")
+        merged = "\n".join(parts).strip()
+        return merged
+
+    def diary_snippet(self, limit: int = DIARY_PROMPT_SNIPPET_CHARS) -> str:
+        """取日记开头一段，尽量在句末断开，避免 prompt 里出现半句话。"""
+        if not self.summary or self.summary_type != "diary":
+            return ""
+        text = " ".join(self.summary.split())
+        if len(text) <= limit:
+            return text
+        cut = text[:limit]
+        for separator in ("。", "！", "？", "…"):
+            index = cut.rfind(separator)
+            if index >= limit // 2:
+                return cut[: index + 1]
+        return cut + "…"
 
     def to_prompt_section(self) -> str:
         """生成 Prompt 段落（旧 API）"""
@@ -436,14 +474,21 @@ class LifeSummaryEngine:
         return summary
 
     def get_context(self, user_id: str, persona_id: str = "") -> str:
-        """Return compact structured context, never the full private diary."""
+        """Return compact context for the next prompt, including a diary snippet.
+
+        以前的注释写着「never the full private diary」，于是整类 diary 被排除。
+        但实测库里的三条摘要全部是 diary、结构化字段为空，`to_prompt()` 因此
+        返回空串 —— 她写过的日记一次都没进过自己的上下文。现在改为带上
+        节选（`DIARY_PROMPT_SNIPPET_CHARS` 字），既保留隐私边界（不给全文），
+        也不再让「她自己的连续性」这一块整个缺席。
+        """
         latest = self._sqlite_storage.load_latest(user_id, persona_id)
         if latest is not None:
-            return latest.to_prompt()
+            return latest.to_prompt(include_diary=True)
         summary = self.load(user_id)
         if summary.message_count < 50:
             return ""
-        return summary.to_prompt()
+        return summary.to_prompt(include_diary=True)
 
     def should_generate(
         self,

@@ -120,11 +120,40 @@ class EmotionEnhancer:
     2. 基于 MoodState（AI 持久情绪）— v3.5 新模式
     """
 
+    # 非中性情绪下，回复末尾带表情的比例。
+    # 曾经是「只要不是 neutral 就必挂一个」——真人不会每句话都以表情结尾，
+    # 尤其难过的时候，那是最假的地方。
+    DECORATION_PROBABILITY = 0.45
+    # 低于此强度视为没有情绪，不装饰
+    MIN_INTENSITY = 0.3
+    # 效价低于此值（难过/烦躁）时不加装饰性表情
+    NEGATIVE_VALENCE_CUTOFF = -0.2
+
+    @classmethod
+    def should_decorate(
+        cls,
+        mood_state: "MoodState | None",
+        allow_emoji: bool = True,
+    ) -> bool:
+        """判断这条回复是否允许在末尾追加表情。
+
+        这是硬闸门，先于随机：不允许就直接返回 False，不消耗随机数，
+        测试也可以直接断言而不必 mock random。
+        """
+        if not allow_emoji or mood_state is None:
+            return False
+        if getattr(mood_state, "intensity", 0.0) < cls.MIN_INTENSITY:
+            return False
+        if getattr(mood_state, "valence", 0.0) <= cls.NEGATIVE_VALENCE_CUTOFF:
+            return False
+        return random.random() < cls.DECORATION_PROBABILITY
+
     @staticmethod
     def enhance_reply(
         reply: str,
         emotion: EmotionResult | None = None,
         mood_state: "MoodState | None" = None,
+        allow_emoji: bool = True,
     ) -> str:
         """根据情感在回复中添加 emoji
 
@@ -135,6 +164,7 @@ class EmotionEnhancer:
             reply: 原始回复
             emotion: 用户情感分析结果（向后兼容）
             mood_state: AI 当前 MoodState（v3.5）
+            allow_emoji: 该人设是否允许追加表情（人设显式关闭时为 False）
 
         Returns:
             增强后的回复
@@ -162,10 +192,10 @@ class EmotionEnhancer:
                 MT.GRATEFUL: EmotionType.HAPPY,
             }
             mapped = mood_to_emotion.get(mood_state.mood, EmotionType.NEUTRAL)
-            if mood_state.intensity < 0.2:
+            if not EmotionEnhancer.should_decorate(mood_state, allow_emoji=allow_emoji):
                 return reply
             emojis = EMOTION_EMOJI_MAP.get(mapped, [])
-            if emojis and mood_state.intensity >= 0.3:
+            if emojis:
                 # 判重必须对整个池子做，不能只看 random 挑中的那一个 ——
                 # 否则回复里已经带了 😊，随机又挑中 ✨，尾巴上就会挂两个表情。
                 # 降级路径（EmotionResult）用的就是 any(...)，这里保持一致。

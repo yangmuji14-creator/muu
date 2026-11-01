@@ -44,6 +44,10 @@ class Persona(BaseModel):
     catchphrases: list[str] = Field(default_factory=list)
     filler_words: list[str] = Field(default_factory=list)
     emoji_habits: str = ""
+    # 是否允许后处理往回复末尾追加 emoji/颜文字。
+    # None = 按情绪自动判断（默认），False = 该角色从不追加，True = 强制允许。
+    # 这是显式开关：不要再靠模型名或人设文本猜。
+    emoji_enabled: bool | None = None
     speech_rhythm: str = ""
     nickname_for_user: str = ""
 

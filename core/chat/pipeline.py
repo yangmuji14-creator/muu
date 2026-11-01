@@ -28,6 +28,15 @@ _TRIVIAL_REPLIES = {
 }
 
 
+def _persona_allows_emoji(persona) -> bool:
+    """该人设是否允许回复末尾追加 emoji/颜文字。
+
+    实现收敛在 core.persona.emoji_policy —— 主动消息的兜底文案也读
+    同一份判断，避免两处各写一套口吻。
+    """
+    return persona_allows_emoji(persona)
+
+
 def _worth_extracting(content: str) -> bool:
     """判断是否值得为这条用户消息跑一次 LLM 记忆提取。
 
@@ -45,9 +54,14 @@ def _worth_extracting(content: str) -> bool:
 
 from core.config import parse_uid
 from core.emotion import EmotionEnhancer
+from core.emotion.constraint import (
+    DEFAULT_REPLY_TOKEN_BUDGET,
+    build_output_constraint,
+)
 from core.dialogue import PersonaConsistencyChecker, DialogueThinker, TopicTracker
 from core.memory import MemorySummarizer
 from core.persona import PromptBuilder
+from core.persona.emoji_policy import persona_allows_emoji
 from core.social.relationship.events import RelationshipEventTracker
 from core.persona.drift_monitor import PersonaDriftMonitor
 from core.social.affection.storage import UnifiedAffectionStorage
@@ -380,6 +394,14 @@ class ChatPipeline:
                             )
                         break
 
+        # 回复预算：精力低时收窄 max_tokens，而不是只在 prompt 里请求「说短点」。
+        # 这是唯一模型没法演的约束层 —— 它拿到的不是形容词，是硬上限。
+        reply_budget = build_output_constraint(
+            self._mood_engine.get_mood(memory_user_id) if self._mood_engine else None,
+            budget=int(self._config.get("reply_token_budget", DEFAULT_REPLY_TOKEN_BUDGET)),
+            configured_max_tokens=getattr(self._llm, "max_tokens", None),
+        ).max_tokens
+
         # LLM 调用（含工具循环 + 错误隔离）
         async def _generate_reply() -> str:
             started = monotonic()
@@ -388,6 +410,7 @@ class ChatPipeline:
                     on_event("phase", {"name": "thinking", "label": "正在思考"})
                 reply_text = await self._llm_call_with_tools(
                     request_messages, stable_prompt, on_token, on_event,
+                    max_tokens=reply_budget,
                 )
                 runtime_metrics.record(
                     "pipeline.reply", (monotonic() - started) * 1000,
@@ -449,7 +472,11 @@ class ChatPipeline:
         sticker_meta = None
         if self._mood_engine:
             mood_state_for_emoji = self._mood_engine.get_mood(memory_user_id)
-        reply = EmotionEnhancer.enhance_reply(reply, mood_state=mood_state_for_emoji)
+        reply = EmotionEnhancer.enhance_reply(
+            reply,
+            mood_state=mood_state_for_emoji,
+            allow_emoji=_persona_allows_emoji(persona),
+        )
 
         # Image stickers are optional presentation metadata. They never enter
         # the model context and are selected locally from the current mood.
@@ -532,19 +559,23 @@ class ChatPipeline:
 
     async def _llm_call_with_tools(
         self, messages, system_prompt, on_token=None, on_event=None,
+        max_tokens: int | None = None,
     ) -> str:
         """LLM 调用 + 工具调用循环（委托给 ToolCallHandler）"""
         return await call_llm_with_tools(
             self, messages, system_prompt, on_token, on_event,
+            max_tokens=max_tokens,
         )
 
     async def _llm_call(
         self, messages, system_prompt, on_token=None, on_event=None,
+        max_tokens: int | None = None,
     ) -> str:
         """流式或非流式 LLM 调用"""
         try:
             response = await self._llm_call_response(
                 messages, system_prompt, on_token, on_event=on_event,
+                max_tokens=max_tokens,
             )
             return response.content
         except Exception as e:
@@ -558,14 +589,20 @@ class ChatPipeline:
         on_token=None,
         tools: list[dict] | None = None,
         on_event=None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
-        """Return normalized content and native tool-call metadata."""
+        """Return normalized content and native tool-call metadata.
+
+        ``max_tokens`` 是本次回复的解码上限（由 ``build_output_constraint``
+        按情绪算出）。给 None 时沿用模型配置值，保持所有非聊天调用方不变。
+        """
+        budget_kwargs = {"max_tokens": max_tokens} if max_tokens else {}
         if on_token:
             if hasattr(self._llm, "chat_stream_events"):
                 reply_parts: list[str] = []
                 tool_calls: list[dict] = []
                 reply_phase_emitted = False
-                event_kwargs = {}
+                event_kwargs = dict(budget_kwargs)
                 if tools:
                     event_kwargs.update({"tools": tools, "tool_choice": "auto"})
                 async for event in self._llm.chat_stream_events(
@@ -595,7 +632,7 @@ class ChatPipeline:
             if on_event:
                 on_event("phase", {"name": "reply", "label": "生成回复"})
             async for token in self._llm.chat_stream(
-                messages=messages, system_prompt=system_prompt
+                messages=messages, system_prompt=system_prompt, **budget_kwargs,
             ):
                 on_token(token)
                 if on_event:
@@ -606,7 +643,7 @@ class ChatPipeline:
                 model=getattr(self._llm, "model_name", ""),
             )
 
-        call_kwargs = {}
+        call_kwargs = dict(budget_kwargs)
         if tools:
             call_kwargs.update({"tools": tools, "tool_choice": "auto"})
         return await self._llm.chat(
