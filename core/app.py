@@ -277,6 +277,7 @@ class ComponentBuilder:
             llm=_llm,
             persona_loader=persona_loader,
             memory_mgr=memory_mgr,
+            mood_engine=mood_manager,
         )
 
         # 注入 LLM 生成器到 ProactiveMessenger（用于主动消息的实时生成）
