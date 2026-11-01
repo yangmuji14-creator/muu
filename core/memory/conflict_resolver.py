@@ -225,25 +225,30 @@ class MemoryConflictResolver:
            用户说「我不喜欢猫」，旧记忆「我喜欢猫」就永远不会被取代。
         """
         for pos, neg, conflict_type in MemoryConflictResolver.ANTONYM_PAIRS:
-            if (pos in content_a and neg in content_b) or \
-               (neg in content_a and pos in content_b):
-                if MemoryConflictResolver._is_double_negated(content_a, neg):
-                    continue
-                if MemoryConflictResolver._is_double_negated(content_b, neg):
-                    continue
-                # 语境核验：词对命中只说明两句话里出现了这对反义字，
-                # 不说明说的是同一件事。实测误判——「我关心团子，会主动
-                # 问起」vs「头发不会马上吹干」因「会/不会」被判偏好翻供，
-                # 一条与团子有关的记忆被静默顶掉。要求两边冲突词的
-                # 上下文窗口有 ≥2 字公共子串（同一件事的翻供通常复述
-                # 宾语），否则跳过这组词对。
-                word_a = pos if pos in content_a else neg
-                word_b = neg if word_a == pos else pos
-                if not MemoryConflictResolver._windows_overlap(
-                    content_a, word_a, content_b, word_b,
-                ):
-                    continue
-                return conflict_type
+            # 词对命中组合决定各自的冲突词：注意 neg 包含 pos 作为子串
+            # （"不喜欢" contains "喜欢"），`pos in a` 在 neg 命中的时候
+            # 也恒为真 —— 必须按「哪个词在哪家」分别取，否则窗口会取空。
+            if pos in content_a and neg in content_b:
+                word_a, word_b = pos, neg
+            elif neg in content_a and pos in content_b:
+                word_a, word_b = neg, pos
+            else:
+                continue
+            if MemoryConflictResolver._is_double_negated(content_a, neg):
+                continue
+            if MemoryConflictResolver._is_double_negated(content_b, neg):
+                continue
+            # 语境核验：词对命中只说明两句话里出现了这对反义字，
+            # 不说明说的是同一件事。实测误判——「我关心团子，会主动
+            # 问起」vs「头发不会马上吹干」因「会/不会」被判偏好翻供，
+            # 一条与团子有关的记忆被静默顶掉。要求两边冲突词的
+            # 上下文窗口有实词交集（同一件事的翻供通常复述宾语），
+            # 否则跳过这组词对。
+            if not MemoryConflictResolver._windows_overlap(
+                content_a, word_a, content_b, word_b,
+            ):
+                continue
+            return conflict_type
         return None
 
     # 汉字年级（「大一 / 大二」不写阿拉伯数字，数字正则抓不到）
