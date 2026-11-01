@@ -495,9 +495,13 @@ class ChatPipeline:
             if sticker_meta and on_event:
                 on_event("sticker", sticker_meta)
 
-        # 保存回复
+        # 保存回复 —— 带上当时的 mood 强度：这是「情绪→长度相关性」指标的
+        # 数据源（tools/measure_vitality.py），此前 assistant 落库不带情绪标注，
+        # 该指标永远算不出来（2026-11-01 基线实测的缺口）。
         self._chat_history.add_message(
             memory_user_id, "assistant", reply,
+            emotion=getattr(getattr(mood_state_for_emoji, "mood", None), "value", "neutral"),
+            emotion_intensity=getattr(mood_state_for_emoji, "intensity", None),
             platform=parsed_uid["platform"],
             persona_id=persona_id,
             account_id=parsed_uid["account_id"],

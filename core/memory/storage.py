@@ -79,6 +79,7 @@ class MemoryStorage:
                     confidence     REAL NOT NULL DEFAULT 0.5,
                     forget_score   REAL NOT NULL DEFAULT 0.0,
                     archived       INTEGER NOT NULL DEFAULT 0,
+                    subject        TEXT NOT NULL DEFAULT 'user',
                     PRIMARY KEY (user_id, id)
                 )
             """)
@@ -114,6 +115,9 @@ class MemoryStorage:
             ("confidence", "REAL NOT NULL DEFAULT 0.5"),
             ("forget_score", "REAL NOT NULL DEFAULT 0.0"),
             ("archived", "INTEGER NOT NULL DEFAULT 0"),
+            # subject：这条记忆说的是「谁」。存量全部是提取通道写的「关于他」，
+            # 默认 'user' 即完成回填，无需单独脚本。
+            ("subject", "TEXT NOT NULL DEFAULT 'user'"),
         )
         added: list[str] = []
         for name, decl in additions:
@@ -212,8 +216,8 @@ class MemoryStorage:
             """INSERT OR REPLACE INTO memories
                (user_id, id, content, level, category, created_at,
                 last_accessed, access_count, tags, source, related_ids, superseded_by,
-                confidence, forget_score, archived)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, forget_score, archived, subject)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 uid, memory.id, memory.content, memory.level,
                 memory.category, memory.created_at, memory.last_accessed,
@@ -222,6 +226,7 @@ class MemoryStorage:
                 memory.superseded_by,
                 float(memory.confidence), float(memory.forget_score),
                 1 if memory.archived else 0,
+                getattr(memory, "subject", "user") or "user",
             ),
         )
 
@@ -429,6 +434,7 @@ class MemoryStorage:
             confidence=float(_opt("confidence", 0.5) or 0.5),
             forget_score=float(_opt("forget_score", 0.0) or 0.0),
             archived=bool(_opt("archived", 0)),
+            subject=str(_opt("subject", "user") or "user"),
         )
 
     def close(self):

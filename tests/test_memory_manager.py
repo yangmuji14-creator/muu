@@ -488,3 +488,42 @@ class TestArchivedVisibility:
         m._storage.save("u1", [mem])
         assert m.get_context_prompt("u1", query="团子") == ""
 
+
+
+# --------------------------------------------------------------------------- #
+# 反义词冲突的语境核验（2026-11-01 实测误杀回归）
+# --------------------------------------------------------------------------- #
+
+
+class TestAntonymContextGate:
+    """`("会","不会")` 这类词对做的是字符级子串匹配，实测把
+    「我关心团子，会主动问起」和「头发不会马上吹干」判成偏好翻供——
+    一条与团子有关的 self 记忆被静默顶掉。语境核验要求两边冲突词的
+    上下文窗口有 ≥2 字公共子串：真翻供复述宾语，巧合没有。"""
+
+    def _resolver(self):
+        from core.memory.conflict_resolver import MemoryConflictResolver
+        return MemoryConflictResolver()
+
+    def _detect(self, new_content, old_content, category="preference"):
+        from core.memory.models import Memory
+        return self._resolver().detect_conflict(
+            Memory(id="new", content=new_content, level=3, category=category),
+            [Memory(id="old", content=old_content, level=2, category=category)],
+        )
+
+    def test_real_flip_still_detected(self):
+        assert self._detect("我会去参加他的毕业典礼。", "我不会去参加他的毕业典礼。") is not None
+
+    def test_preference_flip_still_detected(self):
+        assert self._detect("我喜欢吃辣。", "我不喜欢吃辣。") is not None
+
+    def test_unrelated_context_not_flagged(self):
+        """实测误杀对：完全无关的两件事共享「会/不会」字。"""
+        assert self._detect(
+            "我关心团子有没有趴在他腿上，会主动问起。",
+            "我洗完澡后头发常常还是湿的，不会马上吹干。",
+        ) is None
+
+    def test_unrelated_coincidence_not_flagged(self):
+        assert self._detect("他会弹吉他。", "这本书不会让他失望。") is None

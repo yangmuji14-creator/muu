@@ -73,6 +73,11 @@ class Memory:
     forget_score: float = 0.0  # 遗忘分数（越高越容易被归档）
     archived: bool = False  # 是否已归档（不再参与检索）
 
+    # 这条记忆说的是「谁」：user=关于他，self=关于她，shared=关于两个人。
+    # 历史缺陷：提取通道只记「他」，她的偏好（"我最喜欢的季节是秋天"）没有
+    # 写入通道，同一事实以两种主语存成两条互相不知道对方的记忆。
+    subject: str = "user"
+
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "id": self.id,
@@ -93,6 +98,8 @@ class Memory:
             result["superseded_by"] = self.superseded_by
         if self.source != "auto":
             result["source"] = self.source
+        if self.subject != "user":
+            result["subject"] = self.subject
         return result
 
     @classmethod
@@ -112,6 +119,7 @@ class Memory:
             confidence=data.get("confidence", 0.5),
             forget_score=data.get("forget_score", 0.0),
             archived=data.get("archived", False),
+            subject=data.get("subject", "user"),
         )
 
     def touch(self) -> None:
