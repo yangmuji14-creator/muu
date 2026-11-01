@@ -54,8 +54,12 @@ def _installation_id() -> str:
 
 
 def _save_settings(settings: dict) -> None:
-    """原子写入 settings.json。"""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    """原子写入 settings.json。
+
+    mkdir 的必须是目标文件的父目录而不是 CONFIG_DIR —— 两者在源码模式
+    相同，但测试/打包场景替换 SETTINGS_PATH 后前者创建的目录是错的。
+    """
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8"
