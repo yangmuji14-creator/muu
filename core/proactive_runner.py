@@ -57,6 +57,7 @@ class ProactiveRunner:
         deliver: Callable[[ProactiveTarget, str], Awaitable[bool]],
         tick_seconds: int = 120,
         quiet_minutes: int = 15,
+        internal_source=None,
     ) -> None:
         self._proactive = proactive
         self._store = conversation_store
@@ -65,6 +66,9 @@ class ProactiveRunner:
         self._deliver = deliver
         self._tick_seconds = max(30, int(tick_seconds))
         self._quiet_minutes = max(0, int(quiet_minutes))
+        # 情绪内生源（可选）：每轮对所有目标施加「未闭合话题压力 / 孤独感」
+        # 偏移，自带 10 分钟节流。这是「没有用户输入时她也会变化」的那一层。
+        self._internal_source = internal_source
         self._stop = False
         self._task: asyncio.Task | None = None
 
@@ -185,8 +189,19 @@ class ProactiveRunner:
         if not getattr(self._proactive, "enabled", False):
             return []
 
+        targets = self.iter_targets()
+
+        # 情绪内生源先跑：主动消息的触发判断（比如心情低落少开口）
+        # 应该读到这里面生源刚更新过的状态，而不是上一轮的。
+        if self._internal_source is not None:
+            for target in targets:
+                try:
+                    self._internal_source.tick(target.scope_id or target.user_id)
+                except Exception as e:
+                    logger.debug(f"Internal mood source failed for {target.user_id}: {e}")
+
         delivered: list[str] = []
-        for target in self.iter_targets():
+        for target in targets:
             if self._is_quiet(target):
                 continue
             try:
