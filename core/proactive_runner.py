@@ -58,6 +58,7 @@ class ProactiveRunner:
         tick_seconds: int = 120,
         quiet_minutes: int = 15,
         internal_source=None,
+        vitality_monitor=None,
     ) -> None:
         self._proactive = proactive
         self._store = conversation_store
@@ -69,6 +70,8 @@ class ProactiveRunner:
         # 情绪内生源（可选）：每轮对所有目标施加「未闭合话题压力 / 孤独感」
         # 偏移，自带 10 分钟节流。这是「没有用户输入时她也会变化」的那一层。
         self._internal_source = internal_source
+        # 回复自锁监控（可选）：随每轮巡检，内部按新增消息数节流
+        self._vitality_monitor = vitality_monitor
         self._stop = False
         self._task: asyncio.Task | None = None
 
@@ -199,6 +202,13 @@ class ProactiveRunner:
                     self._internal_source.tick(target.scope_id or target.user_id)
                 except Exception as e:
                     logger.debug(f"Internal mood source failed for {target.user_id}: {e}")
+
+        if self._vitality_monitor is not None:
+            for target in targets:
+                try:
+                    self._vitality_monitor.check(target.scope_id or target.user_id)
+                except Exception as e:
+                    logger.debug(f"Vitality check failed for {target.user_id}: {e}")
 
         delivered: list[str] = []
         for target in targets:

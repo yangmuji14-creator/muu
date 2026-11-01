@@ -365,9 +365,14 @@ async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> 
         # 情绪内生源：没有用户输入时她也会变化（未闭合话题压力 / 孤独感）。
         # 纯代码零模型调用，随调度循环每轮施加（自带 10 分钟节流）。
         from core.emotion.internal_source import InternalMoodSource
+        from core.runtime.vitality_monitor import VitalityMonitor
         internal_source = InternalMoodSource(
             mood_engine=app_components.mood_manager,
             open_loop=app_components.open_loop,
+            chat_history=app_components.chat_history,
+        )
+        vitality_monitor = VitalityMonitor(
+            memory_manager=app_components.memory_mgr,
             chat_history=app_components.chat_history,
         )
 
@@ -386,6 +391,7 @@ async def run_web(app_components, host: str = "127.0.0.1", port: int = 8000) -> 
                 .get("proactive_quiet_minutes", 15)
             ),
             internal_source=internal_source,
+            vitality_monitor=vitality_monitor,
         )
         app_components.proactive_runner = runner
         runner.start()
