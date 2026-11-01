@@ -186,11 +186,15 @@ async def call_llm_with_tools(
     system_prompt: str,
     on_token=None,
     on_event=None,
+    max_tokens: int | None = None,
 ) -> str:
     """LLM 调用 + 工具调用循环（本地 + MCP）
 
     如果 LLM 回复中包含工具调用，执行工具并将结果喂回，
     最多进行 1 轮工具调用（防止无限循环）。
+
+    ``max_tokens`` 逐层透传到每一次模型调用：工具循环里的第二次调用
+    同样受同一个预算约束，否则「按情绪收窄长度」会被一次工具调用绕过。
     """
     tool_registry = pipeline._tool_registry
     mcp_manager = getattr(pipeline, '_mcp_manager', None)
@@ -198,7 +202,9 @@ async def call_llm_with_tools(
     has_mcp = mcp_manager and mcp_manager.tools_count > 0
 
     if not has_local and not has_mcp:
-        return await pipeline._llm_call(messages, system_prompt, on_token)
+        return await pipeline._llm_call(
+            messages, system_prompt, on_token, max_tokens=max_tokens,
+        )
 
     schemas = build_tool_schemas(tool_registry, mcp_manager)
     native_response = None
@@ -211,6 +217,8 @@ async def call_llm_with_tools(
             }
             if on_event is not None:
                 response_kwargs["on_event"] = on_event
+            if max_tokens:
+                response_kwargs["max_tokens"] = max_tokens
             native_response = await pipeline._llm_call_response(
                 messages, system_prompt, **response_kwargs,
             )
@@ -235,7 +243,9 @@ async def call_llm_with_tools(
         reply = native_response.content
         tool_name, params = text_fallback_calls[0]
     else:
-        reply = await pipeline._llm_call(messages, system_prompt, on_token)
+        reply = await pipeline._llm_call(
+            messages, system_prompt, on_token, max_tokens=max_tokens,
+        )
         tool_calls = parse_tool_call(reply)
         if not tool_calls:
             return reply
@@ -293,10 +303,11 @@ async def call_llm_with_tools(
         if on_event:
             return await pipeline._llm_call(
                 follow_up_messages, system_prompt,
-                on_token=on_token, on_event=on_event,
+                on_token=on_token, on_event=on_event, max_tokens=max_tokens,
             )
         return await pipeline._llm_call(
             follow_up_messages, system_prompt, on_token=on_token,
+            max_tokens=max_tokens,
         )
 
     follow_up_messages = [
@@ -304,4 +315,6 @@ async def call_llm_with_tools(
         {"role": "assistant", "content": reply},
         {"role": "system", "content": tool_feedback},
     ]
-    return await pipeline._llm_call(follow_up_messages, system_prompt, on_token=None)
+    return await pipeline._llm_call(
+        follow_up_messages, system_prompt, on_token=None, max_tokens=max_tokens,
+    )

@@ -17,6 +17,7 @@ import pytest
 
 from core.config import build_memory_scope_uid, build_web_uid, build_wechat_uid
 from webui.routes import common
+from webui.routes import moments_store
 
 
 class TestIdGeneration:
@@ -219,6 +220,13 @@ class TestResolveUserIdFromConversation:
 
 
 class TestMemoryScopeFromConversation:
+    """网页端状态按「角色」隔离，不按「会话」隔离。
+
+    历史行为：每个新会话一套独立的记忆/情绪/人格/亲密度，等于换一个人。
+    实测库里因此有 8 套互不相通的状态，主力那套（95 亲密度 / 182 条历史）
+    仅因为换了会话就整块失踪。这个类锁住「不再分片」这条契约。
+    """
+
     def test_no_conversation(self):
         assert common._memory_scope_from_conversation(None, None, "u1", "p1") is None
 
@@ -231,33 +239,43 @@ class TestMemoryScopeFromConversation:
         comps = SimpleNamespace(conversation_store=_FakeStore({"conv_1": binding}))
         assert common._memory_scope_from_conversation("conv_1", comps, "web_user", "p1") is None
 
-    def test_real_binding_gets_scope(self):
+    def test_real_binding_has_no_extra_scope(self):
+        """状态键回落到 user_id（web::<persona>），不再叠 scope_<hash>。"""
         binding = SimpleNamespace(platform="web", account_id="web", contact_id="c", persona_id="p1")
         comps = SimpleNamespace(conversation_store=_FakeStore({"conv_6": binding}))
-        scope = common._memory_scope_from_conversation("conv_6", comps, "web::p1", "p1")
-        assert scope == build_memory_scope_uid("web::p1", "p1", "conv_6")
-        assert scope.startswith("scope_")
+        assert common._memory_scope_from_conversation("conv_6", comps, "web::p1", "p1") is None
 
     def test_missing_binding_has_no_scope(self):
         comps = SimpleNamespace(conversation_store=_FakeStore({}))
         assert common._memory_scope_from_conversation("conv_x", comps, "u1", "p1") is None
 
-    def test_scopes_differ_per_conversation(self):
+    def test_scopes_do_not_differ_per_conversation(self):
+        """同一角色开两个会话，必须是同一个人。"""
         binding = SimpleNamespace(platform="web", account_id="web", contact_id="c", persona_id="p1")
         comps = SimpleNamespace(conversation_store=_FakeStore({"conv_6": binding, "conv_7": binding}))
-        a = common._memory_scope_from_conversation("conv_6", comps, "u", "p1")
-        b = common._memory_scope_from_conversation("conv_7", comps, "u", "p1")
-        assert a != b
+        a = common._memory_scope_from_conversation("conv_6", comps, "web::p1", "p1")
+        b = common._memory_scope_from_conversation("conv_7", comps, "web::p1", "p1")
+        assert a == b is None
 
 
 class TestResolveScopedUserId:
-    def test_returns_scope_for_real_binding(self):
+    def test_returns_role_uid_for_real_binding(self):
         binding = SimpleNamespace(platform="web", account_id="web", contact_id="c", persona_id="p1")
         comps = SimpleNamespace(conversation_store=_FakeStore({"conv_6": binding}))
         uid, conv, persona = common._resolve_scoped_user_id("conv_6", comps)
-        assert uid.startswith("scope_")
+        assert uid == build_web_uid("p1")
         assert conv == "conv_6"
         assert persona == "p1"
+
+    def test_two_conversations_share_one_identity(self):
+        """这是本次改动的核心：换会话不换人。"""
+        binding = SimpleNamespace(platform="web", account_id="web", contact_id="c", persona_id="p1")
+        comps = SimpleNamespace(
+            conversation_store=_FakeStore({"conv_6": binding, "conv_7": binding}),
+        )
+        first, _, _ = common._resolve_scoped_user_id("conv_6", comps)
+        second, _, _ = common._resolve_scoped_user_id("conv_7", comps)
+        assert first == second == build_web_uid("p1")
 
     def test_returns_plain_uid_for_legacy(self):
         binding = SimpleNamespace(platform="web", account_id="", contact_id="default", persona_id="p1")
@@ -326,8 +344,14 @@ class TestGuardClientIdentity:
 class TestMomentsStorage:
     @pytest.fixture
     def moments_path(self, tmp_path, monkeypatch):
+        """patch 实现模块而不是 common 门面。
+
+        `_MOMENTS_PATH` 的实现搬进 `moments_store` 后，`common._MOMENTS_PATH`
+        只是 re-export 的副本 —— patch 门面影响不了 `_load_moments()` 实际读的
+        模块级变量，这是拆 facade 时最容易踩的坑。
+        """
         path = tmp_path / "moments.json"
-        monkeypatch.setattr(common, "_MOMENTS_PATH", path)
+        monkeypatch.setattr(moments_store, "_MOMENTS_PATH", path)
         return path
 
     def test_load_missing_returns_empty(self, moments_path):
@@ -358,7 +382,7 @@ class TestMomentsStorage:
 
     def test_save_creates_parent_dir(self, tmp_path, monkeypatch):
         path = tmp_path / "nested" / "moments.json"
-        monkeypatch.setattr(common, "_MOMENTS_PATH", path)
+        monkeypatch.setattr(moments_store, "_MOMENTS_PATH", path)
         common._save_moments([{"id": "x"}])
         assert path.exists()
 

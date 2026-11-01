@@ -190,7 +190,12 @@ class PromptContextAssembler:
                 extra_parts.append(f"对方似乎在{intent}，注意语气。")
         if brain_active:
             extra_parts.insert(0, runtime_state)
-        elif self._mood_engine:
+        # 这里曾经是 `elif`：只要 brain 返回了非空的 runtime 块（深夜、有未闭合事件、
+        # 或者情绪不是 neutral 时都会返回），整段情绪风格指导就被跳过。结果是
+        # 「有心事的夜里，模型收到一句环境念头，却收不到任何情绪表达规则」。
+        # 两者是互补而非互斥的：runtime 块回答「此刻发生了什么」，风格指导回答
+        # 「这种状态下话该怎么说」，所以两段都要发。
+        if self._mood_engine:
             mood_state = self._mood_engine.get_mood(user_id)
             style_hint = MoodExpressionEngine.get_style_instructions(mood_state)
             extra_parts.append(build_fused_style(persona, mood_state, style_hint))

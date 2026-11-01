@@ -170,6 +170,8 @@ python -m tools.fetch_embedding_model   # 自动从 ModelScope / hf-mirror / HF 
 ```bash
 git clone https://github.com/yangmuji14-creator/muu.git
 cd muu
+cp .env.example .env
+# Edit .env and set MU_WEB_AUTH_USER plus a long random MU_WEB_AUTH_PASSWORD.
 docker compose up -d
 ```
 
@@ -196,7 +198,7 @@ python main.py restore <备份文件>
 python main.py doctor       # 环境自检：Python / 依赖 / 目录 / 端口 / 模型 / 语义记忆
 ```
 
-环境变量：`MU_WEB_HOST`（默认 `127.0.0.1`）、`MU_WEB_PORT`（默认 `8000`）。
+环境变量：`MU_WEB_HOST`（默认 `127.0.0.1`）、`MU_WEB_PORT`（默认 `8000`）。绑定到非本机地址时，必须设置 `MU_WEB_AUTH_USER` 和至少 16 个字符的 `MU_WEB_AUTH_PASSWORD`；否则 WebUI 会拒绝启动。Docker 部署也必须设置这两个变量。HTTP Basic 认证不加密网络流量，跨设备或公网访问时应放在启用 HTTPS 的反向代理后。
 
 > 卡住了先跑 `python main.py doctor`，它会逐项告诉你缺什么——包括语义记忆是「已启用」还是「降级成关键词匹配」。
 

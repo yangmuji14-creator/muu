@@ -39,8 +39,10 @@ def _result(kind: EmotionType, intensity: float = 0.8) -> EmotionResult:
 
 @pytest.fixture()
 def fixed_choice(monkeypatch):
-    """把 `random.choice` 固定成「取第一个」，让 emoji 断言可复现。"""
+    """固定随机源，让 emoji 断言可复现：
+    `choice` 取第一个，`random()` 恒 0.0（因此总是通过装饰概率闸）。"""
     monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+    monkeypatch.setattr(random, "random", lambda: 0.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -365,3 +367,44 @@ class TestEnergyBar:
     def test_over_one_overflows(self) -> None:
         """`'░' * 负` 是空串，所以只有 `█` 那一半溢出。"""
         assert len(MoodExpressionEngine.get_energy_bar(1.5)) == 15
+
+
+# --------------------------------------------------------------------------- #
+# EmotionEnhancer.should_decorate —— 装饰闸门
+# --------------------------------------------------------------------------- #
+
+
+class TestShouldDecorate:
+    """表情是唯一可见的情绪出口，所以它的闸门必须可解释、可断言。
+
+    历史行为是「只要不是 neutral 就必挂一个」，难过时也一样 —— 那是最假的地方。
+    """
+
+    def test_negative_valence_never_decorates(self, fixed_choice) -> None:
+        mood = MoodState(mood=MoodType.SAD, valence=-0.6, arousal=0.2, intensity=0.8)
+        assert EmotionEnhancer.should_decorate(mood) is False
+        assert EmotionEnhancer.enhance_reply("有点累。", mood_state=mood) == "有点累。"
+
+    def test_positive_valence_may_decorate(self, fixed_choice) -> None:
+        mood = MoodState(mood=MoodType.HAPPY, valence=0.7, arousal=0.5, intensity=0.8)
+        assert EmotionEnhancer.should_decorate(mood) is True
+
+    def test_low_intensity_never_decorates(self, fixed_choice) -> None:
+        mood = MoodState(mood=MoodType.HAPPY, valence=0.7, intensity=0.2)
+        assert EmotionEnhancer.should_decorate(mood) is False
+
+    def test_persona_can_disable_entirely(self, fixed_choice) -> None:
+        mood = MoodState(mood=MoodType.HAPPY, valence=0.9, intensity=1.0)
+        assert EmotionEnhancer.should_decorate(mood, allow_emoji=False) is False
+        assert EmotionEnhancer.enhance_reply(
+            "你好", mood_state=mood, allow_emoji=False,
+        ) == "你好"
+
+    def test_probability_gate_can_skip(self, monkeypatch) -> None:
+        """非中性也不该每条都挂：随机闸不过就返回原文。"""
+        monkeypatch.setattr(random, "random", lambda: 0.99)
+        mood = MoodState(mood=MoodType.HAPPY, valence=0.9, intensity=1.0)
+        assert EmotionEnhancer.should_decorate(mood) is False
+
+    def test_none_mood_never_decorates(self) -> None:
+        assert EmotionEnhancer.should_decorate(None) is False

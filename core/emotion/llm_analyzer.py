@@ -116,6 +116,8 @@ def parse_enriched_output(json_str: str) -> dict:
 def _default_enriched() -> dict:
     """返回默认的丰富分析结果（解析失败时的回退值）。"""
     return {
+        "emotion": "",
+        "intensity": None,
         "emotion_understanding": "",
         "emotional_needs": [],
         "affection_impact": {
@@ -253,6 +255,8 @@ class LLMEmotionAnalyzer:
 
 以 JSON 格式输出：
 {{
+  "emotion": "最贴近的一个，只能从这八个里选：开心 | 难过 | 生气 | 中性 | 兴奋 | 孤独 | 焦虑 | 爱意",
+  "intensity": 0.0 到 1.0 之间的小数，表示这种情绪的强度,
   "emotion_understanding": "用户此刻的真实情绪——表面之下在感受什么",
   "emotional_needs": ["需要1", "需要2"],
   "affection_impact": {{
@@ -262,7 +266,16 @@ class LLMEmotionAnalyzer:
   }}
 }}
 
+注意：`emotion` 是给人格状态机读的字段，必须是上面八个标签之一，不要写别的词。
+`emotion_understanding` 可以自由描述，不要只复述 emotion 标签。
+
 只输出 JSON。"""
+
+    # 结构化 emotion 字段的白名单：中文标签和英文枚举值都认，其余一概不认。
+    _EMOTION_LABELS: dict[str, EmotionType] = {
+        **{label: emotion for emotion, label in EMOTION_CN_MAP.items()},
+        **{emotion.value: emotion for emotion in EmotionType},
+    }
 
     def __init__(self, llm: BaseLLM | None = None):
         self._llm = llm
@@ -322,6 +335,12 @@ class LLMEmotionAnalyzer:
 
         # ── dict 输入：提取 + 验证 + 补充默认值 ──
         result: dict = {}
+
+        # emotion / intensity —— 人格状态机的直接输入，原样透传给 analyze()。
+        # 放在这里而不是在 analyze() 里再读一次原始 JSON，是为了让所有
+        # 「模型输出 → 结构化结果」的规范化只发生在一个地方。
+        result["emotion"] = data.get("emotion", "")
+        result["intensity"] = data.get("intensity")
 
         # emotion_understanding
         result["emotion_understanding"] = data.get("emotion_understanding", "")
@@ -423,14 +442,19 @@ class LLMEmotionAnalyzer:
                         keywords=[f"LLM:{reason}"] if reason else [],
                     )
                 else:
-                    # 新格式
-                    emotion_type = self._map_emotion(
-                        enriched.get("emotion_understanding", "")
-                    )
+                    # 新格式：优先读结构化 emotion 字段（模型直接给八选一的枚举），
+                    # 拿不到才回退到从 emotion_understanding 里猜子串。
+                    # 旧实现只做后者，「用户有点委屈，但没直接说」会被判成 neutral，
+                    # 而 neutral 的坐标正好是原点 —— 每一次误判都在把她往清零拉。
+                    emotion_type = self.parse_emotion_label(enriched.get("emotion"))
+                    if emotion_type is None:
+                        emotion_type = self._map_emotion(
+                            enriched.get("emotion_understanding", "")
+                        )
                     reason = enriched.get("affection_impact", {}).get("reason", "")
                     result = EmotionResult(
                         emotion=emotion_type,
-                        intensity=0.5,
+                        intensity=self.parse_emotion_intensity(enriched.get("intensity")),
                         keywords=[f"LLM:{reason}"] if reason else [],
                     )
 
@@ -457,8 +481,40 @@ class LLMEmotionAnalyzer:
 
     # ── 内部方法 ──────────────────────────────────────────────
 
+    @classmethod
+    def parse_emotion_label(cls, raw) -> EmotionType | None:
+        """把模型返回的 ``emotion`` 字段解析成 EmotionType，不认识就返回 None。
+
+        只认白名单（八个中文标签 + 八个英文枚举值），不做模糊匹配。
+        返回 None 时调用方会回退到 ``_map_emotion`` 的子串匹配，
+        两层兜底比一层含糊更可靠。
+        """
+        if not isinstance(raw, str):
+            return None
+        key = raw.strip().strip("。.，,、\"'“”「」").lower()
+        return cls._EMOTION_LABELS.get(key)
+
+    @staticmethod
+    def parse_emotion_intensity(raw, default: float = 0.5) -> float:
+        """解析情绪强度并 clamp 到 [0, 1]。
+
+        历史缺陷：``analyze()`` 里 intensity 原本硬编码为 0.5，于是
+        ``mood.influence = intensity * 0.4`` 恒等于 0.2 ——「这次刺激有多强」
+        这个维度整体不存在，每轮位移都一样。
+        """
+        if isinstance(raw, bool):  # bool 是 int 子类，True 会被读成 1.0
+            return default
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except (TypeError, ValueError):
+            return default
+
     def _map_emotion(self, text: str) -> EmotionType:
         """将情感理解文本映射为 EmotionType。
+
+        这是**回退路径**：只在模型没有给出结构化 ``emotion`` 字段时使用。
+        它是 8 个中文词对自由文本做子串匹配，实测命中率很低（"用户有点委屈"
+        → neutral），所以正常路径应当依赖 ``parse_emotion_label``。
 
         依次尝试：中文情感词 → 英文情感词 → NEUTRAL。
         """

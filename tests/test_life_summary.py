@@ -19,6 +19,7 @@ import pytest
 
 from core.llm.base import LLMResponse
 from core.memory.life_summary import (
+    DIARY_PROMPT_SNIPPET_CHARS,
     LifeSummary,
     LifeSummaryEngine,
     LifeSummaryStorage,
@@ -248,10 +249,12 @@ class TestSummaryPrompt:
         assert LifeSummary(user_id="u").to_prompt() == ""
 
     def test_diary_body_excluded(self) -> None:
-        """日记是用户可见的产物，它的正文不进后续 prompt。
+        """默认 `to_prompt()` 不带日记正文，只复用结构化字段。
 
-        只复用结构化字段 —— 否则角色的私人日记会一遍遍被喂回给模型，
-        越写越像自我复读。
+        注意这里测的是**默认契约**。真正进聊天 prompt 的是
+        `get_context()`，它会显式传 `include_diary=True` 附一段节选 ——
+        因为实测库里三条摘要全是 diary、结构化字段为空，默认路径返回空串，
+        她写过的日记一次都没回到过自己的上下文（见 `TestDiaryRecall`）。
         """
         summary = LifeSummary(
             user_id="u", summary_type="diary",
@@ -913,3 +916,72 @@ class TestLlmPrompt:
         await engine.generate_diary("u", "p1", 60, [], [])
         assert llm.calls[0]["kwargs"]["max_tokens"] == 900
         assert llm.calls[0]["kwargs"]["temperature"] == 0.8
+
+
+# --------------------------------------------------------------------------- #
+# 日记回灌
+# --------------------------------------------------------------------------- #
+
+
+class TestDiaryRecall:
+    """日记是她唯一的第一人称「连续性」，但此前整类被排除在 prompt 之外。
+
+    实测数据：库里 3 条 life_summaries 全是 diary 类型、结构化字段为空，
+    `to_prompt()` 因此返回空字符串 —— 写得最好的那段文字一次都没回到过
+    她自己的上下文。
+    """
+
+    def test_include_diary_appends_snippet(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="diary",
+            summary="昨晚聊到快十二点，他还故意逗我，最后才肯睡。",
+        )
+        prompt = summary.to_prompt(include_diary=True)
+        assert "昨晚聊到快十二点" in prompt
+        assert "【我最近写的日记（节选）】" in prompt
+
+    def test_default_still_excludes_diary(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="diary", summary="日记正文",
+        )
+        assert "日记正文" not in summary.to_prompt()
+
+    def test_diary_only_summary_is_not_empty(self) -> None:
+        """这是历史缺陷的核心：只有日记时旧实现返回空串。"""
+        summary = LifeSummary(
+            user_id="u", summary_type="diary", summary="今天有点累。",
+        )
+        assert summary.to_prompt() == ""
+        assert summary.to_prompt(include_diary=True).strip() != ""
+
+    def test_no_empty_profile_header_when_only_diary(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="diary", summary="今天有点累。",
+        )
+        prompt = summary.to_prompt(include_diary=True)
+        assert "【用户长期画像】" not in prompt
+
+    def test_snippet_is_truncated(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="diary", summary="很长的日记。" * 200,
+        )
+        snippet = summary.diary_snippet()
+        assert len(snippet) <= DIARY_PROMPT_SNIPPET_CHARS + 1
+        assert snippet.endswith(("。", "…"))
+
+    def test_snippet_cuts_at_sentence_boundary(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="diary",
+            summary="第一句说完了。第二句说完了。第三句会超出预算。" * 20,
+        )
+        snippet = summary.diary_snippet(limit=20)
+        assert snippet.endswith("。")
+
+    def test_periodic_summary_has_no_diary_snippet(self) -> None:
+        summary = LifeSummary(
+            user_id="u", summary_type="periodic", summary="这不是日记",
+        )
+        assert summary.diary_snippet() == ""
+
+    def test_empty_diary_returns_empty(self) -> None:
+        assert LifeSummary(user_id="u", summary_type="diary").diary_snippet() == ""

@@ -109,6 +109,8 @@ class AppComponents:
     # AdapterManager 实例（由 run_with_adapters 或 run_web 注入）。
     # 用 Any 避免顶层循环导入；webui/server.py 通过 getattr 访问。
     adapter_manager: Any = None
+    # ProactiveRunner 实例（Web 模式下由 webui/server.py 启动；CLI 不用）
+    proactive_runner: Any = None
 
 
 class ComponentBuilder:
@@ -174,10 +176,12 @@ class ComponentBuilder:
             LifeSummaryEngine(self._data_dir),
         )
 
-    def build_proactive(self, persona_loader, memory_mgr, unified_storage, mood_manager) -> ProactiveMessenger:
+    def build_proactive(self, persona_loader, memory_mgr, unified_storage, mood_manager,
+                        open_loop=None) -> ProactiveMessenger:
         return ProactiveMessenger(
             persona_loader, memory_mgr, unified_storage,
             mood_engine=mood_manager,
+            open_loop=open_loop,
             config=self.config,
         )
 
@@ -261,7 +265,10 @@ class ComponentBuilder:
         llm_emotion_analyzer, mood_manager = self.build_emotion()
         open_loop, identity, life_summary = self.build_loop_components()
         unified_storage = self.build_unified_storage()
-        proactive = self.build_proactive(persona_loader, memory_mgr, unified_storage, mood_manager)
+        proactive = self.build_proactive(
+            persona_loader, memory_mgr, unified_storage, mood_manager,
+            open_loop=open_loop,
+        )
 
         # The diary writer is independent from per-reply runtime state. It uses
         # the configured model only at durable generation checkpoints.

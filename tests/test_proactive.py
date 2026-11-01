@@ -7,8 +7,8 @@
 
 1. `_is_in_active_window` 用的是 `start <= hour < end`，**end 是开区间**。
    想让测试永远在窗口内就把窗口设成 `0..24`，想永远在窗外就设成 `0..0`。
-2. `_can_fire` 有副作用：第一次调用就写入 `_next_proactive_after`。
-   所以「间隔未到」的用例必须手动把 `_next_proactive_after` 设成未来时间，
+2. `_can_fire` 有副作用：第一次调用就写入 `_next_proactive_after[user]`。
+   所以「间隔未到」的用例必须手动把 `_next_proactive_after[user]` 设成未来时间，
    不能指望连调两次 `_can_fire`（第二次的结果依赖真实时钟）。
 3. `check_proactive_messages` 的四条链是**顺序短路**的：定时命中就 return，
    后面三条根本不执行。测后三条必须先把窗口关掉（`0..0`）。
@@ -90,12 +90,13 @@ class FakeChatHistory:
         return self.messages
 
 
-def make_messenger(
+def _make_messenger(
     *,
     persona_loader=None,
     memory_mgr=None,
     affection=None,
     chat_history=None,
+    open_loop=None,
     **config,
 ) -> ProactiveMessenger:
     """造一个 messenger，默认活跃窗口 0..24（永远在窗口内）。"""
@@ -116,6 +117,7 @@ def make_messenger(
         affection_storage=affection or FakeAffection(),
         config=cfg,
         chat_history=chat_history,
+        open_loop=open_loop,
     )
 
 
@@ -150,7 +152,7 @@ class TestConfig:
         assert (m._interval_min, m._interval_max) == (30, 180)
 
     def test_config_overrides(self):
-        m = make_messenger(
+        m = _make_messenger(
             proactive_enabled=False,
             proactive_missing_days=5,
             proactive_min_level=50,
@@ -177,7 +179,7 @@ class TestConfig:
         assert m.enabled is True
 
     def test_set_llm_generator(self):
-        m = make_messenger()
+        m = _make_messenger()
 
         async def gen(**kwargs):
             return "hi"
@@ -191,35 +193,42 @@ class TestConfig:
 
 
 class TestFiredMarkers:
-    def test_today_key_contains_date_and_period(self):
-        m = make_messenger()
-        key = m._today_key("scheduled")
-        assert key == f"{datetime.now().date()}_scheduled"
+    def test_today_key_contains_user_date_and_period(self):
+        """key 必须带 user_id —— 否则 A 触发过，B 当天就再也拿不到。"""
+        m = _make_messenger()
+        key = m._today_key("u1", "scheduled")
+        assert key == f"u1|{datetime.now().date()}_scheduled"
+
+    def test_two_users_do_not_block_each_other(self):
+        m = _make_messenger()
+        m._mark_fired("u1", "scheduled")
+        assert m._already_fired("u1", "scheduled") is True
+        assert m._already_fired("u2", "scheduled") is False
 
     def test_not_fired_initially(self):
-        m = make_messenger()
-        assert m._already_fired("scheduled") is False
+        m = _make_messenger()
+        assert m._already_fired("u1", "scheduled") is False
 
     def test_mark_then_fired(self):
-        m = make_messenger()
-        m._mark_fired("missing")
-        assert m._already_fired("missing") is True
-        assert m._already_fired("scheduled") is False
+        m = _make_messenger()
+        m._mark_fired("u1", "missing")
+        assert m._already_fired("u1", "missing") is True
+        assert m._already_fired("u1", "scheduled") is False
 
     def test_cleanup_drops_yesterday(self):
-        m = make_messenger()
-        m._fired_today["2020-01-01_scheduled"] = datetime(2020, 1, 1, 9, 0)
-        m._mark_fired("missing")
+        m = _make_messenger()
+        m._fired_today["u1|2020-01-01_scheduled"] = datetime(2020, 1, 1, 9, 0)
+        m._mark_fired("u1", "missing")
         m._cleanup_old_markers()
-        assert "2020-01-01_scheduled" not in m._fired_today
-        assert m._already_fired("missing") is True
+        assert "u1|2020-01-01_scheduled" not in m._fired_today
+        assert m._already_fired("u1", "missing") is True
 
     def test_periods_are_independent(self):
-        m = make_messenger()
-        m._mark_fired("recall_1")
-        m._mark_fired("recall_2")
-        assert m._already_fired("recall_1") and m._already_fired("recall_2")
-        assert m._already_fired("care") is False
+        m = _make_messenger()
+        m._mark_fired("u1", "recall_1")
+        m._mark_fired("u1", "recall_2")
+        assert m._already_fired("u1", "recall_1") and m._already_fired("u1", "recall_2")
+        assert m._already_fired("u1", "care") is False
 
 
 # ── 间隔与窗口 ──────────────────────────────────────────────────
@@ -227,42 +236,42 @@ class TestFiredMarkers:
 
 class TestIntervalAndWindow:
     def test_pick_next_interval_within_range(self):
-        m = make_messenger(proactive_interval_min=10, proactive_interval_max=10)
+        m = _make_messenger(proactive_interval_min=10, proactive_interval_max=10)
         assert m._pick_next_interval() == timedelta(minutes=10)
 
     def test_pick_next_interval_randomised(self):
-        m = make_messenger(proactive_interval_min=30, proactive_interval_max=180)
+        m = _make_messenger(proactive_interval_min=30, proactive_interval_max=180)
         picks = {m._pick_next_interval() for _ in range(40)}
         assert len(picks) > 1
         assert all(timedelta(minutes=30) <= p <= timedelta(minutes=180) for p in picks)
 
     def test_active_window_boundaries(self):
-        m = make_messenger(proactive_active_start=7, proactive_active_end=23)
+        m = _make_messenger(proactive_active_start=7, proactive_active_end=23)
         assert m._is_in_active_window(datetime(2026, 1, 1, 7, 0)) is True
         assert m._is_in_active_window(datetime(2026, 1, 1, 22, 59)) is True
         assert m._is_in_active_window(datetime(2026, 1, 1, 23, 0)) is False
         assert m._is_in_active_window(datetime(2026, 1, 1, 6, 59)) is False
 
     def test_can_fire_first_time_sets_next(self):
-        m = make_messenger()
+        m = _make_messenger()
         now = datetime(2026, 1, 1, 12, 0)
-        assert m._next_proactive_after is None
-        assert m._can_fire(now) is True
-        assert m._next_proactive_after == now + timedelta(minutes=30)
+        assert m._next_proactive_after.get("u1") is None
+        assert m._can_fire("u1", now) is True
+        assert m._next_proactive_after["u1"] == now + timedelta(minutes=30)
 
     def test_can_fire_before_next_returns_false(self):
-        m = make_messenger()
+        m = _make_messenger()
         now = datetime(2026, 1, 1, 12, 0)
-        m._next_proactive_after = now + timedelta(minutes=10)
-        assert m._can_fire(now) is False
-        assert m._next_proactive_after == now + timedelta(minutes=10)
+        m._next_proactive_after["u1"] = now + timedelta(minutes=10)
+        assert m._can_fire("u1", now) is False
+        assert m._next_proactive_after["u1"] == now + timedelta(minutes=10)
 
     def test_can_fire_after_next_resets(self):
-        m = make_messenger()
+        m = _make_messenger()
         now = datetime(2026, 1, 1, 12, 0)
-        m._next_proactive_after = now - timedelta(seconds=1)
-        assert m._can_fire(now) is True
-        assert m._next_proactive_after == now + timedelta(minutes=30)
+        m._next_proactive_after["u1"] = now - timedelta(seconds=1)
+        assert m._can_fire("u1", now) is True
+        assert m._next_proactive_after["u1"] == now + timedelta(minutes=30)
 
 
 # ── 主检查链 ────────────────────────────────────────────────────
@@ -270,19 +279,19 @@ class TestIntervalAndWindow:
 
 class TestCheckGates:
     def test_disabled_returns_none(self):
-        m = make_messenger(proactive_enabled=False)
+        m = _make_messenger(proactive_enabled=False)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_unknown_persona_returns_none(self):
-        m = make_messenger(persona_loader=FakePersonaLoader(personas={}))
+        m = _make_messenger(persona_loader=FakePersonaLoader(personas={}))
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_low_relationship_returns_none(self):
-        m = make_messenger(affection=FakeAffection(level=10.0))
+        m = _make_messenger(affection=FakeAffection(level=10.0))
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_level_boundary_is_inclusive(self):
-        m = make_messenger(affection=FakeAffection(level=20.0))
+        m = _make_messenger(affection=FakeAffection(level=20.0))
         assert m.check_proactive_messages("u1", "p1") == "scheduled"
 
     def test_scope_id_used_for_memory_lookups(self):
@@ -294,33 +303,33 @@ class TestCheckGates:
                 seen.append(user_id)
                 return super().get_level(user_id, persona_id)
 
-        m = make_messenger(affection=Recording(level=60.0, stats=affection.stats))
+        m = _make_messenger(affection=Recording(level=60.0, stats=affection.stats))
         m.check_proactive_messages("u1", "p1", scope_id="scope_abc")
         assert seen == ["scope_abc"]
 
 
 class TestScheduledTrigger:
     def test_fires_and_marks(self):
-        m = make_messenger()
+        m = _make_messenger()
         assert m.check_proactive_messages("u1", "p1") == "scheduled"
-        assert m._already_fired("scheduled") is True
+        assert m._already_fired("u1", "scheduled") is True
         assert m._last_proactive_at is not None
 
     def test_interval_blocks_second_fire(self):
-        m = make_messenger()
+        m = _make_messenger()
         m.check_proactive_messages("u1", "p1")
         # 第二次调用时 next 还在未来 → 定时链不命中
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_outside_window_skips_scheduled(self):
-        m = make_messenger(proactive_active_start=0, proactive_active_end=0)
+        m = _make_messenger(proactive_active_start=0, proactive_active_end=0)
         assert m.check_proactive_messages("u1", "p1") is None
 
 
 class TestMissingTrigger:
-    def _messenger(self, *, last: str | None, msg_count: int = 20,
+    def make_messenger(self, *, last: str | None, msg_count: int = 20,
                    days_known: int = 30, **config):
-        m = make_messenger(
+        m = _make_messenger(
             proactive_active_start=0,
             proactive_active_end=0,
             affection=FakeAffection(
@@ -337,44 +346,44 @@ class TestMissingTrigger:
 
     def test_fires_when_idle_long_enough(self):
         last = (datetime.now() - timedelta(days=5)).isoformat()
-        m = self._messenger(last=last)
+        m = self.make_messenger(last=last)
         assert m.check_proactive_messages("u1", "p1") == "missing"
-        assert m._already_fired("missing") is True
+        assert m._already_fired("u1", "missing") is True
 
     def test_not_idle_enough(self):
         last = (datetime.now() - timedelta(hours=6)).isoformat()
-        m = self._messenger(last=last)
+        m = self.make_messenger(last=last)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_no_last_interaction_returns_none(self):
-        m = self._messenger(last=None)
+        m = self.make_messenger(last=None)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_bad_timestamp_swallowed(self):
-        m = self._messenger(last="not-a-date")
+        m = self.make_messenger(last="not-a-date")
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_zero_messages_skips(self):
         last = (datetime.now() - timedelta(days=5)).isoformat()
-        m = self._messenger(last=last, msg_count=0)
+        m = self.make_messenger(last=last, msg_count=0)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_short_relationship_skips(self):
         last = (datetime.now() - timedelta(days=5)).isoformat()
-        m = self._messenger(last=last, days_known=1)
+        m = self.make_messenger(last=last, days_known=1)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_already_fired_today_skips(self):
         last = (datetime.now() - timedelta(days=5)).isoformat()
-        m = self._messenger(last=last)
-        m._mark_fired("missing")
+        m = self.make_messenger(last=last)
+        m._mark_fired("u1", "missing")
         assert m.check_proactive_messages("u1", "p1") is None
 
 
 class TestRecallTrigger:
-    def _messenger(self, memories, *, level: float = 45.0, recall: bool = True,
+    def make_messenger(self, memories, *, level: float = 45.0, recall: bool = True,
                    chat_history=None):
-        return make_messenger(
+        return _make_messenger(
             proactive_active_start=0,
             proactive_active_end=0,
             memory_mgr=FakeMemoryMgr(memories),
@@ -385,28 +394,28 @@ class TestRecallTrigger:
         )
 
     def test_level_below_40_skips_recall(self):
-        m = self._messenger([mem("明天要考试")], level=35.0)
+        m = self.make_messenger([mem("明天要考试")], level=35.0)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_recall_disabled_skips(self):
-        m = self._messenger([mem("明天要考试")], recall=False)
+        m = self.make_messenger([mem("明天要考试")], recall=False)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_recent_exam_triggers_recall(self):
-        m = self._messenger([mem("明天要面试了", days_old=0.5)])
+        m = self.make_messenger([mem("明天要面试了", days_old=0.5)])
         assert m.check_proactive_messages("u1", "p1") == "memory_recall"
-        assert m._pending_recall_topic == "明天要面试了"[:30]
+        assert m._pending_recall_topic.get("u1") == "明天要面试了"[:30]
 
     def test_old_exam_does_not_trigger(self):
-        m = self._messenger([mem("之前考过一次试", days_old=10)])
+        m = self.make_messenger([mem("之前考过一次试", days_old=10)])
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_recent_travel_triggers_recall(self):
-        m = self._messenger([mem("下个月去成都旅行", days_old=3)])
+        m = self.make_messenger([mem("下个月去成都旅行", days_old=3)])
         assert m.check_proactive_messages("u1", "p1") == "memory_recall"
 
     def test_very_old_travel_does_not_trigger(self):
-        m = self._messenger([mem("去成都旅行", days_old=30)])
+        m = self.make_messenger([mem("去成都旅行", days_old=30)])
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_birthday_same_day_triggers(self):
@@ -418,7 +427,7 @@ class TestRecallTrigger:
             last_accessed=today.isoformat(),
         )
         assert birthday_mem.created_at  # 日期不同年，靠 month/day 比
-        m = self._messenger([birthday_mem], level=45.0)
+        m = self.make_messenger([birthday_mem], level=45.0)
         # 记忆是去年同一天 → days_old≈365，但生日判定只看 month/day
         result = m.check_proactive_messages("u1", "p1")
         # 如果今天正好是那天（不可能总是），退化为 None；两种都接受
@@ -431,20 +440,20 @@ class TestRecallTrigger:
             level=5, category="personal",
             created_at=now.isoformat(), last_accessed=now.isoformat(),
         )
-        m = self._messenger([birthday_mem], level=45.0)
+        m = self.make_messenger([birthday_mem], level=45.0)
         assert m.check_proactive_messages("u1", "p1") == "birthday"
-        assert m._pending_recall_topic == "生日"
+        assert m._pending_recall_topic.get("u1") == "生日"
 
     def test_high_level_fresh_memory_triggers(self):
-        m = self._messenger([mem("他今天提到想换个工作", days_old=2)], level=60.0)
+        m = self.make_messenger([mem("他今天提到想换个工作", days_old=2)], level=60.0)
         assert m.check_proactive_messages("u1", "p1") == "memory_recall"
 
     def test_level_59_does_not_use_level_branch(self):
-        m = self._messenger([mem("他今天提到想换个工作", days_old=2)], level=59.0)
+        m = self.make_messenger([mem("他今天提到想换个工作", days_old=2)], level=59.0)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_already_recalled_memory_skipped(self):
-        m = self._messenger([mem("明天要面试了", days_old=0.5)])
+        m = self.make_messenger([mem("明天要面试了", days_old=0.5)])
         m._recalled_memory_ids.add(m._memory_mgr.memories[0].id)
         assert m.check_proactive_messages("u1", "p1") is None
 
@@ -454,15 +463,15 @@ class TestRecallTrigger:
             level=4, category="personal", created_at="garbage",
             last_accessed="garbage",
         )
-        m = self._messenger([bad])
+        m = self.make_messenger([bad])
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_empty_memories(self):
-        m = self._messenger([])
+        m = self.make_messenger([])
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_memory_manager_exception_swallowed(self):
-        m = make_messenger(
+        m = _make_messenger(
             proactive_active_start=0, proactive_active_end=0,
             memory_mgr=FakeMemoryMgr(raises=True),
             affection=FakeAffection(level=45.0, last=None),
@@ -472,7 +481,7 @@ class TestRecallTrigger:
     def test_only_first_five_candidates_scanned(self):
         memories = [mem(f"普通记忆{i}", days_old=100) for i in range(5)]
         memories.append(mem("明天要面试了", days_old=0.5))
-        m = self._messenger(memories)
+        m = self.make_messenger(memories)
         # 第 6 条超出 candidates[:5]，扫不到
         assert m.check_proactive_messages("u1", "p1") is None
 
@@ -482,7 +491,7 @@ class TestRecallTrigger:
         这条是给 `366->372` 那个分支的：内层 if 不成立时要能继续往下走，
         而不是 return None 或直接跳过候选。
         """
-        m = self._messenger([mem("明天要考试了", days_old=10)])
+        m = self.make_messenger([mem("明天要考试了", days_old=10)])
         assert m.check_proactive_messages("u1", "p1") is None
 
 
@@ -492,8 +501,8 @@ class TestCareTrigger:
             {"role": "user", "content": "嗯", "emotion": e} for e in emotions
         ])
 
-    def _messenger(self, chat_history, level: float = 55.0):
-        return make_messenger(
+    def make_messenger(self, chat_history, level: float = 55.0):
+        return _make_messenger(
             proactive_active_start=0,
             proactive_active_end=0,
             memory_mgr=FakeMemoryMgr([]),
@@ -503,51 +512,51 @@ class TestCareTrigger:
         )
 
     def test_level_below_50_skips_care(self):
-        m = self._messenger(self._history(["sad"] * 5), level=49.0)
+        m = self.make_messenger(self._history(["sad"] * 5), level=49.0)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_no_chat_history_skips(self):
-        m = self._messenger(None)
+        m = self.make_messenger(None)
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_three_consecutive_negative_rounds_fires(self):
-        m = self._messenger(self._history(["sad", "anxious", "lonely"]))
+        m = self.make_messenger(self._history(["sad", "anxious", "lonely"]))
         assert m.check_proactive_messages("u1", "p1") is None
         assert m.check_proactive_messages("u1", "p1") is None
         assert m.check_proactive_messages("u1", "p1") == "care"
         assert m._consecutive_negative["u1"] == 0
-        assert m._already_fired("care") is True
+        assert m._already_fired("u1", "care") is True
 
     def test_fewer_than_three_negatives_resets(self):
-        m = self._messenger(self._history(["sad", "happy", "happy"]))
+        m = self.make_messenger(self._history(["sad", "happy", "happy"]))
         m._consecutive_negative["u1"] = 2
         assert m.check_proactive_messages("u1", "p1") is None
         assert m._consecutive_negative["u1"] == 0
 
     def test_already_fired_today_blocks(self):
-        m = self._messenger(self._history(["sad"] * 5))
+        m = self.make_messenger(self._history(["sad"] * 5))
         m._consecutive_negative["u1"] = 2
-        m._mark_fired("care")
+        m._mark_fired("u1", "care")
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_history_exception_swallowed(self):
-        m = self._messenger(FakeChatHistory(raises=True))
+        m = self.make_messenger(FakeChatHistory(raises=True))
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_only_last_ten_user_messages(self):
         old_negative = [{"role": "user", "content": "嗯", "emotion": "sad"}] * 5
         recent_positive = [{"role": "user", "content": "嗯", "emotion": "happy"}] * 10
-        m = self._messenger(FakeChatHistory(old_negative + recent_positive))
+        m = self.make_messenger(FakeChatHistory(old_negative + recent_positive))
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_assistant_messages_ignored(self):
         msgs = [{"role": "assistant", "content": "x", "emotion": "sad"}] * 5
-        m = self._messenger(FakeChatHistory(msgs))
+        m = self.make_messenger(FakeChatHistory(msgs))
         assert m.check_proactive_messages("u1", "p1") is None
 
     def test_messages_without_emotion_field_ignored(self):
         msgs = [{"role": "user", "content": "嗯"}] * 5
-        m = self._messenger(FakeChatHistory(msgs))
+        m = self.make_messenger(FakeChatHistory(msgs))
         assert m.check_proactive_messages("u1", "p1") is None
 
 
@@ -556,7 +565,7 @@ class TestCareTrigger:
 
 class TestGenerateMessage:
     async def test_unknown_persona_returns_none(self):
-        m = make_messenger(persona_loader=FakePersonaLoader(personas={}))
+        m = _make_messenger(persona_loader=FakePersonaLoader(personas={}))
         assert await m.generate_message("scheduled", "u1", "p1") is None
 
     async def test_llm_output_used(self):
@@ -566,7 +575,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "  今天风好大，你出门记得穿外套。  "
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         out = await m.generate_message("scheduled", "u1", "p1")
         assert out == "今天风好大，你出门记得穿外套。"
@@ -578,7 +587,7 @@ class TestGenerateMessage:
         async def gen(**kwargs):
             return "「今天想你了」"
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         assert await m.generate_message("scheduled", "u1", "p1") == "今天想你了"
 
@@ -586,7 +595,7 @@ class TestGenerateMessage:
         async def gen(**kwargs):
             return "   "
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         out = await m.generate_message("scheduled", "u1", "p1")
         assert out in m._fallback_message("scheduled", "慕", 60) or out
@@ -596,7 +605,7 @@ class TestGenerateMessage:
         async def gen(**kwargs):
             raise RuntimeError("boom")
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         out = await m.generate_message("care", "u1", "p1")
         assert out in [
@@ -606,7 +615,7 @@ class TestGenerateMessage:
         ]
 
     async def test_no_llm_uses_fallback(self):
-        m = make_messenger()
+        m = _make_messenger()
         out = await m.generate_message("birthday", "u1", "p1")
         assert out in [
             "生日快乐呀！🎂 希望你今天特别开心！",
@@ -620,7 +629,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(
+        m = _make_messenger(
             persona_loader=FakePersonaLoader({"p1": FakePersona(gender="男")})
         )
         m.set_llm_generator(gen)
@@ -634,7 +643,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         await m.generate_message("scheduled", "u1", "p1")
         assert "真实女生" in captured["system_prompt"]
@@ -646,7 +655,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(
+        m = _make_messenger(
             persona_loader=FakePersonaLoader({"p1": FakePersona(gender="")})
         )
         m.set_llm_generator(gen)
@@ -662,7 +671,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(
+        m = _make_messenger(
             persona_loader=FakePersonaLoader(
                 {"p1": FakePersona(speaking_style={"基础风格": "慵懒"})}
             )
@@ -678,7 +687,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(
+        m = _make_messenger(
             persona_loader=FakePersonaLoader(
                 {"p1": FakePersona(speaking_style="简短")}
             )
@@ -694,7 +703,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(
+        m = _make_messenger(
             persona_loader=FakePersonaLoader({"p1": FakePersona(personality=[])})
         )
         m.set_llm_generator(gen)
@@ -716,7 +725,7 @@ class TestGenerateMessage:
             {"role": "user", "content": "好"},
             {"role": "assistant", "content": "晚安"},
         ])
-        m = make_messenger(chat_history=history)
+        m = _make_messenger(chat_history=history)
         m.set_llm_generator(gen)
         await m.generate_message("scheduled", "u1", "p1")
         user_prompt = captured["user_prompt"]
@@ -737,7 +746,7 @@ class TestGenerateMessage:
             {"role": "user", "content": "第二条"},
             {"role": "user", "content": "第三条"},
         ])
-        m = make_messenger(chat_history=history)
+        m = _make_messenger(chat_history=history)
         m.set_llm_generator(gen)
         await m.generate_message("scheduled", "u1", "p1")
         user_prompt = captured["user_prompt"]
@@ -751,7 +760,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(chat_history=FakeChatHistory([]))
+        m = _make_messenger(chat_history=FakeChatHistory([]))
         m.set_llm_generator(gen)
         await m.generate_message("scheduled", "u1", "p1")
         assert "最近的聊天记录" not in captured["user_prompt"]
@@ -763,7 +772,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "hi"
 
-        m = make_messenger(chat_history=FakeChatHistory(raises=True))
+        m = _make_messenger(chat_history=FakeChatHistory(raises=True))
         m.set_llm_generator(gen)
         out = await m.generate_message("scheduled", "u1", "p1")
         assert out == "hi"
@@ -778,8 +787,8 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "ok"
 
-        m = make_messenger()
-        m._pending_recall_topic = "上次说的面试"
+        m = _make_messenger()
+        m._pending_recall_topic["u1"] = "上次说的面试"
         m.set_llm_generator(gen)
         assert await m.generate_message(trigger, "u1", "p1") == "ok"
         assert "绝对禁止" in captured["system_prompt"]
@@ -791,8 +800,8 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "ok"
 
-        m = make_messenger()
-        m._pending_recall_topic = "上次说的面试"
+        m = _make_messenger()
+        m._pending_recall_topic["u1"] = "上次说的面试"
         m.set_llm_generator(gen)
         await m.generate_message("memory_recall", "u1", "p1")
         assert "上次说的面试" in captured["system_prompt"]
@@ -804,7 +813,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "ok"
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         await m.generate_message("memory_recall", "u1", "p1")
         assert "之前聊过的事" in captured["system_prompt"]
@@ -816,7 +825,7 @@ class TestGenerateMessage:
             captured.update(kwargs)
             return "ok"
 
-        m = make_messenger()
+        m = _make_messenger()
         m.set_llm_generator(gen)
         await m.generate_message("missing", "u1", "p1")
         prompt = captured["system_prompt"]
@@ -837,7 +846,7 @@ class TestGenerateMessage:
                 seen.append(user_id)
                 return 88.0
 
-        m = make_messenger(affection=Recording())
+        m = _make_messenger(affection=Recording())
         m.set_llm_generator(gen)
         await m.generate_message("scheduled", "u1", "p1", scope_id="scope_x")
         assert seen == ["scope_x"]
@@ -849,13 +858,13 @@ class TestGenerateMessage:
 
 class TestFallbackMessage:
     def test_all_known_types_have_options(self):
-        m = make_messenger()
+        m = _make_messenger()
         for trigger in ("scheduled", "missing", "care", "birthday", "memory_recall"):
             out = m._fallback_message(trigger, "慕", 60)
             assert isinstance(out, str) and out
 
     def test_unknown_type_falls_back_to_scheduled(self):
-        m = make_messenger()
+        m = _make_messenger()
         allowed = {
             "嗨~ 突然想跟你聊聊天！你今天怎么样呀？",
             "刚刚看了一个超好笑的视频，等下发给你看~",
@@ -865,13 +874,136 @@ class TestFallbackMessage:
             assert m._fallback_message("weird", "慕", 60) in allowed
 
     def test_missing_never_mentions_absence(self):
-        m = make_messenger()
+        m = _make_messenger()
         forbidden = ("你回来啦", "你去哪了", "好久不见", "你终于出现了")
         for _ in range(30):
             out = m._fallback_message("missing", "慕", 60)
             assert not any(w in out for w in forbidden)
 
     def test_memory_recall_single_option(self):
-        m = make_messenger()
+        m = _make_messenger()
         assert m._fallback_message("memory_recall", "慕", 60) == \
             "诶对了，我突然想起来之前那事，后来怎么样了呀？"
+
+
+# ── 未闭合事件追问 ──────────────────────────────────────────
+
+
+class FakeOpenLoop:
+    def __init__(self, question: str | None = None, raises: bool = False):
+        self.question = question
+        self.raises = raises
+        self.calls: list[str] = []
+
+    def get_follow_up(self, user_id: str):
+        self.calls.append(user_id)
+        if self.raises:
+            raise RuntimeError("open loop boom")
+        return self.question
+
+
+class TestOpenLoopFollowUp:
+    """`open_loop.get_follow_up()` 写好了但长期零调用点。
+
+    她"知道你下周要面试"，却永远不会问一句"面试怎么样" —— 因为追问逻辑
+    从来没被接进主动消息。这一组用例锁住接线本身。
+    """
+
+    def _closed_window(self) -> dict:
+        """关掉定时与久未联系两条链，只留追问链可测。"""
+        return {
+            "proactive_active_start": 0,
+            "proactive_active_end": 0,
+            "proactive_missing_days": 9999,
+        }
+
+    def test_returns_follow_up_trigger(self) -> None:
+        loop = FakeOpenLoop("上次说的面试怎么样了？")
+        m = _make_messenger(open_loop=loop, **self._closed_window())
+
+        assert m.check_proactive_messages("u1", "p1") == "open_loop_follow_up"
+        assert loop.calls == ["u1"]
+
+    def test_stashes_question_for_generation(self) -> None:
+        m = _make_messenger(
+            open_loop=FakeOpenLoop("面试怎么样了？"), **self._closed_window(),
+        )
+        m.check_proactive_messages("u1", "p1")
+        assert m._pending_follow_up.get("u1") == "面试怎么样了？"
+
+    def test_no_pending_question_falls_through(self) -> None:
+        """没到期的事件时不能拦住后面的记忆追问。"""
+        m = _make_messenger(
+            open_loop=FakeOpenLoop(None),
+            memory_mgr=FakeMemoryMgr([mem("他明天要面试")]),
+            **self._closed_window(),
+        )
+        assert m.check_proactive_messages("u1", "p1") == "memory_recall"
+
+    def test_open_loop_error_is_swallowed(self) -> None:
+        """追问查挂了不能连累整条主动消息链。"""
+        m = _make_messenger(
+            open_loop=FakeOpenLoop(raises=True),
+            memory_mgr=FakeMemoryMgr([mem("他明天要面试")]),
+            **self._closed_window(),
+        )
+        assert m.check_proactive_messages("u1", "p1") == "memory_recall"
+
+    def test_no_open_loop_degrades_gracefully(self) -> None:
+        m = _make_messenger(
+            memory_mgr=FakeMemoryMgr([mem("他明天要面试")]),
+            **self._closed_window(),
+        )
+        assert m.check_proactive_messages("u1", "p1") == "memory_recall"
+
+    async def test_scenario_contains_the_question(self) -> None:
+        m = _make_messenger(open_loop=FakeOpenLoop("面试怎么样了？"), **self._closed_window())
+        m.check_proactive_messages("u1", "p1")
+
+        captured: dict = {}
+
+        async def fake_gen(system_prompt, user_prompt, **kwargs):
+            captured["system"] = system_prompt
+            return "嗯，面试那事有结果了吗"
+
+        m.set_llm_generator(fake_gen)
+        await m.generate_message("open_loop_follow_up", "u1", "p1")
+
+        assert "面试怎么样了？" in captured["system"]
+
+
+# ── 兜底文案与人设一致性 ──────────────────────────────────────
+
+
+class TestFallbackTone:
+    """模型不可用时的兜底文案必须和人设语气一致。
+
+    历史行为只有一套「嗨~ 你今天怎么样呀？✨」：模型一挂就按最撒娇的
+    口吻发出去，和「不用颜文字、不刻意卖萌」的人设直接打架。
+    """
+
+    def _fallback(self, persona):
+        return _make_messenger()._fallback_message("scheduled", "慕", 60, persona=persona)
+
+    def test_plain_persona_gets_no_emoji_or_soft_particles(self):
+        plain = FakePersona(
+            speaking_style={"基础风格": "说话自然简短，不用颜文字，不刻意卖萌"},
+        )
+        text = self._fallback(plain)
+        assert not any(ch in text for ch in "~✨🥺💕")
+        assert "呀" not in text
+
+    def test_explicit_emoji_enabled_keeps_playful_tone(self):
+        """显式允许时保留原来的活泼口吻（别把已有角色也一刀切）。"""
+        playful = FakePersona(emoji_enabled=True)
+        texts = {self._fallback(playful) for _ in range(20)}
+        assert any("~" in t or "呀" in t for t in texts)
+
+    def test_none_persona_uses_default_tone(self):
+        assert self._fallback(None)
+
+    def test_follow_up_trigger_has_fallback(self):
+        m = _make_messenger()
+        plain = FakePersona(speaking_style={"基础风格": "不用颜文字"})
+        text = m._fallback_message("open_loop_follow_up", "慕", 60, persona=plain)
+        assert "结果" in text or "怎么样" in text

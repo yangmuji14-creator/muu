@@ -279,17 +279,22 @@ class ThoughtOrganizer:
         thoughts: List[MonologueThought] = []
 
         # 人格维度（source='personality'）→ 合并为一条
+        #
+        # 文案改过一次：原来五句全是「我很信任他 / 我有点依赖他 / 我对他很开放」，
+        # 主语虽然是"我"，宾语却都是"他"——人格变成了好感度计量表的另一端，
+        # 没有一句在描述"我是个什么样的人、这件事对我意味着什么"。
+        # 现在改成从她的视角说后果，而不是给他贴一个态度标签。
         personality_parts: List[str] = []
         if bi.personality_trust is not None and bi.personality_trust > 0.6:
-            personality_parts.append("我很信任他")
+            personality_parts.append("我现在愿意跟他说真话")
         if bi.personality_jealousy is not None and bi.personality_jealousy > 0.6:
-            personality_parts.append("他提到别人的时候我有点在意")
+            personality_parts.append("他提别人的时候，我会突然不想说话")
         if bi.personality_dependence is not None and bi.personality_dependence > 0.6:
-            personality_parts.append("我有点依赖他")
+            personality_parts.append("今天有点离不开他这个人")
         if bi.personality_openness is not None and bi.personality_openness > 0.6:
-            personality_parts.append("我对他很开放")
+            personality_parts.append("好多事我第一个想告诉他")
         if bi.personality_affection is not None and bi.personality_affection > 0.6:
-            personality_parts.append("我喜欢和他在一起")
+            personality_parts.append("跟他待着的时候我比较松弛")
 
         if personality_parts:
             thoughts.append(
