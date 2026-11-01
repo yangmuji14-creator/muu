@@ -158,6 +158,60 @@ class MemoryConflictResolver:
                 return True
             start = idx + 1
 
+    # 语境核验的虚词表：只算实词汉字的交集，避免「我」「的」「上」这类
+    # 几乎每句都出现的字撑起假共性。
+    _STOP_CHARS = set(
+        "我你他她它我们你们他们这那的了吗呢啊吧呀把被和与就不没很也"
+        "都还在是个有还又也上下里外中前后来去出说过点能让会比之"
+    )
+
+    @staticmethod
+    def _context_windows(text: str, word: str, pad: int = 6) -> list[str]:
+        """冲突词在文本中每次出现位置的前后窗口"""
+        windows: list[str] = []
+        start = 0
+        while True:
+            idx = text.find(word, start)
+            if idx < 0:
+                break
+            windows.append(text[max(0, idx - pad): idx + len(word) + pad])
+            start = idx + 1
+        return windows
+
+    @staticmethod
+    def _windows_overlap(content_a: str, word_a: str,
+                         content_b: str, word_b: str,
+                         min_shared: int = 1) -> bool:
+        """两边冲突词的窗口文本（各自剔除冲突词本身）去掉虚词与标点后，
+        实词汉字交集是否 ≥ min_shared。
+
+        同一件事的翻供会复述宾语（「我喜欢吃辣」/「我不喜欢吃辣」→
+        交集含 {吃,辣}；「我喜欢猫」/「我讨厌猫」→ 共享宾语「猫」）；
+        语境无关的巧合（「会主动问起」/「不会马上吹干」）剔除冲突词后
+        连一个共同实词都没有。阈值取 1 的前提是反义词对已命中 + 窗口
+        仅 6 字 —— 无关句子在这个窗口里共享实词的概率极低。
+        """
+        windows_a = MemoryConflictResolver._context_windows(content_a, word_a)
+        windows_b = MemoryConflictResolver._context_windows(content_b, word_b)
+        stop = MemoryConflictResolver._STOP_CHARS
+
+        def _content_chars(text: str, remove: str) -> set[str]:
+            cleaned = text.replace(remove, "")
+            return {
+                ch for ch in cleaned
+                if "\u4e00" <= ch <= "\u9fff" and ch not in stop
+            }
+
+        for wa in windows_a:
+            chars_a = _content_chars(wa, word_a)
+            if not chars_a:
+                continue
+            for wb in windows_b:
+                chars_b = _content_chars(wb, word_b)
+                if len(chars_a & chars_b) >= min_shared:
+                    return True
+        return False
+
     @staticmethod
     def _check_antonym_conflict(content_a: str, content_b: str) -> str | None:
         """检测反义词冲突（偏好/观点对立）
@@ -176,6 +230,18 @@ class MemoryConflictResolver:
                 if MemoryConflictResolver._is_double_negated(content_a, neg):
                     continue
                 if MemoryConflictResolver._is_double_negated(content_b, neg):
+                    continue
+                # 语境核验：词对命中只说明两句话里出现了这对反义字，
+                # 不说明说的是同一件事。实测误判——「我关心团子，会主动
+                # 问起」vs「头发不会马上吹干」因「会/不会」被判偏好翻供，
+                # 一条与团子有关的记忆被静默顶掉。要求两边冲突词的
+                # 上下文窗口有 ≥2 字公共子串（同一件事的翻供通常复述
+                # 宾语），否则跳过这组词对。
+                word_a = pos if pos in content_a else neg
+                word_b = neg if word_a == pos else pos
+                if not MemoryConflictResolver._windows_overlap(
+                    content_a, word_a, content_b, word_b,
+                ):
                     continue
                 return conflict_type
         return None

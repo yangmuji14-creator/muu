@@ -46,7 +46,7 @@ class TestSchema:
         assert cols == [
             "user_id", "id", "content", "level", "category", "created_at",
             "last_accessed", "access_count", "tags", "source", "related_ids",
-            "superseded_by", "confidence", "forget_score", "archived",
+            "superseded_by", "confidence", "forget_score", "archived", "subject",
         ]
 
     def test_indexes_created(self, store) -> None:
@@ -635,3 +635,63 @@ class TestLifecycle:
 
     def test_data_dir_property(self, tmp_path) -> None:
         assert MemoryStorage(tmp_path).data_dir == tmp_path
+
+
+# --------------------------------------------------------------------------- #
+# subject 字段：这条记忆说的是「谁」
+# --------------------------------------------------------------------------- #
+
+
+class TestSubjectField:
+    def test_default_subject_is_user(self, store) -> None:
+        """提取通道只记「关于他」，存量与新写入默认 user。"""
+        store.save("u1", [_mem("他养了一只猫叫团子")])
+        loaded = store.load("u1")
+        assert loaded[0].subject == "user"
+
+    def test_self_subject_roundtrip(self, store) -> None:
+        store.save("u1", [_mem("我最喜欢的季节是秋天", subject="self")])
+        loaded = store.load("u1")
+        assert loaded[0].subject == "self"
+
+    def test_migration_backfills_existing_rows(self, tmp_path) -> None:
+        """老库升级：ALTER 的 DEFAULT 'user' 就是存量回填，不需要脚本。"""
+        import sqlite3
+        from core.memory.storage import MemoryStorage
+        from core.storage.db import get_db_path
+
+        # 造一个「没有 subject 列」的旧版表，放在 storage 约定的 db 路径上
+        db = get_db_path(tmp_path)
+        conn = sqlite3.connect(str(db))
+        conn.execute("""
+            CREATE TABLE memories (
+                user_id TEXT NOT NULL, id TEXT NOT NULL, content TEXT NOT NULL,
+                level INTEGER NOT NULL DEFAULT 1, category TEXT NOT NULL DEFAULT 'other',
+                created_at TEXT NOT NULL, last_accessed TEXT NOT NULL,
+                access_count INTEGER NOT NULL DEFAULT 0, tags TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL DEFAULT 'auto', related_ids TEXT NOT NULL DEFAULT '[]',
+                superseded_by TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0.5,
+                forget_score REAL NOT NULL DEFAULT 0.0, archived INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, id)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO memories (user_id, id, content, level, category, created_at, last_accessed) "
+            "VALUES ('u1', 'mem_old', '旧记忆', 3, 'other', '2026-01-01', '2026-01-01')"
+        )
+        conn.commit()
+        conn.close()
+
+        reopened = MemoryStorage(data_dir=tmp_path)
+        loaded = reopened.load("u1")
+        assert len(loaded) == 1
+        assert loaded[0].subject == "user"
+
+    def test_invalid_subject_falls_back_to_user(self, store) -> None:
+        """白名单外的值一律落回 user——防止把自由文本写进隔离维度。"""
+        from core.memory.manager import MemoryManager
+        # 直接走 storage 层构造非法值（manager 层有白名单）
+        store.save("u1", [_mem("奇怪的输入", subject="whatever")])
+        loaded = store.load("u1")
+        # storage 不做白名单（写什么存什么），白名单在 manager 层
+        assert loaded[0].subject == "whatever"

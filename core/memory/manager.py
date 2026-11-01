@@ -156,6 +156,7 @@ class MemoryManager:
         tags: list[str] | None = None,
         category: str | None = None,
         source: str = "auto",
+        subject: str = "user",
     ) -> Memory | None:
         """添加一条记忆（LLM 评分 + 自动分类 + 向量索引）
 
@@ -190,11 +191,13 @@ class MemoryManager:
         tags: list[str] | None = None,
         category: str | None = None,
         source: str = "auto",
+        subject: str = "user",
     ) -> Memory | None:
         """同步版本 add_memory（仅规则评分，不调 LLM）"""
         if level is None:
             level, _ = self._scorer.score(content)
-        return self._add_memory_impl(user_id, content, level, category, tags, source)
+        return self._add_memory_impl(user_id, content, level, category, tags, source,
+                                     subject=subject)
 
     def _add_memory_impl(
         self,
@@ -204,6 +207,7 @@ class MemoryManager:
         category: str | None,
         tags: list[str] | None,
         source: str,
+        subject: str = "user",
     ) -> Memory | None:
         """记忆添加核心实现（同步）
 
@@ -231,6 +235,7 @@ class MemoryManager:
             tags=tags or [],
             source=source,
             confidence=Memory.classify_confidence(content),
+            subject=subject if subject in ("user", "self", "shared") else "user",
         )
 
         memories = self._storage.load(user_id)
@@ -360,6 +365,7 @@ class MemoryManager:
         include_superseded: bool = False,
         min_confidence: float = 0.0,
         include_archived: bool = True,
+        subject: str | None = None,
     ) -> list[Memory]:
         """获取用户记忆，按重要度和最近访问排序
 
@@ -397,6 +403,8 @@ class MemoryManager:
             if category and m.category != category:
                 continue
             if m.confidence < min_confidence:
+                continue
+            if subject is not None and getattr(m, "subject", "user") != subject:
                 continue
             filtered.append(m)
         filtered.sort(key=lambda m: (m.level, m.last_accessed), reverse=True)

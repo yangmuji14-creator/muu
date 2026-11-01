@@ -276,6 +276,7 @@ class ComponentBuilder:
         life_summary.configure_diary_generation(
             llm=_llm,
             persona_loader=persona_loader,
+            memory_mgr=memory_mgr,
         )
 
         # 注入 LLM 生成器到 ProactiveMessenger（用于主动消息的实时生成）

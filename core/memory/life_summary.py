@@ -401,10 +401,17 @@ class LifeSummaryEngine:
         self._persona_loader = None
         self._diary_locks: dict[str, asyncio.Lock] = {}
 
-    def configure_diary_generation(self, *, llm=None, persona_loader=None) -> None:
-        """Inject optional runtime dependencies for first-person diary writing."""
+    def configure_diary_generation(self, *, llm=None, persona_loader=None,
+                                   memory_mgr=None) -> None:
+        """Inject optional runtime dependencies for first-person diary writing.
+
+        ``memory_mgr``（可选）：日记生成成功后从日记里提取 1~3 条
+        ``subject="self"`` 的记忆 —— 她此前没有任何「关于她自己」的记忆
+        写入通道（提取 prompt 明确只记「关于他」），这是第一条。
+        """
         self._llm = llm
         self._persona_loader = persona_loader
+        self._memory_mgr = memory_mgr
 
     # ── JSON 模式 ──
 
@@ -576,6 +583,13 @@ class LifeSummaryEngine:
                 f"First-person diary generated for {user_id} "
                 f"({conversation_count} interactions, {len(diary)} chars)"
             )
+            # 日记是她的第一人称自述 —— 从中提取「关于她自己」的记忆。
+            # 失败静默：这是锦上添花，不能让日记因为记忆提取而失败。
+            if getattr(self, "_memory_mgr", None) is not None:
+                try:
+                    await self._extract_self_memories(diary, user_id)
+                except Exception as e:
+                    logger.debug(f"Self-memory extraction skipped: {e}")
             return summary
 
     async def _generate_diary_with_llm(
@@ -650,6 +664,87 @@ class LifeSummaryEngine:
         except Exception as e:
             logger.warning(f"First-person diary LLM generation failed: {e}")
             return None
+
+    _SELF_MEMORY_PROMPT = """下面是你刚写完的一篇日记。从中挑出 1~3 条**关于你自己**的、以后聊天用得上的事实（你的喜好、状态、习惯、特征），每条一句话。
+
+【已有的记录（一条都不要重复）】
+{existing}
+
+【不要写】
+- 关于别人的事（那是另一套记录，另有通道）
+- 对日记的点评、情绪抒发、比喻
+- 琐碎到以后用不上的细节
+
+日记：
+{diary}
+
+只返回 JSON 数组（可以返回空数组 []）：
+[{{"content": "一句话事实", "importance": 2到4的整数, "category": "preference|emotion|event|opinion|other"}}]
+"""
+
+    _SELF_CATEGORIES = ("preference", "emotion", "event", "opinion", "other")
+
+    async def _extract_self_memories(self, diary: str, user_id: str) -> int:
+        """从日记提取 1~3 条 subject="self" 的记忆。
+
+        这是「关于她自己」的第一条写入通道：此前的提取 prompt 明确只记
+        「关于他」，于是同一事实（最喜欢的季节）会以两种主语互不知情地
+        各存一条 —— 提取侧只认他，日记侧只写她、但从不进记忆库。
+        """
+        if self._llm is None:
+            return 0
+
+        existing = [
+            m.content for m in self._memory_mgr.get_memories(
+                user_id, subject="self", limit=30,
+            )
+        ]
+        existing_block = "\n".join(f"- {c}" for c in existing) if existing else "（还没有任何记录）"
+        prompt = self._SELF_MEMORY_PROMPT.format(
+            existing=existing_block, diary=diary[:800],
+        )
+        response = await self._llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300, temperature=0.2,
+        )
+        items = self._parse_self_memory_items(response.content)
+        added = 0
+        for item in items:
+            content = str(item.get("content", "")).strip()
+            if not content or content in existing:
+                continue
+            try:
+                level = max(2, min(4, int(item.get("importance", 3))))
+            except (TypeError, ValueError):
+                level = 3
+            category = item.get("category")
+            if category not in self._SELF_CATEGORIES:
+                category = "other"
+            created = self._memory_mgr.add_memory_sync(
+                user_id, content, level=level, category=category,
+                source="diary", subject="self",
+            )
+            if created is not None:
+                added += 1
+        if added:
+            logger.info(f"Self memories extracted from diary: +{added} for {user_id}")
+        return added
+
+    @staticmethod
+    def _parse_self_memory_items(text: str) -> list[dict]:
+        """解析模型返回的 JSON 数组，容错：截取最外层 [ ... ]。"""
+        if not text:
+            return []
+        start, end = text.find("["), text.rfind("]")
+        if start < 0 or end <= start:
+            return []
+        try:
+            data = json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(data, list):
+            return []
+        return [item for item in data if isinstance(item, dict)]
 
     @staticmethod
     def _clean_diary(value: Any, persona_name: str) -> str:
