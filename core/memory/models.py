@@ -9,6 +9,32 @@ from enum import Enum
 from typing import Any
 
 
+def parse_datetime(value: Any) -> datetime | None:
+    """把 ISO 字符串 / datetime 统一成 **naive** datetime。
+
+    记忆的时间字段在存储里是 ISO 字符串（``Memory.created_at``），
+    但调用方偶尔会传 datetime。统一在这里处理：
+    - 字符串按 ISO 解析，失败返回 None
+    - 带时区的值先换算成本地时间再去掉 tzinfo，避免与
+      ``datetime.now()`` 相减时抛 "can't subtract offset-naive and
+      offset-aware datetimes"
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+    else:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 class MemoryCategory(str, Enum):
     """记忆分类"""
     PERSONAL = "personal"       # 个人信息（名字、生日、年龄、地址等）

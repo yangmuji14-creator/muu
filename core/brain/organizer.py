@@ -11,11 +11,26 @@
 
 from __future__ import annotations
 
+import random
+import zlib
+from datetime import datetime
 from typing import List
 
 from core.emotion.analyzer import emotion_label
 
 from .models import BrainInput, MonologueThought
+
+
+def _pick(name: str, options: list[str]) -> str:
+    """按时段确定性地从同义句子里挑一句。
+
+    同一小时内结果稳定（内心独白不会逐次刷新跳动），
+    跨小时/跨天自动换一种说法，避免「心里在想」长期是同一段字。
+    """
+    now = datetime.now()
+    seed = zlib.crc32(f"{name}:{now:%Y%m%d%H}".encode()) & 0xFFFFFFFF
+    return random.Random(seed).choice(options)
+
 
 
 class ThoughtOrganizer:
@@ -87,25 +102,51 @@ class ThoughtOrganizer:
         if valence is None and arousal is None:
             return None
 
-        # 确定情绪文本
+        # 确定情绪文本（每个分支多套说法，按时段轮换，避免永远同一句）
         if valence is not None and valence > 0.5:
             if arousal is not None and arousal > 0.5:
-                text = "我心情不错，感觉有点兴奋"
+                text = _pick("mood_pos_high", [
+                    "我心情不错，感觉有点兴奋",
+                    "今天精神头很足，心情也亮",
+                    "心里挺雀跃的，话都变多了",
+                ])
             else:
-                text = "我心情不错，感觉很放松"
+                text = _pick("mood_pos_low", [
+                    "我心情不错，感觉很放松",
+                    "心里很放松，安安静静的",
+                    "这会儿挺放松的，什么都不急",
+                ])
         elif valence is not None and valence <= 0.3:
             if arousal is not None and arousal > 0.5:
-                text = "我心里有点闷，又有点烦躁"
+                text = _pick("mood_neg_high", [
+                    "我心里有点闷，又有点烦躁",
+                    "有点坐不住，心里有点烦",
+                    "情绪有点乱，烦得很",
+                ])
             else:
-                text = "我心里有点闷，不太想说话"
+                text = _pick("mood_neg_low", [
+                    "我心里有点闷，不太想说话",
+                    "有点提不起劲，心里闷闷的",
+                    "心里闷闷的，想一个人待着",
+                ])
         elif valence is not None:
-            text = "我心情还算平静"
+            text = _pick("mood_neutral", [
+                "我心情还算平静",
+                "没什么起伏，就那样吧",
+                "平平淡淡的，也说不上好或不好",
+            ])
         else:
             # 只有 arousal
             if arousal is not None and arousal > 0.5:
-                text = "我感觉有点兴奋"
+                text = _pick("arousal_high", [
+                    "我感觉有点兴奋",
+                    "脑子里转个不停，静不下来",
+                ])
             else:
-                text = "我有点提不起劲"
+                text = _pick("arousal_low", [
+                    "我有点提不起劲",
+                    "整个人有点懒洋洋的",
+                ])
 
         # 优先级: 0.8-1.0，用 intensity 微调
         intensity = bi.mood_intensity if bi.mood_intensity is not None else 0.5
@@ -263,14 +304,31 @@ class ThoughtOrganizer:
         if not lines:
             return "他最近好像挺忙的"
 
+        def _wrap(s: str) -> str:
+            # 摘要/目标本身经常已经是完整句子（「他有一只…」「近期比较忙」
+            # 「刚洗完澡」），无脑前缀会拼出「他最近他…」「他最近近期…」。
+            s = s.strip()
+            if not s:
+                return ""
+            # 已经是第三人称句子：原样使用
+            if s.startswith(("他", "她")):
+                return s
+            temporal_prefixes = (
+                "最近", "近期", "刚", "刚才", "这两天", "这几天", "今天",
+                "昨天", "昨晚", "前天", "前几天", "前阵子", "上个月",
+            )
+            if s.startswith(temporal_prefixes):
+                return f"他{s}"
+            return f"他最近{s}"
+
         line = lines[0]
         # 尝试提取 "：" 后的内容
         if "：" in line:
             parts = line.split("：", 1)
             value = parts[1].strip()
             if value:
-                return f"他最近{value}"
-        return f"他最近{line}"
+                return _wrap(value)
+        return _wrap(line)
 
     # ────────── 5. Disposition ──────────
 
@@ -354,14 +412,38 @@ class ThoughtOrganizer:
 
         # 时段（环境上下文，低优先级）
         if bi.time_period:
-            period_texts = {
-                "late_night": "这么晚了他还没睡……",
-                "morning": "早上了，新的一天",
-                "afternoon": "下午了",
-                "evening": "晚上了",
-                "night": "夜深了",
+            period_variants = {
+                "late_night": [
+                    "这么晚了他还没睡……",
+                    "凌晨了，外面应该很安静",
+                    "这个点醒着的人不多",
+                ],
+                "morning": [
+                    "早上了，新的一天",
+                    "早上的光有点晃眼",
+                    "又是新的一天，慢慢来吧",
+                ],
+                "afternoon": [
+                    "下午了",
+                    "午后总是有点犯困",
+                    "下午的光懒懒的",
+                ],
+                "evening": [
+                    "晚上了",
+                    "天已经黑下来了",
+                    "傍晚了，一天又要过去了",
+                ],
+                "night": [
+                    "夜深了",
+                    "夜里的时间过得特别快",
+                    "这么安静，反而有点想他",
+                ],
             }
-            text = period_texts.get(bi.time_period, f"现在是{bi.time_period}")
+            options = period_variants.get(bi.time_period)
+            if options:
+                text = _pick(f"time_{bi.time_period}", options)
+            else:
+                text = f"现在是{bi.time_period}"
             thoughts.append(
                 MonologueThought(
                     source="time",

@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import random
+import zlib
+from datetime import datetime
 from typing import List
 
 from .models import MonologueThought
@@ -215,14 +218,15 @@ class MonologueWeaver:
         if not options:
             return ""
 
-        # 优先选择不会与 next_text 开头冲突的过渡词
-        for trans in options:
-            if trans and next_text.startswith(trans):
-                continue
-            return trans
+        # 排除与 next_text 开头的撞词，其余按时段轮换 ——
+        # 固定取第一个会让独白每次都用同一组连接词，读起来像模板。
+        candidates = [t for t in options if t and not next_text.startswith(t)]
+        if not candidates:
+            return options[0]
 
-        # 所有过渡词都冲突，使用第一个
-        return options[0]
+        now = datetime.now()
+        seed = zlib.crc32(f"trans:{key[0]}>{key[1]}:{now:%Y%m%d%H}".encode()) & 0xFFFFFFFF
+        return random.Random(seed).choice(candidates)
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:

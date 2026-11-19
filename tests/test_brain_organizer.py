@@ -92,3 +92,23 @@ class TestOrganizeBaseline:
             if t.source == "mood"
         ]
         assert any("放松" in t.content for t in thoughts)
+
+
+class TestLifeSummaryWrapping:
+    """摘要拼接不得产生「他最近他…」「他最近近期…」这种重复前缀。"""
+
+    def test_existing_third_person_not_doubled(self) -> None:
+        text = ThoughtOrganizer._extract_life_summary_text(
+            "当前目标：他有一只叫团子的宠物"
+        )
+        assert text == "他有一只叫团子的宠物"
+
+    def test_temporal_prefix_not_doubled(self) -> None:
+        assert (
+            ThoughtOrganizer._extract_life_summary_text("近期状态：近期比较忙")
+            == "他近期比较忙"
+        )
+        assert (
+            ThoughtOrganizer._extract_life_summary_text("刚洗完澡，头发还湿着")
+            == "他刚洗完澡，头发还湿着"
+        )
