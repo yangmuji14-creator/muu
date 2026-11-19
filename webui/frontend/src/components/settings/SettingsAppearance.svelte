@@ -10,6 +10,7 @@
   import './settings-base.css';
   import { I } from './icons.js';
   import { LAYOUTS, LAYOUT_META, layout, setLayout } from '../../lib/layout.svelte.js';
+  import BackgroundSettings from '../BackgroundSettings.svelte';
 
   let { notify, onback } = $props();
 
@@ -32,6 +33,8 @@
   function readThemeVars(theme) {
     const el = document.createElement('div');
     el.setAttribute('data-theme', theme);
+    // 缩略图必须带上当前强调色，否则换色后预览仍画默认的琥珀
+    el.setAttribute('data-accent', accent);
     el.style.cssText = 'position:absolute;left:-9999px;top:0;width:0;height:0;overflow:hidden;pointer-events:none';
     document.body.appendChild(el);
     const cs = getComputedStyle(el);
@@ -59,7 +62,6 @@
   }
 
   onMount(() => {
-    swatch = { light: readThemeVars('light'), dark: readThemeVars('dark') };
     effective = syncEffective(themeMode);
     panelOpen = readPanelPref();
   });
@@ -89,6 +91,47 @@
       notify(mode === 'system' ? `已跟随系统（当前 ${eff === 'dark' ? '深色' : '浅色'}）` : `已切换到${mode === 'dark' ? '深色' : '浅色'}`, 'success');
     } catch { /* ignore */ }
   }
+
+  // ---- 强调色 ----
+  // data-accent 挂在 <html> 上，theme-liquid.css 里按主题分别给出变量，
+  // 深色模式不再被锁死在琥珀色。
+  const ACCENTS = [
+    { key: 'amber', label: '琥珀', color: '#e08a2e' },
+    { key: 'blue', label: '海蓝', color: '#3d8fd6' },
+    { key: 'teal', label: '青绿', color: '#2fa99a' },
+    { key: 'rose', label: '玫瑰', color: '#d4658a' },
+    { key: 'violet', label: '紫罗兰', color: '#9a7ce8' },
+    { key: 'slate', label: '石墨', color: '#8a97ad' },
+  ];
+  let accent = $state((() => {
+    try {
+      const saved = localStorage.getItem('cc-accent');
+      return ACCENTS.some((a) => a.key === saved) ? saved : 'amber';
+    } catch { return 'amber'; }
+  })());
+
+  function applyAccent(key) {
+    accent = key;
+    try {
+      localStorage.setItem('cc-accent', key);
+      document.documentElement.setAttribute('data-accent', key);
+      const label = ACCENTS.find((a) => a.key === key)?.label ?? key;
+      notify(`强调色已切换为「${label}」`, 'success');
+    } catch { /* ignore */ }
+  }
+
+  $effect(() => {
+    // 进入本页时同步强调色到 DOM，并按新颜色重算主题缩略图
+    // （此前 swatch 只在 onMount 算一次，换海蓝后预览仍是琥珀）
+    const key = accent;
+    try {
+      document.documentElement.setAttribute('data-accent', key);
+      swatch = {
+        light: readThemeVars('light'),
+        dark: readThemeVars('dark'),
+      };
+    } catch { /* ignore */ }
+  });
 </script>
 
 <SettingsShell title="主题与界面" desc="外观主题、布局模式与当前生效状态" {onback}>
@@ -141,6 +184,27 @@
 
   <section class="card card-pad">
     <div class="section-head">
+      <h4>强调色</h4>
+      <span class="head-sub">按钮、选中态与自己的消息气泡；深浅色各有对应版本</span>
+    </div>
+    <div class="accent-row" role="radiogroup" aria-label="强调色">
+      {#each ACCENTS as a}
+        <button
+          class="accent-opt {accent === a.key ? 'on' : ''}"
+          type="button" role="radio" aria-checked={accent === a.key}
+          title={a.label}
+          onclick={() => applyAccent(a.key)}
+        >
+          <span class="accent-dot" style="background:{a.color}"></span>
+          <span class="accent-label">{a.label}</span>
+        </button>
+      {/each}
+    </div>
+    <p class="hint">选择记忆在本机（cc-accent），切换后立即生效。</p>
+  </section>
+
+  <section class="card card-pad">
+    <div class="section-head">
       <h4>布局模式</h4>
       <span class="head-sub">三档布局共用同一套配色与组件</span>
     </div>
@@ -189,6 +253,8 @@
       </div>
     </dl>
   </section>
+
+  <BackgroundSettings />
 </SettingsShell>
 
 {#snippet mini(v)}
@@ -234,6 +300,41 @@
 <style>
   /* ---- 主题选项 ---- */
   .theme-options { display: flex; flex-direction: column; gap: var(--space-2); }
+
+  /* ---- 强调色 ---- */
+  .accent-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .accent-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text-2);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition), transform var(--transition);
+  }
+  .accent-opt:hover { border-color: var(--border-strong); background: var(--row-hover); }
+  .accent-opt:active { transform: scale(0.96); }
+  .accent-opt.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--text-1);
+    font-weight: 600;
+  }
+  .accent-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-full);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  }
+  .accent-label { line-height: 1; }
   .theme-opt {
     display: flex;
     align-items: center;

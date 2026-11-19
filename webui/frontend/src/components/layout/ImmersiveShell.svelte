@@ -1,7 +1,7 @@
 <script>
   // ImmersiveShell.svelte — 沉浸外壳 (概念2)
   //
-  // 没有侧栏、没有底部导航: 顶部一条 32px 细状态条, 内容占满整屏。
+  // 没有侧栏、没有底部导航: 顶部一条 44px 细状态条, 内容占满整屏。
   // 导航与状态全部收进右侧抽屉。
   import { navTabs, TAB_LABELS, goTab, navigate, route } from '../../lib/router.js';
   import { layout } from '../../lib/layout.svelte.js';
@@ -77,7 +77,7 @@
 </div>
 
 {#if open}
-  <div class="imm-scrim" role="presentation" onclick={() => (open = false)}></div>
+  <div class="imm-scrim scrim-layer" role="presentation" onclick={() => (open = false)}></div>
   <aside class="imm-drawer" aria-label="导航与状态">
     <div class="imm-drawer-head">
       <span class="micro-label">导航</span>
@@ -129,19 +129,23 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    height: 34px;
+    gap: var(--space-3);
+    height: 44px;
     padding: 0 var(--space-4);
-    border-bottom: 1px solid var(--border-strong);
-    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    background: var(--glass-light);
+    -webkit-backdrop-filter: blur(var(--glass-blur-1));
+    backdrop-filter: blur(var(--glass-blur-1));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   }
   .imm-dot {
     flex: none;
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     border-radius: var(--radius-full);
     background: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-wash);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
   .imm-name {
     font-size: var(--text-xs);
@@ -162,16 +166,23 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
     border: none;
     background: transparent;
     color: var(--text-2);
     cursor: pointer;
-    border-radius: var(--radius-xs);
-    transition: background var(--transition), color var(--transition);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition);
   }
-  .imm-btn:hover { background: var(--row-hover); color: var(--text-1); }
+  .imm-btn:hover {
+    background: color-mix(in srgb, var(--text-1) 8%, transparent);
+    color: var(--text-1);
+    transform: scale(1.05);
+  }
+  .imm-btn:active {
+    transform: scale(0.98);
+  }
 
   .imm-main {
     flex: 1;
@@ -182,43 +193,39 @@
     overflow-x: hidden;
   }
 
-  /* scrim: 只压暗 + 极轻模糊, 不放文字。模糊是给底下内容"退后一层"的信号,
-     2px 足够, 再多会让人以为页面失焦。 */
+  /* scrim: 复用 tokens.css 的 .scrim-layer（glass-0 + 2px 模糊），
+     这里只补定位/层级/入场动画；不支持毛玻璃时加深一档保证对比度。 */
   .imm-scrim {
     position: fixed;
     inset: 0;
     z-index: var(--z-scrim);
-    background: var(--glass-0);
+    animation: fadeIn var(--dur-2) var(--ease-out);
   }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .imm-scrim {
-      -webkit-backdrop-filter: blur(var(--glass-blur-0));
-      backdrop-filter: blur(var(--glass-blur-0));
+      background: var(--overlay);
     }
   }
 
-  /* 抽屉: glass-2 (sheet 档)。原来是不透明 --bg + 硬编码暖黑阴影,
-     抽屉和主内容之间只靠一条线区分, 看起来像"页面被切掉一块"。
-     玻璃让底下的页面透出来 —— 这恰好是抽屉要表达的"我盖在上面,
-     但没离开这一页"。 */
+  /* 抽屉: Apple Glass Morphism 风格；无 backdrop-filter 时回退不透明面板 */
   .imm-drawer {
     position: fixed;
     top: 0;
     right: 0;
     bottom: 0;
     z-index: var(--z-drawer);
-    width: min(300px, 86vw);
+    width: min(320px, 90vw);
     display: flex;
     flex-direction: column;
-    /* 兜底: 不支持 backdrop-filter 时不透明 */
     background: var(--surface);
     border-left: 1px solid var(--glass-border-2);
     overflow: hidden;
     box-shadow: var(--shadow-3);
+    animation: slideInRight var(--dur-3) var(--ease-out);
   }
   @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .imm-drawer {
-      background: var(--glass-2);
+      background: var(--glass-sheet);
       -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
       backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
       box-shadow: var(--glass-highlight), var(--shadow-3);
@@ -229,6 +236,15 @@
       background: var(--surface);
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
+    }
+  }
+
+  /* 减动效：状态点、遮罩淡入、抽屉滑入全部关闭 */
+  @media (prefers-reduced-motion: reduce) {
+    .imm-dot,
+    .imm-scrim,
+    .imm-drawer {
+      animation: none;
     }
   }
   .imm-drawer-head {
@@ -265,24 +281,29 @@
   .imm-tab {
     display: flex;
     align-items: center;
-    height: 32px;
-    padding: 0 var(--space-4);
+    min-height: 36px;
+    padding: var(--space-2) var(--space-4);
     border: none;
-    border-left: 2px solid transparent;
+    border-left: 3px solid transparent;
     background: transparent;
     font-family: inherit;
-    font-size: var(--text-13);
+    font-size: var(--text-sm);
+    font-weight: 500;
     letter-spacing: 0.005em;
     color: var(--text-2);
     text-align: left;
     cursor: pointer;
-    transition: color var(--transition), background var(--transition), border-color var(--transition);
+    transition: all var(--transition);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    margin-right: var(--space-2);
   }
-  .imm-tab:hover { background: var(--row-hover); color: var(--text-1); }
+  .imm-tab:hover {
+    background: color-mix(in srgb, var(--text-1) 4%, transparent);
+    color: var(--text-1);
+  }
   .imm-tab.on {
     color: var(--accent);
-    font-weight: 500;
-    background: var(--accent-wash);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-left-color: var(--accent);
   }
 
@@ -295,27 +316,33 @@
   .imm-sub {
     display: flex;
     align-items: center;
-    height: 27px;
-    padding: 0 var(--space-4) 0 32px;
+    min-height: 32px;
+    padding: var(--space-2) var(--space-4) var(--space-2) calc(var(--space-6) + 4px);
     border: none;
-    border-left: 2px solid transparent;
+    border-left: 3px solid transparent;
     background: transparent;
     font-family: inherit;
     font-size: var(--text-xs);
     letter-spacing: 0.01em;
-    color: var(--text-2);
+    color: var(--text-3);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: color var(--transition), background var(--transition), border-color var(--transition);
+    transition: all var(--transition);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    margin-right: var(--space-2);
   }
-  .imm-sub:hover { background: var(--row-hover); color: var(--text-1); }
+  .imm-sub:hover {
+    background: color-mix(in srgb, var(--text-1) 4%, transparent);
+    color: var(--text-2);
+  }
   .imm-sub.on {
     color: var(--accent);
     font-weight: 500;
-    border-left-color: var(--accent-line);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border-left-color: var(--accent);
   }
   .imm-sub-sep {
     height: 1px;

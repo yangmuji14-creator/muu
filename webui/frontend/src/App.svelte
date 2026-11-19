@@ -14,6 +14,8 @@
   import AppDialog from './components/AppDialog.svelte';
   import { route, startRouter } from './lib/router.js';
   import { layout } from './lib/layout.svelte.js';
+  // 副作用导入：单例构造时读取已保存的背景并应用到页面
+  import './lib/backgroundManager.js';
 
   import TodayPage from './pages/TodayPage.svelte';
   import ChatPage from './pages/ChatPage.svelte';

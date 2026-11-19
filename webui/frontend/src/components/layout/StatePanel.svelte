@@ -12,33 +12,72 @@
   let data = $state(null);
   let loading = $state(false);
   let failed = $state('');
+  // data 当前属于哪个会话：切会话后旧载荷必须先清掉，
+  // 否则新会话加载失败时会一直显示上一个会话的心情/记忆。
+  let dataCid = $state(null);
 
   $effect(() => {
     const cid = session.conversationId;
     const rev = stateRevision.n; // 依赖刷新信号：对话结束后重新拉取
     void rev;
     let alive = true;
+    let inflight = false;
+    let timer = null;
     loading = true;
     failed = '';
-    (async () => {
-      // 没有活动会话时先解析一个，否则会读到空的默认作用域
-      const effective = cid || (await ensureActiveConversation());
+
+    const POLL_MS = 60_000;
+
+    function schedule() {
       if (!alive) return;
-      if (!effective) {
-        loading = false;
-        return;
-      }
+      clearTimeout(timer);
+      // 隐藏的标签页不轮询；重新可见时由 visibilitychange 立刻补一次
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      timer = setTimeout(load, POLL_MS);
+    }
+
+    async function load() {
+      if (!alive || inflight) return; // 防止慢请求与新请求重叠导致乱序覆盖
+      inflight = true;
       try {
+        // 没有活动会话时先解析一个，否则会读到空的默认作用域
+        const effective = cid || (await ensureActiveConversation());
+        if (!alive) return;
+        if (!effective) {
+          loading = false;
+          return;
+        }
+        if (dataCid && dataCid !== effective) {
+          // 换会话：先把旧会话的数据清掉，失败时才能正确进入错误态
+          data = null;
+          failed = '';
+        }
         const d = await fetchState(effective);
-        if (alive) data = d;
+        if (!alive) return;
+        data = d;
+        dataCid = effective;
+        failed = ''; // 成功后必须清掉旧的错误态，否则面板永久停在「状态暂时读不到」
       } catch (e) {
-        if (alive) failed = e.message || '加载失败';
+        // 当前会话尚无数据时才展示错误；轮询失败不覆盖已有内容
+        if (alive && !data) failed = e.message || '加载失败';
       } finally {
         if (alive) loading = false;
+        inflight = false;
+        schedule();
       }
-    })();
+    }
+
+    function onVisibility() {
+      if (document.visibilityState === 'visible') load();
+      else clearTimeout(timer);
+    }
+
+    load();
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       alive = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   });
 
