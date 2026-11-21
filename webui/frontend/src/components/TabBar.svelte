@@ -21,24 +21,24 @@
 
   const iconFor = {
     today: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="1"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="1"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>`,
     chat: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`,
     contacts: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
     discover: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
     memory: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
     settings: (color) => `
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
 </script>
 
-<nav class="tabbar {vertical ? 'vertical' : 'horizontal'}" class:rail={rail && vertical} aria-label="主导航">
+<nav class="tabbar {vertical ? 'vertical' : 'horizontal glass-3'}" class:rail={rail && vertical} aria-label="主导航">
   {#each navTabs(layout.mode) as tab}
     {@const selected = active === tab}
-    {@const color = selected ? 'var(--accent)' : 'var(--tab-inactive)'}
+    {@const color = 'currentColor'}
     <button
       class="tab {selected ? 'is-active' : ''}"
       type="button"
@@ -71,184 +71,120 @@
 </nav>
 
 <style>
-  .tabbar {
-    display: flex;
-  }
+  .tabbar { display: flex; }
 
-  /* ---- 移动端: 底部横排 ----
-     glass-1 (chrome 档): 底栏在滚动内容之上浮动时, 让内容从底下
-     透出来比一条实心色带更能表达"我还在这一页"。
-     兜底为不透明 --surface, 见下方 @supports。 */
   .horizontal {
-    flex-direction: row;
+    position: relative;
+    z-index: var(--z-sticky);
+    flex: none;
     align-items: stretch;
-    flex: none;
-    height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
-    padding: 0 var(--space-2);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    background: var(--surface);
-    border-top: 1px solid var(--glass-border-2);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .horizontal {
-      background: var(--glass-1);
-      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .horizontal {
-      background: var(--surface);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  .horizontal .tab {
-    flex: 1;
-    min-width: 0;
-    flex-direction: column;
-    justify-content: center;
-    gap: var(--optical-3);
-    padding: 0;
-    border-radius: 0;
+    min-height: var(--tabbar-h);
+    margin: var(--space-1) var(--space-3) max(var(--space-2), env(safe-area-inset-bottom, 0px));
+    padding: var(--space-1);
+    border-radius: var(--radius-pill);
   }
 
-  /* ---- 桌面端: 侧栏竖排 ---- */
-  .vertical {
-    flex-direction: column;
-    padding: var(--space-2) 0;
-    width: 100%;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
-  }
-  .vertical::-webkit-scrollbar { width: 8px; }
-  .vertical::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border: 2px solid transparent;
-    background-clip: padding-box;
-    border-radius: var(--radius-full);
-  }
-  .vertical .tab {
-    flex-direction: row;
-    justify-content: flex-start;
-    gap: var(--optical-10);
-    height: 32px;
-    flex: none;
-    padding: 0 var(--space-4);
-    font-size: var(--text-13);
-    letter-spacing: 0.005em;
-    border-left: 2px solid transparent;
-  }
-
-  .tab {
+  .tab,
+  .sub-tab {
     position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--tab-inactive);
-    font-size: var(--text-xs);
-    font-weight: 400;
-    line-height: 1.2;
+    font: inherit;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: color var(--transition), background var(--transition), border-color var(--transition);
   }
-  .tab:hover {
-    color: var(--tab-hover);
-    background: var(--row-hover);
-  }
-  .tab:active { background: var(--row-active); }
 
-  /* 选中态: 冷蓝文字 + 冷蓝左标 + 一层极淡冷蓝底。
-     原来是 surface-2（暖灰），和 hover 行几乎同色，扫视时找不到
-     「我现在在哪」；换成 accent-wash 之后选中项在暖色侧栏里是唯一
-     一块偏蓝的，眼睛一眼落上去。 */
-  .tab.is-active {
+  .tab:hover,
+  .sub-tab:hover { background: var(--row-hover); color: var(--tab-hover); }
+
+  .tab.is-active,
+  .sub-tab.on {
+    background: var(--accent-soft);
     color: var(--accent);
-    font-weight: 500;
+    font-weight: 650;
   }
-  .vertical .tab.is-active {
-    background: var(--accent-wash);
-    border-left-color: var(--accent);
+
+  .horizontal .tab {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--optical-3);
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-2xs);
+    line-height: 1.2;
   }
-  .vertical .tab.is-active .tab-icon { color: var(--accent); }
 
   .tab-icon {
     display: inline-flex;
     flex: none;
-  }
-  .tab-label {
-    white-space: nowrap;
+    transition: transform var(--transition-spring), filter var(--transition-fast);
   }
 
-  /* ---- 设置分类 (展开式, 缩进在「设置」下方) ---- */
+  .horizontal .tab.is-active .tab-icon {
+    transform: scale(1.12);
+    filter: drop-shadow(0 2px 5px var(--accent-glow));
+  }
+
+  .tab-label { white-space: nowrap; }
+
+  .vertical {
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-height: 0;
+    padding: var(--space-2);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  .vertical .tab {
+    flex: none;
+    justify-content: flex-start;
+    gap: var(--optical-10);
+    min-height: 42px;
+    padding: 0 var(--space-4);
+    font-size: var(--text-sm);
+  }
+
+  .vertical .is-active::before,
+  .sub-tab.on::before {
+    position: absolute;
+    inset-block: 29%;
+    inset-inline-start: 4px;
+    width: 3px;
+    border-radius: var(--radius-pill);
+    background: currentColor;
+    content: '';
+  }
+
   .sub-tabs {
     display: flex;
     flex-direction: column;
-    padding: var(--space-1) 0 var(--space-2);
-  }
-  /* 缩进对齐上一级图标的右缘: 16(pad) + 15(icon) + 10(gap) = 41px */
-  .sub-tab {
-    display: flex;
-    align-items: center;
-    height: 27px;
-    padding: 0 var(--space-4) 0 41px;
-    border: none;
-    border-left: 2px solid transparent;
-    background: transparent;
-    font-family: inherit;
-    font-size: var(--text-xs);
-    letter-spacing: 0.01em;
-    color: var(--text-2);
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    transition: color var(--transition), background var(--transition), border-color var(--transition);
-  }
-  .sub-tab:hover { background: var(--row-hover); color: var(--text-1); }
-  .sub-tab.on {
-    color: var(--accent);
-    font-weight: 500;
-    border-left-color: var(--accent-line);
-  }
-  .sub-sep {
-    height: 1px;
-    margin: var(--space-1) var(--space-4) var(--space-1) 41px;
-    background: var(--border);
+    gap: var(--optical-2);
+    padding: 0 0 var(--space-2) var(--space-3);
   }
 
-  /* ---- 图标轨 (rail) ----
-     桌面侧栏收到 64px 宽: 只留图标, 文字与设置分类全部收起。
-     选中态从「左侧竖线 + 淡底」换成「圆角方块底」—— 竖线在窄轨上
-     贴着屏幕边缘, 反而看不清。 */
-  .vertical.rail {
-    padding: var(--space-2);
-    gap: var(--optical-2);
-    align-items: stretch;
+  .sub-tab {
+    min-height: 32px;
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
+    text-align: left;
   }
-  .vertical.rail .tab {
-    justify-content: center;
-    height: 38px;
-    padding: 0;
-    border-left: none;
-    border-radius: var(--radius-sm);
-    gap: 0;
+
+  .sub-sep {
+    height: 1px;
+    margin: var(--space-1) var(--space-3);
+    background: var(--surface-divider);
   }
-  .vertical.rail .tab-label {
-    display: none;
-  }
-  .vertical.rail .tab:hover {
-    background: var(--row-hover);
-  }
-  .vertical.rail .tab.is-active {
-    background: var(--accent-wash);
-  }
+
+  .vertical.rail .tab { justify-content: center; gap: 0; padding: 0; }
+  .vertical.rail .tab-label { display: none; }
 </style>

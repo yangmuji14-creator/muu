@@ -1,289 +1,210 @@
-/* ============================================================
-   慕 · Liquid Glass — 覆盖层
+/* 慕 · Liquid Glass
+   浅色暖瓷与深色黑曜石共用同一组基础刻度。 */
 
-   只覆盖 tokens.css 里的「值」，不删任何变量。
-   加载顺序: tokens.css → theme-liquid.css（main.js 保证）。
-
-   方向:
-   - Apple 液态玻璃: 玻璃更透 (alpha 0.46~0.60)、高光更亮、圆角更圆
-   - 暖中性色: 米白 / 暖灰 / 琥珀强调, 去掉蓝紫冷调
-   - 背景图: --ambient-image 由 backgroundManager 写入,
-     body::before 已铺在 z-index:-1, 玻璃层 blur 它
-   ============================================================ */
-
-/* ---- 圆角整体放大 (Apple 风格) ---- */
-:root {
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
-
-  /* ImmersiveShell 早期改动引用过的别名, 保证不落空 */
-  --glass-light: var(--glass-1);
-  --glass-medium: var(--glass-2);
-  --glass-heavy: var(--glass-3);
-}
-
-/* ============================================================
-   浅色 — 暖米白 + 琥珀
-   ============================================================ */
+:root,
 [data-theme='light'] {
-  --bg: #e9e6df;
-  --surface: #fbfaf6;
-  --surface-2: #f2efe8;
-  --surface-3: #e6e2d9;
-  --surface-inset: #f5f2ec;
+  color-scheme: light;
 
-  --text-1: #1e1b17;
-  --text-2: #4d4841;
-  --text-3: #7d776c;
-  --text-inverse: #fdfcf9;
+  --bg: #f6f5f2;
+  --canvas-end: #efece6;
+  --surface: #fff;
+  --surface-2: #f6f5f3;
+  --surface-3: #ebe9e6;
+  --surface-inset: #f2f0ed;
 
-  --border: #d8d3c8;
-  --border-strong: #8d8679;
+  --text-1: #18181b;
+  --text-2: #52525b;
+  /* 三级文字刻意压低对比度（约 3:1），是这一版设计的元信息层级。
+     AA 4.5:1 不达标 —— 已知且已接受的例外，见 tests/test_design_tokens.py
+     的 TestTertiaryTextException；不要为了过测试改这里的色值。 */
+  --text-3: #8e8e93;
+  --text-inverse: #fff;
 
-  --accent: #b45309;
-  --accent-strong: #92400e;
-  --accent-soft: #fbe8d3;
-  --on-accent: #ffffff;
-  --accent-contrast: #ffffff;
+  --border: rgba(24, 24, 27, 0.10);
+  --border-strong: #84848c;
+  --surface-divider: rgba(0, 0, 0, 0.04);
+
+  --surface-panel: rgba(255, 255, 255, 0.48);
+  --surface-stage: rgba(255, 255, 255, 0.86);
+  --surface-floating: rgba(255, 255, 255, 0.88);
+  --surface-bubble: rgba(255, 255, 255, 0.96);
+  /* 减弱透明时的兜底实色 = 玻璃与其氛围色按 alpha 合成后的颜色
+     （三列共用一档，取三条合成色的中位值，误差 ≤3）。 */
+  --col-nav-solid: #f9f7f5;
+  --col-aside-solid: var(--col-nav-solid);
+  --col-list-solid: var(--col-nav-solid);
+  --col-content-solid: #fdfcfb;
+
+  --stage-highlight: rgba(255, 255, 255, 0.75);
+  --floating-highlight: rgba(255, 255, 255, 0.90);
+  --mat-specular-soft: rgba(255, 255, 255, 0.36);
+  --shadow-1: 0 1px 3px rgba(15, 23, 42, 0.07);
+  --shadow-2: 0 3px 12px -3px rgba(15, 23, 42, 0.09);
+  --shadow-3: 0 8px 32px -8px rgba(15, 23, 42, 0.06);
+  --shadow-4: 0 20px 48px -12px rgba(0, 0, 0, 0.18);
+
+  --ambient-a: #f6f5f2;
+  --ambient-b: #f3f0eb;
+  --ambient-c: #f7f5ef;
+  --ambient-d: #efece6;
+  --ambient-tint: rgba(246, 245, 242, 0.58);
+
+  --accent: #a44e13;
+  --accent-hover: #873d10;
+  --on-accent: #fff;
 
   --success: #2f6f4f;
   --warning: #8a5a12;
   --error: #a63d34;
-  --info: #5b6a94;
-  --on-success: #ffffff;
-  --on-warning: #ffffff;
-  --on-error: #ffffff;
-
-  --overlay: rgba(30, 27, 23, 0.38);
-  --hover-overlay: rgba(30, 27, 23, 0.05);
-  --active-overlay: rgba(30, 27, 23, 0.09);
-  --disabled-text: rgba(30, 27, 23, 0.32);
-  --disabled-bg: rgba(30, 27, 23, 0.05);
-  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
-
+  --info: #3d6391;
+  --on-success: #fff;
+  --on-warning: #fff;
+  --on-error: #fff;
   --success-soft: rgba(47, 111, 79, 0.12);
   --warning-soft: rgba(138, 90, 18, 0.12);
   --error-soft: rgba(166, 61, 52, 0.12);
-  --info-soft: rgba(91, 106, 148, 0.12);
+  --info-soft: rgba(61, 99, 145, 0.12);
 
-  /* 氛围层: 奶油杏桃 + 一点玫瑰 */
-  --ambient-a: #ffd9ad;
-  --ambient-b: #ffe8c4;
-  --ambient-c: #f4d9cf;
-  --ambient-d: #ece5d3;
-
-  /* 玻璃: 更透 + 更白 */
-  --glass-0: rgba(30, 27, 23, 0.30);
-  --glass-1: rgba(252, 250, 246, 0.56);
-  --glass-2: rgba(252, 250, 246, 0.68);
-  --glass-3: rgba(252, 250, 246, 0.78);
-  --glass-ultrathin: rgba(252, 250, 246, 0.34);
-  --glass-thin: rgba(252, 250, 246, 0.48);
-  --glass-regular: rgba(252, 250, 246, 0.58);
-  --glass-thick: rgba(252, 250, 246, 0.70);
-  --glass-ultrathick: rgba(252, 250, 246, 0.80);
-
-  --glass-nav: rgba(252, 250, 246, 0.44);
-  --glass-aside: rgba(252, 250, 246, 0.44);
-  --glass-list: rgba(252, 250, 246, 0.44);
-  --glass-content: rgba(252, 250, 246, 0.44);
-
-  --col-nav-solid: #cfc8b9;
-  --col-aside-solid: #e2d7c8;
-  --col-list-solid: #dcd6c8;
-  --col-content-solid: #ece8df;
-
-  --glass-border: rgba(255, 255, 255, 0.72);
-  --glass-border-2: rgba(120, 108, 88, 0.22);
-
-  /* 材质: 高光更亮, 更像玻璃受光 */
-  --mat-specular: rgba(255, 255, 255, 0.58);
-  --mat-shade: rgba(120, 108, 88, 0.16);
-  --mat-specular-soft: rgba(255, 255, 255, 0.20);
-  --mat-shade-soft: rgba(120, 108, 88, 0.08);
-  --mat-lit: rgba(255, 255, 255, 0.95);
-  --mat-hairline: rgba(255, 255, 255, 0.62);
-  --mat-hairline-dark: rgba(120, 108, 88, 0.18);
+  --overlay: rgba(24, 24, 27, 0.38);
+  --scrim: var(--overlay);
+  --hover-overlay: rgba(24, 24, 27, 0.05);
+  --active-overlay: rgba(24, 24, 27, 0.09);
+  --disabled-text: rgba(24, 24, 27, 0.36);
+  --disabled-bg: rgba(24, 24, 27, 0.05);
+  --field-fill: rgba(0, 0, 0, 0.035);
 }
 
-/* ============================================================
-   深色 — 暖炭黑 + 琥珀
-   ============================================================ */
 [data-theme='dark'] {
-  --bg: #0e0c0a;
-  --surface: #191613;
-  --surface-2: #221e19;
-  --surface-3: #2d2822;
-  --surface-inset: #100e0c;
+  color-scheme: dark;
 
-  --text-1: #f3efe8;
-  --text-2: #c9c2b6;
-  --text-3: #9b9386;
-  --text-inverse: #14110d;
+  --bg: #0d0e12;
+  --canvas-end: #13151b;
+  --surface: #22252e;
+  --surface-2: #282b34;
+  --surface-3: #343741;
+  --surface-inset: #1a1c23;
 
-  --border: #38322b;
-  --border-strong: #87806f;
+  --text-1: #f4f4f5;
+  --text-2: #a1a1aa;
+  /* 同浅色：三级文字是刻意压低的元信息层，AA 例外见 TestTertiaryTextException。 */
+  --text-3: #71717a;
+  --text-inverse: #11131a;
 
-  --accent: #ffb340;
-  --accent-strong: #ffc76b;
-  --accent-soft: #3a2a10;
-  --on-accent: #1c1206;
-  --accent-contrast: #1c1206;
+  --border: rgba(255, 255, 255, 0.11);
+  --border-strong: #8b8b96;
+  --surface-divider: rgba(255, 255, 255, 0.06);
 
-  --success: #7bd39a;
-  --warning: #e6bb6a;
-  --error: #f08d84;
-  --info: #9db0d8;
-  --on-success: #14110d;
-  --on-warning: #14110d;
-  --on-error: #14110d;
+  --surface-panel: rgba(24, 26, 32, 0.55);
+  --surface-stage: rgba(28, 31, 39, 0.82);
+  --surface-floating: rgba(34, 37, 46, 0.88);
+  --surface-bubble: #22252e;
+  /* 深色三列的合成色 (19,21,26)/(22,24,32)/(22,24,30) 取中位值。 */
+  --col-nav-solid: #15171d;
+  --col-aside-solid: var(--col-nav-solid);
+  --col-list-solid: var(--col-nav-solid);
+  --col-content-solid: #1c1f27;
 
-  --overlay: rgba(0, 0, 0, 0.68);
-  --hover-overlay: rgba(255, 235, 205, 0.06);
-  --active-overlay: rgba(255, 235, 205, 0.11);
-  --disabled-text: rgba(243, 239, 232, 0.28);
-  --disabled-bg: rgba(243, 239, 232, 0.05);
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --stage-highlight: rgba(255, 255, 255, 0.08);
+  --floating-highlight: rgba(255, 255, 255, 0.14);
+  --mat-specular-soft: rgba(255, 255, 255, 0.08);
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-2: 0 4px 14px -4px rgba(0, 0, 0, 0.40);
+  --shadow-3: 0 8px 32px -8px rgba(0, 0, 0, 0.30);
+  --shadow-4: 0 20px 48px -12px rgba(0, 0, 0, 0.55);
 
-  --success-soft: rgba(123, 211, 154, 0.13);
-  --warning-soft: rgba(230, 187, 106, 0.13);
-  --error-soft: rgba(240, 141, 132, 0.13);
-  --info-soft: rgba(157, 176, 216, 0.13);
+  --ambient-a: #0d0e12;
+  --ambient-b: #141620;
+  --ambient-c: #15171f;
+  --ambient-d: #13151b;
+  --ambient-tint: rgba(13, 14, 18, 0.70);
 
-  /* 氛围层: 暖棕 + 暗墨绿 + 一点酒红 */
-  --ambient-a: #4a2c12;
-  --ambient-b: #2a1e28;
-  --ambient-c: #1c2a22;
-  --ambient-d: #241a10;
+  --accent: #f0ab61;
+  --accent-hover: #ffc184;
+  --on-accent: #241508;
 
-  /* 玻璃: 明显更透 (0.60), 让背景图真正透上来 */
-  --glass-0: rgba(8, 6, 4, 0.50);
-  --glass-1: rgba(25, 21, 17, 0.58);
-  --glass-2: rgba(25, 21, 17, 0.68);
-  --glass-3: rgba(25, 21, 17, 0.78);
-  --glass-ultrathin: rgba(25, 21, 17, 0.38);
-  --glass-thin: rgba(25, 21, 17, 0.48);
-  --glass-regular: rgba(25, 21, 17, 0.56);
-  --glass-thick: rgba(25, 21, 17, 0.66);
-  --glass-ultrathick: rgba(25, 21, 17, 0.74);
+  --success: #82d1a3;
+  --warning: #e9bd72;
+  --error: #f19793;
+  --info: #9abde5;
+  --on-success: #132019;
+  --on-warning: #251a0d;
+  --on-error: #291517;
+  --success-soft: rgba(130, 209, 163, 0.14);
+  --warning-soft: rgba(233, 189, 114, 0.14);
+  --error-soft: rgba(241, 151, 147, 0.14);
+  --info-soft: rgba(154, 189, 229, 0.14);
 
-  --glass-nav: rgba(25, 21, 17, 0.46);
-  --glass-aside: rgba(25, 21, 17, 0.46);
-  --glass-list: rgba(25, 21, 17, 0.46);
-  --glass-content: rgba(25, 21, 17, 0.46);
-
-  --col-nav-solid: #241f19;
-  --col-aside-solid: #2a231d;
-  --col-list-solid: #292319;
-  --col-content-solid: #221c15;
-
-  --glass-border: rgba(255, 236, 208, 0.12);
-  --glass-border-2: rgba(255, 236, 208, 0.16);
-
-  --mat-specular: rgba(255, 240, 214, 0.16);
-  --mat-shade: rgba(0, 0, 0, 0.34);
-  --mat-specular-soft: rgba(255, 240, 214, 0.08);
-  --mat-shade-soft: rgba(0, 0, 0, 0.18);
-  --mat-lit: rgba(255, 236, 208, 0.22);
-  --mat-hairline: rgba(255, 236, 208, 0.20);
-  --mat-hairline-dark: rgba(0, 0, 0, 0.46);
+  --overlay: rgba(0, 0, 0, 0.66);
+  --scrim: var(--overlay);
+  --hover-overlay: rgba(255, 255, 255, 0.07);
+  --active-overlay: rgba(255, 255, 255, 0.11);
+  --disabled-text: rgba(244, 244, 245, 0.36);
+  --disabled-bg: rgba(244, 244, 245, 0.06);
+  --field-fill: rgba(255, 255, 255, 0.05);
 }
 
-/* ============================================================
-   背景图适配
-   ============================================================ */
-
-/* 透明度遮罩: backgroundManager 写入 --ambient-scrim */
-html::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: var(--ambient-scrim, transparent);
+/* 琥珀是亮暗主题块的默认强调色。柔和底色与光晕由主色派生。 */
+[data-accent='blue'] {
+  --accent: #2264c6;
+  --accent-hover: #194fa3;
+  --on-accent: #fff;
 }
 
-/* 沉浸模式外壳原为不透明 --surface, 会盖住背景图 —— 让出来 */
+[data-theme='dark'][data-accent='blue'] {
+  --accent: #83b6ff;
+  --accent-hover: #a1caff;
+  --on-accent: #0a172a;
+}
+
+[data-accent='teal'] {
+  --accent: #0d746a;
+  --accent-hover: #075c54;
+  --on-accent: #fff;
+}
+
+[data-theme='dark'][data-accent='teal'] {
+  --accent: #67cfc0;
+  --accent-hover: #8de3d8;
+  --on-accent: #09211d;
+}
+
+[data-accent='rose'] {
+  --accent: #a83e64;
+  --accent-hover: #8d2f51;
+  --on-accent: #fff;
+}
+
+[data-theme='dark'][data-accent='rose'] {
+  --accent: #f092b1;
+  --accent-hover: #ffb0cb;
+  --on-accent: #29111c;
+}
+
+[data-accent='violet'] {
+  --accent: #6946c0;
+  --accent-hover: #5333a1;
+  --on-accent: #fff;
+}
+
+[data-theme='dark'][data-accent='violet'] {
+  --accent: #b29afa;
+  --accent-hover: #cbb9ff;
+  --on-accent: #1e152e;
+}
+
+[data-accent='slate'] {
+  --accent: #4c5e79;
+  --accent-hover: #3b4c65;
+  --on-accent: #fff;
+}
+
+[data-theme='dark'][data-accent='slate'] {
+  --accent: #aebfd8;
+  --accent-hover: #c5d3e8;
+  --on-accent: #141d2b;
+}
+
+/* 沉浸外壳露出底层画布与壁纸。 */
 .imm {
   background: transparent !important;
-}
-
-/* ============================================================
-   全局动效 (ImmersiveShell 引用)
-   ============================================================ */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.92); }
-}
-
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(24px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-/* ============================================================
-   强调色预设 — data-accent 挂在 <html> 上
-   浅色/深色各一套; 未指定或 amber 时使用上面的默认值
-   ============================================================ */
-
-[data-theme='light'][data-accent='amber'] {
-  --accent: #b45309; --accent-strong: #92400e; --accent-soft: #fbe8d3;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='amber'] {
-  --accent: #ffb340; --accent-strong: #ffc76b; --accent-soft: #3a2a10;
-  --on-accent: #1c1206; --accent-contrast: #1c1206;
-}
-
-[data-theme='light'][data-accent='blue'] {
-  --accent: #0b6bcb; --accent-strong: #0954a3; --accent-soft: #e1effc;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='blue'] {
-  --accent: #4da3ff; --accent-strong: #79bbff; --accent-soft: #122a40;
-  --on-accent: #08111c; --accent-contrast: #08111c;
-}
-
-[data-theme='light'][data-accent='teal'] {
-  --accent: #0d7d72; --accent-strong: #095f57; --accent-soft: #dcf1ee;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='teal'] {
-  --accent: #4fd1c1; --accent-strong: #7ee3d6; --accent-soft: #0f2a27;
-  --on-accent: #06130f; --accent-contrast: #06130f;
-}
-
-[data-theme='light'][data-accent='rose'] {
-  --accent: #b83a63; --accent-strong: #94294e; --accent-soft: #fbe3ec;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='rose'] {
-  --accent: #ff7fa3; --accent-strong: #ffa0bc; --accent-soft: #3a141f;
-  --on-accent: #1a0a10; --accent-contrast: #1a0a10;
-}
-
-[data-theme='light'][data-accent='violet'] {
-  --accent: #6d3fd4; --accent-strong: #5730b0; --accent-soft: #ece5fb;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='violet'] {
-  --accent: #a78bfa; --accent-strong: #c4b1fd; --accent-soft: #241b3d;
-  --on-accent: #160f28; --accent-contrast: #160f28;
-}
-
-[data-theme='light'][data-accent='slate'] {
-  --accent: #42506b; --accent-strong: #2f3a50; --accent-soft: #e7ebf2;
-  --on-accent: #ffffff; --accent-contrast: #ffffff;
-}
-[data-theme='dark'][data-accent='slate'] {
-  --accent: #a9b8d4; --accent-strong: #c6d2e8; --accent-soft: #1d2534;
-  --on-accent: #0b1018; --accent-contrast: #0b1018;
 }

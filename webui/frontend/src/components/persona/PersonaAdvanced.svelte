@@ -1,4 +1,5 @@
 <script>
+  import './editor.css';
   // PersonaAdvanced.svelte — 「高级 / 全部字段」折叠区
   //
   // 默认收起；点击头部展开全部字段。展开后按原分组以手风琴展示
@@ -40,17 +41,17 @@
   }
 </script>
 
-<div class="advanced">
+<div class="advanced persona-surface">
   <button
-    class="adv-toggle"
+    class="persona-disclosure"
     type="button"
     aria-expanded={expanded}
     onclick={toggleAll}
   >
     <span class="adv-label">高级 / 全部字段</span>
-    <span class="adv-count">{totalCount} 个</span>
+    <span class="persona-disclosure-meta">{totalCount} 个</span>
     <svg
-      class="adv-arrow {expanded ? 'is-open' : ''}"
+      class="persona-chevron {expanded ? 'is-open' : ''}"
       viewBox="0 0 24 24"
       width="18"
       height="18"
@@ -64,19 +65,19 @@
   </button>
 
   {#if expanded}
-    <div class="adv-groups">
+    <div class="adv-groups persona-reveal">
       {#each groups as g (g.id)}
         <section class="adv-group">
           <button
-            class="adv-group-head"
+            class="persona-disclosure"
             type="button"
             aria-expanded={!!openGroups[g.id]}
             onclick={() => toggleGroup(g.id)}
           >
             <span class="adv-group-label">{g.label}</span>
-            <span class="adv-group-n">{g.fields.length}</span>
+            <span class="persona-disclosure-meta">{g.fields.length}</span>
             <svg
-              class="adv-arrow {openGroups[g.id] ? 'is-open' : ''}"
+              class="persona-chevron {openGroups[g.id] ? 'is-open' : ''}"
               viewBox="0 0 24 24"
               width="16"
               height="16"
@@ -90,20 +91,20 @@
           </button>
 
           {#if openGroups[g.id]}
-            <div class="adv-group-body">
+            <div class="adv-group-body persona-reveal">
               {#if g.hint}
-                <p class="group-hint">{g.hint}</p>
+                <p class="persona-hint">{g.hint}</p>
               {/if}
               <div class="adv-fields">
                 {#each g.fields as meta (meta.key)}
-                  <label class="field">
-                    <span class="field-label">{meta.label}</span>
+                  <div class="persona-field" role="group" aria-label={meta.label}>
+                    <span class="persona-label">{meta.label}</span>
                     <PersonaField item={form[meta.key]} />
-                  </label>
+                  </div>
                 {/each}
               </div>
               <div class="adv-save">
-                <button class="btn btn-outline btn-sm" type="button" disabled={saving} onclick={() => saveGroup(g)}>
+                <button class="persona-action" type="button" disabled={saving} onclick={() => saveGroup(g)}>
                   {saving ? '保存中…' : `保存${g.label}`}
                 </button>
               </div>
@@ -116,175 +117,10 @@
 </div>
 
 <style>
-  .advanced {
-    margin-top: var(--space-2);
-  }
-  /* 折叠开关原来是「虚线圈」—— 虚线与这套设计语言里的实线分区语言冲突,
-     且一圈虚线在页面底部非常显眼。改成一行带下划线的文字开关:
-     左边 11px 微标签, 右边计数 + 箭头, 压在一条细线上。 */
-  .adv-toggle {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    width: 100%;
-    padding: var(--space-4) 0 var(--space-3);
-    background: transparent;
-    border: none;
-    border-top: 1px solid var(--border-strong);
-    border-radius: 0;
-    color: var(--text-3);
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: var(--tracking-wider);
-    cursor: pointer;
-    transition: color var(--transition), border-color var(--transition);
-  }
-  .adv-toggle:hover {
-    color: var(--text-1);
-    border-top-color: var(--accent-line);
-  }
-  .adv-label {
-    flex: 1;
-    text-align: left;
-  }
-  .adv-count {
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-    background: var(--surface-2);
-    border-radius: var(--radius-xs);
-    padding: var(--hair) var(--optical-7);
-  }
-  .adv-arrow {
-    transition: transform var(--transition);
-    color: var(--text-3);
-  }
-  .adv-arrow.is-open {
-    transform: rotate(180deg);
-  }
-
-  .adv-groups {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    margin-top: 0;
-  }
-  /* 分组不再是卡片: 去掉背景/边框/圆角, 只用一道细线切段,
-     组标题降为 13px/500。原先每组都是一张白卡套在折叠区里,
-     展开后能看到 4-5 个盒子并排, 这就是「盒套盒」的来源。 */
-  .adv-group {
-    background: transparent;
-    border: none;
-    border-top: 1px solid var(--border);
-    border-radius: 0;
-    box-shadow: none;
-    overflow: visible;
-  }
-  .adv-group:first-child {
-    border-top: none;
-  }
-  .adv-group-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    width: 100%;
-    padding: var(--space-3) 0;
-    background: transparent;
-    border: none;
-    color: var(--text-2);
-    font-size: var(--text-13);
-    font-weight: 500;
-    letter-spacing: var(--tracking-tight);
-    cursor: pointer;
-    transition: color var(--transition);
-  }
-  .adv-group-head:hover {
-    background: transparent;
-    color: var(--text-1);
-  }
-  .adv-group-label {
-    flex: 1;
-    text-align: left;
-  }
-  .adv-group-n {
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-  }
-  .adv-group-body {
-    padding: 0 0 var(--space-5) 0;
-    border-top: none;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .group-hint {
-    margin: 0;
-    font-size: var(--text-2xs);
-    line-height: 1.7;
-    color: var(--text-3);
-  }
-  .adv-fields {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-6);
-  }
-  /* 与 PersonaCard 的标签对齐: 13px/600 */
-  .field-label {
-    font-size: var(--text-13);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-2);
-  }
-  .adv-save {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  /* 按钮自带完整样式, 不依赖全局类 (同上, settings-base.css 已收进作用域)。 */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    height: var(--btn-h-md);
-    padding: 0 var(--space-4);
-    border: 1px solid transparent;
-    border-radius: var(--btn-radius);
-    font-family: var(--font-sans);
-    font-size: var(--text-sm);
-    font-weight: 500;
-    letter-spacing: var(--tracking-tight);
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background var(--transition), border-color var(--transition), transform var(--transition);
-  }
-  .btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-  .btn:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-  .btn-outline {
-    background: var(--btn-outline-bg);
-    border-color: var(--btn-outline-border);
-    color: var(--btn-outline-text);
-  }
-  .btn-outline:hover:not(:disabled) {
-    background: var(--btn-outline-hover);
-    border-color: var(--accent-line);
-  }
-  .btn-sm {
-    height: var(--btn-h-sm);
-    padding: 0 var(--space-3);
-    font-size: var(--text-xs);
-  }
+  .adv-label, .adv-group-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .adv-groups { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); }
+  .adv-group { min-width: 0; border-radius: var(--radius-md); background: var(--surface-2); }
+  .adv-group-body, .adv-fields { display: grid; gap: var(--space-3); }
+  .adv-group-body { padding: var(--space-3); }
+  .adv-save { display: flex; justify-content: flex-end; }
 </style>

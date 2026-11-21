@@ -1,6 +1,5 @@
 <script>
-  // ChatPage.svelte — 聊天页（完整业务逻辑）
-  // Svelte 5 runes。消费后端 /api/* 契约 (见 lib/chatApi.js), SSE 流式见 lib/chatStream.js。  // 只改本文件 + 自己的 lib 模块; 不动后端/全局结构/其它页面。
+  // 消息使用现有 content blocks 渲染，发送与历史同步继续走聊天 API。
   import {
     listConversations,
     createConversation,
@@ -18,7 +17,11 @@
   import { setActiveConversation, refreshState } from '../lib/session.svelte.js';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte.js';
   import { shell } from '../lib/shell.svelte.js';
+  import Avatar from '../components/Avatar.svelte';
   import ConfigNotice from '../components/ConfigNotice.svelte';
+  import { I } from '../components/settings/icons.js';
+
+  const icebreakers = ['今天过得怎么样？', '给我讲个小故事吧', '聊聊最近的心情'];
 
   // 后端将配置缺失/出错"包装成 done 事件的友好文案，命中即渲染为配置提示卡片而非普通气泡。
   const CONFIG_ERROR_TEXTS = [
@@ -60,7 +63,11 @@
   let modelChecking = $state(false);
 
   let showStickerPanel = $state(false);
+  let showChatTools = $state(false);
+  let conversationQuery = $state('');
   let uploading = $state(false);
+  let attachmentPreview = $state(null);
+  let imagePicker = $state(null);
   let previewImage = $state(null); // 点击气泡图片时的全屏预览 URL
   let voicePlayingUrl = $state(null); // 正在播放的语音条
   let voiceDurations = $state({});    // url -> 时长秒（metadata 加载后填充）
@@ -224,7 +231,62 @@
     streamChat({ content: merged });
   }
   let personaOfActive = $derived(activeConv?.persona_id ?? null);
-  let activePersona = $derived(personas.find((p) => p.id === personaOfActive) ?? null);
+  let personasById = $derived(new Map(personas.map((persona) => [persona.id, persona])));
+  let activePersona = $derived(personasById.get(personaOfActive) ?? null);
+  let companionName = $derived(activePersona?.name || activeConv?.persona_name || '慕');
+
+  let visibleConversations = $derived.by(() => {
+    const query = conversationQuery.trim().toLowerCase();
+    return query ? conversations.filter((conv) =>
+      [displayName(conv), conv.persona_name, channelName(conv.platform)]
+        .some((label) => String(label ?? '').toLowerCase().includes(query)),
+    ) : conversations;
+  });
+
+  // 每条消息的渲染视图：把 blocks/时间/是否合并/是否展示时间一次性算好。
+  // 模板里若逐个 {@const} 现算，流式每个 token 都会重跑整列（每行 2 次
+  // connectedMessages + formatTime + blocksOf + messageParts），长会话会卡。
+  // 这里统一成一趟，并复用相邻行的 time 判断「是否显示时间戳」。
+  let rowViews = $derived.by(() => {
+    const rows = [];
+    for (let i = 0; i < messages.length; i += 1) {
+      const m = messages[i];
+      const isUser = m.role === 'user';
+      const blocks = blocksOf(m);
+      const imgBlocks = blocks.filter((b) => b.type === 'image');
+      // 文本块先清洗旧版图片元文本，再预先解析成 parts（代码围栏/引用），
+      // 模板不再逐次重解析。
+      const restBlocks = blocks
+        .filter((b) => b.type !== 'image')
+        .map((b) => {
+          if (b.type !== 'text' || !b.text) return b;
+          const text = String(cleanLegacyImageText(b.text));
+          return { ...b, text, parts: messageParts(text) };
+        });
+      rows.push({
+        message: m,
+        isUser,
+        isStreaming: m.streaming === true,
+        joinedBefore: connectedMessages(messages[i - 1], m),
+        joinedAfter: connectedMessages(m, messages[i + 1]),
+        blocks,
+        imgBlocks,
+        restBlocks,
+        // 已清洗的文本里若只剩 [图片] 占位，就不另起一条文字气泡。
+        splitImage: isUser && imgBlocks.length > 0
+          && restBlocks.some((b) => b.type === 'text' && b.text && b.text.trim() !== '[图片]'),
+        time: formatTime(m.timestamp),
+      });
+    }
+    // 时间戳只在「下一行不是同组」或「与下一行时间不同」时显示；
+    // 复用已算好的 time，避免再 formatTime 一遍。
+    for (let i = 0; i < rows.length; i += 1) {
+      const next = rows[i + 1];
+      rows[i].showTime = Boolean(rows[i].time)
+        && (!rows[i].joinedAfter || rows[i].time !== next?.time);
+    }
+    return rows;
+  });
 
   // 把当前会话同步到全局 session, 供内心面板 / 今天页 / 沉浸抽屉读取
   $effect(() => {
@@ -254,7 +316,7 @@
   // 否则在通讯录/设置页上，外壳顶栏还会挂着聊天的重命名铅笔。
   $effect(() => {
     const onChat = ($route.page ?? 'chat') === 'chat';
-    if (!(onChat && isMobile && layout.mode !== 'immersive')) {
+    if (!onChat || !isMobile || layout.mode === 'immersive') {
       shell.chatHead = null;
       return;
     }
@@ -381,13 +443,14 @@
   // ---------- 会话操作 ----------
   let loadSeq = 0; // 会话历史加载序号：丢弃快速切换后的过期响应，避免旧会话串台
   async function selectConversation(id) {
+    if (isMobile) listOpen = false;
     if (id === activeConvId && messages.length > 0) return;
+    attachmentPreview = null;
     abortStream();
     activeConvId = id;
     phase = null;
     clearDebounce();
     pendingQueue = []; // 切换会话时丢弃未发出的排队消息，避免串到别的会话
-    if (isMobile) listOpen = false;
     openEventStream(id);
     messages = [];
     loadingHistory = true;
@@ -468,17 +531,20 @@
 
   // ---------- 发送（SSE 流式） ----------
   function send() {
-    const text = input.trim();
-    if (!text || uploading) return;
+    if (sendText(input.trim())) input = '';
+  }
+
+  function sendText(text) {
+    if (!text || uploading) return false;
     // 主动守卫: 模型未配置时拦截发送，引导去配置
     if (modelReady !== true) {
       showError('请先配置对话模型，AI 才能回复');
-      return;
+      return false;
     }
-    input = '';
-    // 立刻显示自己的气泡（像真人聊天），再进入去抖窗口
+    // 立即显示自己的消息，再进入去抖窗口。
     const msgRef = pushUserMessage(text);
     enqueue({ content: text, streamContent: text, msgRef });
+    return true;
   }
 
   function pushUserMessage(content, sticker, extra) {
@@ -490,7 +556,7 @@
       ...(extra || {}),
     };
     messages = [...messages, msg];
-    return msg;
+    return messages[messages.length - 1];
   }
 
   /** 旧版图片消息的元文本清洗（只影响显示，不改落库数据）：
@@ -626,6 +692,22 @@
     if (pendingQueue.length) submitPending();
   }
 
+  function stopReply() {
+    abortStream();
+    const index = messages.findIndex((message) => message.streaming);
+    if (index !== -1) {
+      const partial = messages[index];
+      messages = partial.content || partial.reasoning || partial.sticker
+        ? messages.map((message, i) => i === index ? { ...message, streaming: false } : message)
+        : messages.filter((_, i) => i !== index);
+    }
+    // 生成期间 enqueue() 不另起计时（sending 为真时直接入队），全靠正常结束
+    // 的 finishStreaming() 去提交。手动停止走的是 abortStream() 而不是
+    // finishStreaming()，如果不在这里补一次提交，用户在生成中排队的消息
+    // 会一直停在队列里：气泡在屏幕上、却永远发不出去。
+    if (pendingQueue.length) submitPending();
+  }
+
   function abortStream() {
     if (agentStream) {
       agentStream.abort();
@@ -640,27 +722,32 @@
   // ---------- 图片上传（PawzoChat/微信式：选图即发，秒回上屏，支持多选） ----------
   async function pickImageFile(ev) {
     const files = Array.from(ev.target.files || []);
+    const conversationId = activeConvId;
     ev.target.value = '';
-    for (const f of files) {
-      await sendImageFile(f);
+    for (const file of files) {
+      if (activeConvId !== conversationId || unmountAbort.signal.aborted) break;
+      await sendImageFile(file);
     }
   }
 
   /** 图片立即上屏并上传（后端秒回）→ 加入去抖序列与文字同窗；
    *  窗口内发文字 → 服务端认领聚合成图+文一轮；纯图 → 服务器看门兜底。 */
   async function sendImageFile(file) {
-    if (!activeConvId) {
+    const conversationId = activeConvId;
+    if (!conversationId) {
       showError('请先选择一个会话');
       return;
     }
     const url = URL.createObjectURL(file);
     uploading = true;
+    attachmentPreview = { url, name: file.name };
     // 图片气泡先上屏（本地预览），上传完成后换成服务端 URL
     const localMsg = pushUserMessage('[图片]', null, { image: url });
     try {
       const data = await uploadImage(file, {
-        conversation_id: activeConvId,
+        conversation_id: conversationId,
       });
+      if (activeConvId !== conversationId || unmountAbort.signal.aborted) return;
       const serverUrl = data?.image_url;
       if (serverUrl) {
         messages = messages.map((m) => (m === localMsg ? { ...m, image: serverUrl } : m));
@@ -671,9 +758,10 @@
     } catch (e) {
       // 上传失败：撤掉本地预览气泡，避免和服务器历史对不上
       messages = messages.filter((m) => m !== localMsg);
-      showError(e.message);
+      if (activeConvId === conversationId && !unmountAbort.signal.aborted) showError(e.message);
     } finally {
       uploading = false;
+      attachmentPreview = null;
       if (url && !serverUrlKept(url)) URL.revokeObjectURL(url);
     }
   }
@@ -719,8 +807,107 @@
   function stickerUrl(pack, emotion, filename) {
     return `/api/stickers/file/${encodeURIComponent(pack)}/${encodeURIComponent(emotion)}/${encodeURIComponent(filename)}`;
   }
-  function initialOf(name) {
-    return (name || '?').trim().slice(0, 1).toUpperCase();
+  function channelName(platform) {
+    if (platform === 'web') return 'Web';
+    if (platform === 'wechat') return '微信';
+    return platform || '';
+  }
+
+  function connectedMessages(first, second) {
+    if (!first || !second || first.role !== second.role) return false;
+    return Math.abs(Date.parse(second.timestamp) - Date.parse(first.timestamp)) < 5 * 60 * 1000;
+  }
+
+  // 只解析消息里的纯文本围栏与引用，由 Svelte 转义所有内容。
+  function messageParts(content) {
+    const parts = [];
+    let kind = 'text';
+    let lines = [];
+    let fence = '';
+    let language = '';
+
+    function flush() {
+      const text = lines.join('\n');
+      if (kind === 'code' || text.trim()) parts.push({ kind, text, language });
+      lines = [];
+    }
+
+    for (const line of content.replace(/\r\n?/g, '\n').split('\n')) {
+      if (kind === 'code') {
+        const closing = line.trim();
+        if (closing.startsWith(fence) && closing.split('').every((char) => char === fence[0])) {
+          flush();
+          kind = 'text';
+          language = '';
+        } else lines.push(line);
+        continue;
+      }
+
+      const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*([\w#+.-]{0,32})[ \t]*$/.exec(line);
+      if (opening) {
+        flush();
+        kind = 'code';
+        [, fence, language] = opening;
+        continue;
+      }
+
+      const quote = /^ {0,3}>[ \t]?(.*)$/.exec(line);
+      const nextKind = quote ? 'quote' : 'text';
+      if (nextKind !== kind) flush();
+      kind = nextKind;
+      lines.push(quote ? quote[1] : line);
+    }
+    flush();
+    return parts;
+  }
+
+  async function copyCode(text) {
+    const copied = await navigator.clipboard?.writeText(text).then(() => true, () => false);
+    if (copied || copySelection(text)) showToast('已复制代码');
+    else showError('复制失败，请选中代码后手动复制');
+  }
+
+  function copySelection(text) {
+    const selection = document.createElement('textarea');
+    const previous = document.activeElement;
+    selection.value = text;
+    selection.style.position = 'fixed';
+    selection.style.opacity = '0';
+    document.body.append(selection);
+    try {
+      selection.select();
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      selection.remove();
+      previous?.focus();
+    }
+  }
+
+  function focusInside(node, selector) {
+    node.querySelector(selector)?.focus();
+  }
+
+  function showImagePreview(node) {
+    node.showModal();
+    focusInside(node, '.img-preview-close');
+  }
+
+  function closeImagePreview(event) {
+    event?.preventDefault();
+    previewImage = null;
+  }
+
+  function handleEscape(event) {
+    if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+    if (menuOpen) {
+      menuOpen.trigger.focus();
+      closeMenu();
+    } else if (showStickerPanel || showChatTools) {
+      showStickerPanel = false;
+      showChatTools = false;
+    } else if (listOpen) listOpen = false;
   }
   function showError(msg) {
     error = msg;
@@ -754,13 +941,17 @@
   }
 
   // 会话行上右键/点按菜单 (零依赖 以定位弹层替代原生 prompt)
-  let menuOpen = $state(null); // { conv, x, y }
+  let menuOpen = $state(null); // { conv, x, y, trigger }
 
   function rowMenu(e, conv) {
     stopEvent(e);
     // 用按钮位置定位菜单，避免溢出边界
     const rect = e.currentTarget.getBoundingClientRect();
-    menuOpen = { conv, x: rect.right, y: rect.bottom + 4 };
+    if (menuOpen?.conv.conversation_id === conv.conversation_id) {
+      closeMenu();
+      return;
+    }
+    menuOpen = { conv, x: rect.right, y: rect.bottom + 4, trigger: e.currentTarget };
   }
 
   function closeMenu() {
@@ -794,18 +985,6 @@
     };
   });
 
-
-  async function renameConversationWithText(conv, title) {
-    try {
-      const updated = await updateConversation(conv.conversation_id, { title });
-      conversations = conversations.map((c) =>
-        c.conversation_id === updated.conversation_id ? updated : c,
-      );
-    } catch (e) {
-      showError(e.message);
-    }
-  }
-
   // 首次进入: 自动选中第一个会话(如有)
   $effect(() => {
     if (!loadingHistory && activeConvId === null && conversations.length > 0 && messages.length === 0) {
@@ -814,155 +993,229 @@
   });
 </script>
 
+<svelte:window onkeydown={handleEscape} />
+
 <div class="chat-page" class:immersive={layout.mode === 'immersive'}>
+  {#snippet icon(path, size = 18)}
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      {@html path}
+    </svg>
+  {/snippet}
+
+  {#snippet dots()}
+    <span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+  {/snippet}
+
+  {#snippet imageBlock(url)}
+    <button class="chat-image-btn" type="button" onclick={() => (previewImage = url)} aria-label="查看大图">
+      <img class="chat-image" src={url} alt="图片" loading="lazy" />
+    </button>
+  {/snippet}
+
+  {#snippet conversationPanel(inDrawer)}
+    <div class="panel-head">
+      <h2 class="panel-title">会话</h2>
+      <span class="panel-count" aria-label={'共 ' + conversations.length + ' 个会话'}>{conversations.length}</span>
+      <button
+        class="icon-btn add-btn"
+        type="button"
+        title="新建会话"
+        aria-label="新建会话"
+        onclick={inDrawer ? () => startWithPersona(personas[0]?.id) : newEmptyConversation}
+        disabled={inDrawer && !personas.length}
+      >{@render icon(I.plus)}</button>
+      {#if inDrawer}
+        <button class="icon-btn drawer-close" type="button" aria-label="关闭会话列表" onclick={() => (listOpen = false)}>
+          {@render icon(I.close)}
+        </button>
+      {/if}
+    </div>
+
+    <label class="conv-search">
+      {@render icon(I.search, 15)}
+      <input type="search" aria-label="搜索会话" placeholder="搜索会话" bind:value={conversationQuery} />
+    </label>
+
+    <div class="conv-list">
+      {#each visibleConversations as conv (conv.conversation_id)}
+        {@const convName = displayName(conv)}
+        {@const selected = conv.conversation_id === activeConvId}
+        {@const unread = Math.floor(Number(conv.unread_count))}
+        <div class="conv-entry" class:is-active={selected}>
+          <button
+            class="conv-row"
+            type="button"
+            aria-current={selected ? 'true' : undefined}
+            onclick={() => selectConversation(conv.conversation_id)}
+          >
+            <Avatar name={convName} src={personasById.get(conv.persona_id)?.avatar || ''} size={36} />
+            <span class="conv-meta">
+              <span class="conv-name">{convName}</span>
+              {#if conv.platform}<span class="conv-sub">{channelName(conv.platform)}</span>{/if}
+            </span>
+            {#if Number.isFinite(unread) && unread > 0}
+              <span class="unread-badge" title={unread + ' 条未读'}>{unread > 99 ? '99+' : unread}</span>
+            {/if}
+          </button>
+          <button
+            class="icon-btn row-menu"
+            type="button"
+            title="会话操作"
+            aria-label={convName + '的会话操作'}
+            aria-expanded={menuOpen?.conv.conversation_id === conv.conversation_id}
+            onclick={(event) => rowMenu(event, conv)}
+          >
+            {@render icon('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>')}
+          </button>
+        </div>
+      {:else}
+        <p class="conv-empty">{conversationQuery.trim() ? '没有找到匹配的会话。' : '新建会话，或从下方选择人设。'}</p>
+      {/each}
+    </div>
+
+    {#if personas.length}
+      <div class="persona-panel">
+        <span class="micro-label">人设</span>
+        <div class="persona-row">
+          {#each personas as p (p.id)}
+            <button class="persona-chip" type="button" title={p.name} onclick={() => startWithPersona(p.id)}>
+              <Avatar name={p.name} src={p.avatar || ''} size={22} />
+              <span>{p.name}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+  {/snippet}
+
   {#snippet recheckButton()}
-    <button class="config-recheck" type="button" onclick={checkModelHealth} disabled={modelChecking} title="重新检测">
+    <button class="config-recheck" type="button" onclick={checkModelHealth} disabled={modelChecking}>
       {modelChecking ? '检测中…' : '重新检测'}
     </button>
   {/snippet}
 
-  {#if isMobile && layout.mode !== 'immersive'}
-    <!-- 窄屏不再自绘标题栏: 内容交给外壳 TopBar 统一渲染, 避免两条顶栏叠加 -->
-  {/if}
-
   <div class="chat-body">
     {#if !isMobile && layout.mode !== 'immersive'}
-      <aside class="conv-panel">
-        <div class="panel-head">
-          <span class="panel-title">会话</span>
-          {#if conversations.length > 0}
-            <span class="panel-count">{conversations.length}</span>
-          {/if}
-          <button class="add-btn" onclick={() => newEmptyConversation()} title="新建会话">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
-        </div>
-        <div class="conv-list">
-          {#each conversations as conv}
-            <button
-              class="conv-row {conv.conversation_id === activeConvId ? 'is-active' : ''}"
-              onclick={() => selectConversation(conv.conversation_id)}
-            >
-              <span class="conv-dot">{initialOf(displayName(conv))}</span>
-              <span class="conv-meta">
-                <span class="conv-name">{displayName(conv)}</span>
-                <span class="conv-sub">{conv.platform === 'web' ? 'Web' : conv.platform}</span>
-              </span>
-              <span class="row-menu" onclick={(e) => rowMenu(e, conv)} role="button" tabindex="-1" title="操作" onkeydown={(e) => e.key === 'Enter' && rowMenu(e, conv)}>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
-              </span>
-            </button>
-          {/each}
-          {#if conversations.length === 0}
-            <div class="conv-empty">按 + 新建，或从下方人设开始。</div>
-          {/if}
-        </div>
-
-        <div class="panel-divider"></div>
-
-        <div class="persona-panel">
-          <span class="panel-title">人设</span>
-          <div class="persona-row" role="listbox">
-            {#each personas as p}
-              <button class="persona-chip" title={p.name} onclick={() => startWithPersona(p.id)}>
-                {#if p.avatar}
-                  <img class="chip-avatar" src={p.avatar} alt={p.name} loading="lazy" />
-                {:else}
-                  <span class="chip-avatar chip-fallback">{initialOf(p.name)}</span>
-                {/if}
-                <span class="chip-name">{p.name}</span>
-              </button>
-            {/each}
-          </div>
-        </div>
+      <aside class="conv-panel glass-1" aria-label="会话列表">
+        {@render conversationPanel(false)}
       </aside>
     {/if}
 
-    <section class="chat-stage">
-      <!-- 消息列表 -->
+    <section class="chat-stage glass-2" aria-label="聊天对话">
+      {#if layout.mode !== 'immersive'}
+        <header class="chat-heading">
+          {#if isMobile}
+            <button class="icon-btn" type="button" aria-label="会话列表" title="会话列表" onclick={() => (listOpen = true)}>
+              {@render icon('<path d="M4 6h16M4 12h16M4 18h16"/>')}
+            </button>
+          {/if}
+          <Avatar name={companionName} src={activePersona?.avatar || ''} size={38} />
+          <div class="heading-text">
+            <h1>{activeConv ? displayName(activeConv) : '聊天'}</h1>
+            {#if activeConv?.platform}<span>{channelName(activeConv.platform)}</span>{/if}
+          </div>
+          {#if isMobile && activeConv}
+            <button class="icon-btn" type="button" aria-label="重命名会话" title="重命名会话" onclick={() => renameConversation(activeConv)}>
+              {@render icon('<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>', 16)}
+            </button>
+          {/if}
+        </header>
+      {/if}
+
       <div class="msgs" class:empty={!loadingHistory && messages.length === 0} bind:this={messagesEl}>
         {#if loadingHistory}
-          <div class="center-hint">加载中…</div>
+          <div class="center-hint" role="status">{@render dots()}加载会话中…</div>
         {:else if messages.length === 0}
           <div class="welcome">
-            <div class="welcome-mark" aria-hidden="true">
-              <span class="brand-dot"></span>
+            <div class="welcome-avatar">
+              <Avatar name={companionName} src={activePersona?.avatar || ''} size={84} />
             </div>
-            <span class="welcome-kicker">{activeConv ? '继续对话' : '新的开始'}</span>
-            <h2 class="welcome-title">{activeConv ? displayName(activeConv) : '聊天'}</h2>
-            <p class="welcome-desc">
-              {#if activeConv}
-                和 {displayName(activeConv)} 打个招呼吧。可以发文字、图片或语音，也可以从左侧选择人设开启新对话。              {:else}
-                选择一个会话，或者挑一个人设开始。所有对话都留在这台机器上。              {/if}
-            </p>
-            {#if personas.length > 0 && !activeConv}
-              <div class="welcome-personas">
-                {#each personas as p}
-                  <button class="welcome-chip" onclick={() => startWithPersona(p.id)}>
-                    {#if p.avatar}
-                      <img class="chip-avatar" src={p.avatar} alt={p.name} />
-                    {:else}
-                      <span class="chip-avatar chip-fallback">{initialOf(p.name)}</span>
-                    {/if}
-                    <span class="chip-body">
-                      <span class="chip-name">{p.name}</span>
-                      <span class="chip-go">开始对话</span>
-                    </span>
+            <div class="welcome-heading">
+              <h2>{activeConv ? companionName : '和慕聊聊'}</h2>
+              {#if activeConv}<p>{activePersona?.description || '从一句问候开始'}</p>{/if}
+            </div>
+            {#if activeConv}
+              <p class="welcome-note">今天有什么想说的？一件小事也可以。</p>
+              {#if modelReady === true}
+                <div class="prompt-chips" role="group" aria-label="破冰话题">
+                  {#each icebreakers as prompt}
+                    <button class="prompt-chip" type="button" disabled={uploading} onclick={() => sendText(prompt)}>
+                      {prompt}{@render icon('<path d="M7 17 17 7M7 7h10v10"/>', 14)}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            {:else if personas.length}
+              <p class="welcome-note">选一位伴侣，开始新的对话。</p>
+              <div class="prompt-chips">
+                {#each personas as p (p.id)}
+                  <button class="prompt-chip" type="button" onclick={() => startWithPersona(p.id)}>
+                    <Avatar name={p.name} src={p.avatar || ''} size={24} />
+                    {p.name}
                   </button>
                 {/each}
               </div>
+            {:else}
+              <p class="welcome-note">在通讯录创建一位伴侣，就能开始聊天。</p>
+              <button class="prompt-chip" type="button" onclick={() => navigate('contacts')}>打开通讯录</button>
             {/if}
           </div>
         {:else}
-          {#each messages as m, i (i)}
-            {@const isUser = m.role === 'user'}
-            {@const isStreaming = m.streaming === true}
-            {@const blocks = blocksOf(m)}
-            {@const imgBlocks = blocks.filter((b) => b.type === 'image')}
-            {@const restBlocks = blocks.filter((b) => b.type !== 'image')}
-            {@const splitImage = isUser && imgBlocks.length > 0 && restBlocks.some((b) => b.type === 'text')}
+          {#each rowViews as row, i (i)}
+            {@const m = row.message}
+            {@const isUser = row.isUser}
+            {@const isStreaming = row.isStreaming}
+            {@const joinedBefore = row.joinedBefore}
+            {@const joinedAfter = row.joinedAfter}
+            {@const blocks = row.blocks}
+            {@const imgBlocks = row.imgBlocks}
+            {@const restBlocks = row.restBlocks}
+            {@const splitImage = row.splitImage}
+            {@const time = row.time}
+            {@const showTime = row.showTime}
+
             {#if splitImage}
-              <!-- 图片单独成一条消息（微信式：先发图、再发字），不附属文字气泡 -->
-              <div class="bubble-row self">
+              <div class="msg-row self" class:joins-before={joinedBefore}>
                 <div class="bubble-col">
                   {#each imgBlocks as b}
-                    <div class="image-bubble">
-                      <button class="chat-image-btn" type="button" onclick={() => (previewImage = b.url)} aria-label="查看大图">
-                        <img class="chat-image" src={b.url} alt="图片" loading="lazy" />
-                      </button>
-                    </div>
+                    {@render imageBlock(b.url)}
                   {/each}
-                  <span class="bubble-time">{formatTime(m.timestamp)}</span>
                 </div>
               </div>
             {/if}
-            <div class="bubble-row {isUser ? 'self' : 'friend'}">
-              {#if !isUser && !isStreaming}
-                <span class="av">{initialOf(activePersona?.name ?? activeConv?.persona_name ?? 'AI')}</span>
+
+            <div
+              class="msg-row {isUser ? 'self' : 'friend'}"
+              class:joins-before={joinedBefore || splitImage}
+              class:joins-after={joinedAfter}
+            >
+              {#if !isUser}
+                <span class="av" class:joined-avatar={joinedBefore} aria-hidden="true">
+                  <Avatar name={companionName} src={activePersona?.avatar || ''} size={32} />
+                </span>
               {/if}
               <div class="bubble-col">
                 {#if !isUser && isStreaming && !m.reasoning && !m.content}
-                  <!-- 还没吐思考内容时的占位：挂在消息列里（DeepSeek 那种位置），
-                       而不是输入框上方 -->
-                  <div class="thinking-hint"><span class="thinking-dot"></span>{phase?.label || '正在思考'}</div>
+                  <div class="thinking-hint" role="status">{@render dots()}{phase?.label || '正在思考'}</div>
                 {/if}
                 {#if !isUser && m.reasoning}
-                  <!-- 深度思考：显示在这条回复自己的气泡上方（类似 DeepSeek） -->
                   <details
                     class="reasoning"
                     open={m.thinkingOpen !== false}
-                    ontoggle={(e) => {
-                      const open = e.currentTarget.open;
-                      messages = messages.map((mm, ii) => (ii === i ? { ...mm, thinkingOpen: open } : mm));
+                    ontoggle={(event) => {
+                      const open = event.currentTarget.open;
+                      messages = messages.map((message, index) => (index === i ? { ...message, thinkingOpen: open } : message));
                     }}
                   >
-                    <summary>{isStreaming && !m.content ? '正在思考…' : '深度思考'}</summary>
+                    <summary>
+                      {isStreaming && !m.content ? '正在思考' : '深度思考'}
+                      {#if isStreaming && !m.content}{@render dots()}{/if}
+                    </summary>
                     <div class="reasoning-body">{m.reasoning}</div>
                   </details>
                 {/if}
-                {#if m.platform === 'wechat'}
-                  <span class="src-badge">via 微信</span>
-                {/if}
+
+                {#if m.platform === 'wechat'}<span class="src-badge">微信</span>{/if}
                 {#if m.configError && !isUser && !isStreaming}
                   <ConfigNotice
                     variant="card"
@@ -976,54 +1229,68 @@
                 {:else}
                   {#if !splitImage}
                     {#each imgBlocks as b}
-                      <div class="image-bubble">
-                        <button class="chat-image-btn" type="button" onclick={() => (previewImage = b.url)} aria-label="查看大图">
-                          <img class="chat-image" src={b.url} alt="图片" loading="lazy" />
-                        </button>
-                      </div>
+                      {@render imageBlock(b.url)}
                     {/each}
                   {/if}
                   {#each restBlocks as b}
                     {#if b.type === 'emoji'}
-                      <div class="sticker-bubble">
-                        <img class="sticker-img" src={b.url || stickerUrl(b.pack, b.emotion, b.filename)} alt="贴纸" loading="lazy" />
-                      </div>
+                      <img class="sticker-img" src={b.url || stickerUrl(b.pack, b.emotion, b.filename)} alt="贴纸" loading="lazy" />
                     {:else if b.type === 'voice'}
-                      <!-- 微信风格语音条：点击播放，宽度随时长递增 -->
                       <button
                         type="button"
                         class="bubble {isUser ? 'bubble-user' : 'bubble-ai'} voice-bar"
                         class:playing={voicePlayingUrl === b.url}
-                        style="width: {Math.min(220, 84 + Math.round(voiceDurations[b.url] || 1) * 6)}px"
+                        style:width={Math.min(220, 84 + Math.round(voiceDurations[b.url] || 1) * 6) + 'px'}
                         onclick={() => toggleVoice(b.url)}
-                        title="点击播放"
+                        aria-label={voicePlayingUrl === b.url ? '暂停语音' : '播放语音'}
+                        aria-pressed={voicePlayingUrl === b.url}
                       >
-                        <svg class="voice-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                        <span class="voice-dur">{voiceDurations[b.url] ? `${Math.round(voiceDurations[b.url])}″` : '语音'}</span>
+                        <span class="voice-icon">{@render icon(I.voice, 16)}</span>
+                        <span>{voiceDurations[b.url] ? Math.round(voiceDurations[b.url]) + '″' : '语音'}</span>
                       </button>
-                      <audio preload="metadata" src={b.url} hidden onloadedmetadata={(e) => (voiceDurations[b.url] = e.currentTarget.duration || 1)}></audio>
+                      <audio preload="metadata" src={b.url} hidden onloadedmetadata={(event) => (voiceDurations[b.url] = event.currentTarget.duration || 1)}></audio>
                     {:else if b.text}
-                      <div class="bubble {isUser ? 'bubble-user' : 'bubble-ai'} {isStreaming ? 'is-streaming' : ''}">
-                        <div class="bubble-text">{cleanLegacyImageText(b.text)}{#if isStreaming}<span class="caret"></span>{/if}</div>
-                      </div>
+                      {@const text = b.text}
+                      {#if !imgBlocks.length || text.trim() !== '[图片]'}
+                        {@const parts = b.parts || []}
+                        <div class="bubble {isUser ? 'bubble-user' : 'bubble-ai'}" class:is-streaming={isStreaming}>
+                          {#each parts as part}
+                            {#if part.kind === 'code'}
+                              <div class="message-code">
+                                <div class="code-head">
+                                  <span>{part.language || '代码'}</span>
+                                  <button type="button" class="code-copy" onclick={() => copyCode(part.text)} aria-label="复制代码">复制</button>
+                                </div>
+                                <pre><code>{part.text}</code></pre>
+                              </div>
+                            {:else if part.kind === 'quote'}
+                              <blockquote>{part.text}</blockquote>
+                            {:else}
+                              <div class="bubble-text">{part.text}</div>
+                            {/if}
+                          {/each}
+                          {#if isStreaming}<span class="streaming-indicator">{@render dots()}</span>{/if}
+                        </div>
+                      {/if}
                     {/if}
                   {/each}
                 {/if}
-                <span class="bubble-time">{formatTime(m.timestamp)}</span>
+                {#if showTime}
+                  <time class="bubble-time">{time}</time>
+                {/if}
               </div>
             </div>
           {/each}
           {#if debouncing && pendingQueue.length}
-            <!-- 去抖等待中：告知"还会合并"，避免用户以为卡住 -->
             <div class="thinking-hint debounce-hint">
-              <span class="thinking-dot"></span>正在看…（{debounceSecs} 秒内继续发会自动合并{pendingQueue.length > 1 ? `，已攒 ${pendingQueue.length} 条` : ''}）
+              {@render dots()}
+              <span>正在看，{debounceSecs} 秒内继续发送会合并{pendingQueue.length > 1 ? '，已排队 ' + pendingQueue.length + ' 条' : ''}。</span>
             </div>
           {/if}
         {/if}
         <div bind:this={bottomEl} class="scroll-anchor"></div>
       </div>
 
-      <!-- 输入区 -->
       <div class="input-area">
         {#if modelReady !== true}
           <div class="config-banner">
@@ -1033,8 +1300,8 @@
               icon={modelReady === null ? 'alert' : 'key'}
               title={modelReady === null ? '正在检测模型配置…' : '尚未配置对话模型'}
               text={modelReady === null
-                ? '正在确认对话模型是否就绪…'
-                : '对话模型尚未配置或 API Key 无效，AI 无法回复。请先配置后再发送。'}
+                ? ''
+                : '配置对话模型后即可发送消息。'}
               actionLabel={modelReady === null ? '' : '去设置配置'}
               onAction={modelReady === null ? null : gotoModelSettings}
               checking={modelReady === null}
@@ -1043,1215 +1310,1044 @@
           </div>
         {/if}
 
-        {#if showStickerPanel}
-          <div class="panel sheet">
-            <div class="sheet-head">
-              <span>贴纸</span>
-              <button class="icon-btn" onclick={() => (showStickerPanel = false)} aria-label="关闭">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
+        <div class="composer glass-3">
+          {#if attachmentPreview}
+            <div class="attachment">
+              <div class="attachment-thumb">
+                <img src={attachmentPreview.url} alt="" />
+                <button type="button" class="attachment-close" aria-label="关闭上传预览" title="关闭预览" onclick={() => (attachmentPreview = null)}>
+                  {@render icon(I.close, 12)}
+                </button>
+              </div>
+              <div class="attachment-info">
+                <strong>{attachmentPreview.name}</strong>
+                <span role="status">正在上传…</span>
+              </div>
             </div>
-            <div class="sticker-grid">
-              {#each stickerGroups as g}
-                {#each g.images as fname}
-                  <button class="sticker-item" onclick={() => sendSticker(g, fname)} title={`${g.pack}/${g.emotion}`}>
-                    <img src={stickerUrl(g.pack, g.emotion, fname)} alt={`${g.emotion}`} loading="lazy" />
-                  </button>
-                {/each}
-              {/each}
-              {#if stickerGroups.length === 0}
-                <div class="center-hint">暂无贴纸</div>
-              {/if}
+          {:else if uploading}
+            <!-- 用户点 × 关掉了预览、但上传还在进行：仍要显示进度，
+                 否则输入框一直禁用、屏幕上却没有任何「正在上传」的提示。 -->
+            <div class="attachment attachment-uploading" role="status">
+              <span class="attachment-spinner" aria-hidden="true"></span>
+              <span>正在上传…</span>
             </div>
-          </div>
-        {/if}
-
-        <div class="composer">
-          <label class="act-btn" title="图片" class:busy={uploading}>
-            <input type="file" accept="image/*" multiple hidden onchange={pickImageFile} />
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-          </label>
-
-          <button class="act-btn" title="贴纸" onclick={() => { showStickerPanel = !showStickerPanel; }}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 12h-6a3 3 0 0 0-3 3v6"/><circle cx="9" cy="10" r="0.5"/><circle cx="14" cy="8" r="0.5"/></svg>
-          </button>
-
+          {/if}
           <textarea
             class="text-input"
             bind:this={inputEl}
             bind:value={input}
             rows="1"
+            aria-label="输入消息"
             placeholder={sending
-              ? (pendingQueue.length ? `回复中…已排队 ${pendingQueue.length} 条` : '回复中…继续输入会排队')
-              : '输入消息…'}
+              ? (pendingQueue.length ? '回复中…已排队 ' + pendingQueue.length + ' 条' : '回复中…继续输入会排队')
+              : '想聊点什么？'}
             oninput={autoGrow}
             onkeydown={onInputKeydown}
             disabled={uploading}
           ></textarea>
 
-          {#if sending}
-            <button class="send-btn stop" onclick={abortStream} title="停止生成" aria-label="停止生成">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-            </button>
-          {:else}
-            <button class="send-btn {canSend ? 'active' : ''}" onclick={() => { if (canSend) send(); }} disabled={!canSend}
-              title="发送">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3.4 20.4l17-8.4-17-8.4L8 12l-4.6 8.4z"/></svg>
-            </button>
-          {/if}
+          <div class="composer-actions">
+            <div class="composer-tools">
+              <input type="file" accept="image/*" multiple hidden bind:this={imagePicker} onchange={pickImageFile} />
+              <button type="button" class="icon-btn act-btn" aria-label="发送图片" title="发送图片" disabled={uploading} onclick={() => imagePicker?.click()}>
+                {@render icon('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>')}
+              </button>
+              <button
+                type="button"
+                class="icon-btn act-btn"
+                aria-label="贴纸"
+                title="贴纸"
+                aria-expanded={showStickerPanel}
+                onclick={() => { showStickerPanel = !showStickerPanel; showChatTools = false; }}
+              >
+                {@render icon('<path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 12h-6a3 3 0 0 0-3 3v6"/><circle cx="9" cy="10" r=".5"/><circle cx="14" cy="8" r=".5"/>')}
+              </button>
+              <button
+                type="button"
+                class="icon-btn act-btn"
+                aria-label="聊天设置"
+                title="聊天设置"
+                aria-expanded={showChatTools}
+                onclick={() => { showChatTools = !showChatTools; showStickerPanel = false; }}
+              >
+                {@render icon('<path d="M4 7h4m4 0h8M4 17h8m4 0h4"/><circle cx="10" cy="7" r="2"/><circle cx="14" cy="17" r="2"/>')}
+              </button>
+            </div>
+
+            {#if sending}
+              <button class="send-btn stop" type="button" onclick={stopReply} title="停止生成" aria-label="停止生成">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"/></svg>
+              </button>
+            {:else}
+              <button class="send-btn" type="button" onclick={() => { if (canSend) send(); }} disabled={!canSend} title="发送" aria-label="发送">
+                {@render icon('<path d="M12 19V5m-6 6 6-6 6 6"/>', 20)}
+              </button>
+            {/if}
+          </div>
         </div>
+
+        {#if showStickerPanel}
+          <section class="sticker-panel glass-3" aria-label="贴纸" use:focusInside={'.sticker-item, .sticker-close'}>
+            <div class="panel-head">
+              <h2 class="panel-title">贴纸</h2>
+              <button class="icon-btn sticker-close" type="button" onclick={() => (showStickerPanel = false)} aria-label="关闭贴纸">
+                {@render icon(I.close)}
+              </button>
+            </div>
+            <div class="sticker-grid">
+              {#each stickerGroups as group}
+                {#each group.images as filename}
+                  <button class="sticker-item" type="button" onclick={() => sendSticker(group, filename)} title={group.pack + ' / ' + group.emotion}>
+                    <img src={stickerUrl(group.pack, group.emotion, filename)} alt={group.emotion} loading="lazy" />
+                  </button>
+                {/each}
+              {:else}
+                <p class="center-hint">暂无贴纸</p>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        {#if showChatTools}
+          <div class="chat-tools glass-3" role="group" aria-label="聊天设置快捷入口" use:focusInside={'.popover-action'}>
+            <button class="popover-action" type="button" onclick={() => { showChatTools = false; gotoModelSettings(); }}>模型设置</button>
+            <button class="popover-action" type="button" onclick={() => { showChatTools = false; navigate('settings/conversation'); }}>对话参数</button>
+            <button class="popover-action" type="button" onclick={() => { showChatTools = false; navigate('settings/voice'); }}>
+              {@render icon(I.voice, 16)}语音设置
+            </button>
+          </div>
+        {/if}
       </div>
     </section>
   </div>
 
   {#if isMobile && listOpen}
-    <div class="drawer-mask" role="button" tabindex="-1" aria-label="关闭会话列表" onclick={() => (listOpen = false)} onkeydown={(e) => e.key === 'Enter' && (listOpen = false)}></div>
-    <aside class="drawer">
-      <div class="panel-head">
-        <span class="panel-title">会话</span>
-        <button class="icon-btn" onclick={() => { startWithPersona(personas[0]?.id) }} title="新建会话" disabled={!personas.length}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-      <div class="conv-list">
-        {#each conversations as conv}
-          <button
-            class="conv-row {conv.conversation_id === activeConvId ? 'is-active' : ''}"
-            onclick={() => selectConversation(conv.conversation_id)}
-          >
-            <span class="conv-dot">{initialOf(displayName(conv))}</span>
-            <span class="conv-meta">
-              <span class="conv-name">{displayName(conv)}</span>
-              <span class="conv-sub">{conv.platform === 'web' ? 'Web' : conv.platform}</span>
-            </span>
-            <span class="row-menu" onclick={(e) => rowMenu(e, conv)} role="button" tabindex="-1" onkeydown={(e) => e.key === 'Enter' && rowMenu(e, conv)}>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
-            </span>
-          </button>
-        {/each}
-        {#if conversations.length === 0}
-          <div class="conv-empty">暂无会话</div>
-        {/if}
-      </div>
-      <div class="panel-divider"></div>
-      <span class="panel-title">人设</span>
-      <div class="persona-row">
-        {#each personas as p}
-          <button class="persona-chip" title={p.name} onclick={() => startWithPersona(p.id)}>
-            {#if p.avatar}
-              <img class="chip-avatar" src={p.avatar} alt={p.name} loading="lazy" />
-            {:else}
-              <span class="chip-avatar chip-fallback">{initialOf(p.name)}</span>
-            {/if}
-            <span class="chip-name">{p.name}</span>
-          </button>
-        {/each}
-      </div>
+    <button class="drawer-mask scrim-layer" type="button" tabindex="-1" aria-label="关闭会话列表遮罩" onclick={() => (listOpen = false)}></button>
+    <aside class="drawer glass-3" aria-label="会话列表" use:focusInside={'.drawer-close'}>
+      {@render conversationPanel(true)}
     </aside>
   {/if}
 
   {#if error}
-    <div class="toast" role="alert">{error}<button class="icon-btn" onclick={() => (error = null)} aria-label="关闭"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-  {/if}
-
-  {#if menuOpen}
-    <div class="convs-menu" style="left:{menuOpen.x}px;top:{menuOpen.y}px" role="menu" aria-label="会话操作">
-      <button class="convs-menu-item" type="button" role="menuitem" onclick={() => menuRename(menuOpen.conv)}>
-        <span class="convs-menu-ico" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`}</span>
-        重命名      </button>
-      <button class="convs-menu-item danger" type="button" role="menuitem" onclick={() => menuDelete(menuOpen.conv)}>
-        <span class="convs-menu-ico" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`}</span>
-        删除会话
+    <div class="chat-toast glass-3" role="status">
+      <span>{error}</span>
+      <button class="icon-btn" type="button" onclick={() => (error = null)} aria-label="关闭提示">
+        {@render icon(I.close, 16)}
       </button>
     </div>
   {/if}
 
-  {#if previewImage}
-    <!-- 全屏图片预览（PawzoChat 式 openImagePreview）：点图查看大图，点任意处/按 Esc 关闭 -->
+  {#if menuOpen}
     <div
-      class="img-preview-overlay"
-      role="dialog"
-      aria-label="图片预览"
-      tabindex="-1"
-      onclick={() => (previewImage = null)}
-      onkeydown={(e) => {
-        if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          previewImage = null;
-        }
-      }}
+      class="convs-menu glass-3"
+      style:--menu-right={menuOpen.x + 'px'}
+      style:--menu-top={menuOpen.y + 'px'}
+      role="group"
+      aria-label="会话操作"
+      use:focusInside={'.popover-action'}
     >
-      <img class="img-preview-full" src={previewImage} alt="图片预览" />
+      <button class="popover-action" type="button" onclick={() => menuRename(menuOpen.conv)}>重命名</button>
+      <button class="popover-action danger" type="button" onclick={() => menuDelete(menuOpen.conv)}>删除会话</button>
     </div>
+  {/if}
+
+  {#if previewImage}
+    <dialog class="img-preview-overlay" aria-label="图片预览" use:showImagePreview oncancel={closeImagePreview}>
+      <button class="img-preview-hit" type="button" aria-label="关闭图片预览" onclick={closeImagePreview}>
+        <img class="img-preview-full" src={previewImage} alt="图片预览" />
+      </button>
+      <button class="icon-btn img-preview-close glass-3" type="button" aria-label="关闭图片预览" onclick={closeImagePreview}>
+        {@render icon(I.close)}
+      </button>
+    </dialog>
   {/if}
 </div>
 
 <style>
   .chat-page {
-    height: 100%;
-    min-height: 0;
+    --self-fill: var(--bubble-self-bg);
+    --self-ink: #fff;
+    --code-fill: #161921;
+    --code-ink: #eef0f6;
+    position: relative;
     display: flex;
     flex-direction: column;
-    /* 透明: 内容面玻璃由 .main-area 承担, 这里再铺一层不透明 --surface
-       会把它整块盖掉, 氛围层就永远透不上来。 */
-    background: transparent;
-    position: relative;
+    height: 100%;
+    min-height: 0;
     overflow: hidden;
   }
 
-  /* 沉浸模式: 消息与输入条居中限宽, 像在读一封信而不是在刷消息流 */
-  .chat-page.immersive .msgs {
-    padding-left: max(var(--space-4), calc((100% - var(--chat-msg-maxw)) / 2));
-    padding-right: max(var(--space-4), calc((100% - var(--chat-msg-maxw)) / 2));
-  }
-  /* 沉浸模式下 .composer 自己已经有 max-width + margin:auto 居中,
-     不能再叠一层 calc((100% - 680px)/2) 的左右 padding ——
-     两层限宽相乘会把输入框压成一条 26px 的窄缝(实测 immersive 桌面端)。 */
-  .chat-page.immersive .composer {
-    padding-left: var(--space-4);
-    padding-right: var(--space-4);
-  }
-
-  .icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    border: none;
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-2);
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition);
-  }
-  .icon-btn:hover:not(:disabled) {
-    background: var(--row-hover);
-    color: var(--text-1);
-  }
-  .icon-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  :global([data-theme='dark']) .chat-page {
+    --self-fill: linear-gradient(150deg,
+      color-mix(in srgb, var(--accent) 55%, var(--bg)),
+      color-mix(in srgb, var(--accent-hover) 42%, var(--bg)));
   }
 
   .chat-body {
-    flex: 1;
-    min-height: 0;
     display: flex;
-    position: relative;
+    flex: 1;
+    gap: var(--optical-10);
+    min-height: 0;
   }
 
-  /* ---- 会话侧栏 (桌面) ----
-     原 240px 里只有 12px padding + 一个 11px 标题, 整个栏是空的。
-     加宽到 260px 并给标题加计数, 让「会话」这一栏自己也有信息:
-     标题行左边是 11px 微标签, 右边是等宽数字的条数, 中线以下才是列表。
-     列表为空时给一个左对齐的引导块而不是一句“暂无会话”, 与其它页面统一。 */
-  .conv-panel {
-    flex: none;
-    width: var(--conv-w);
-    border-right: 1px solid var(--border);
-    /* 会话栏是「浮在氛围层之上」的一列 chrome, 用玻璃而非纯色,
-       两列才有同一张纸上的前后关系, 而不是被一条硬线拼起来的两块。
-       兜底用列级实色而非 --bg: 不支持 backdrop-filter 时也要保住
-       四列的明度阶梯, 否则整页退回同一块底色。 */
-    background: var(--col-list-solid);
+  .conv-panel,
+  .drawer {
     display: flex;
+    flex: none;
     flex-direction: column;
+    gap: var(--space-3);
     min-height: 0;
-    padding: var(--space-3) var(--space-2);
-    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-lg);
   }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .conv-panel {
-      /* 列级玻璃: 会话列表是「可扫读的一层」, 明度介于右栏与正文之间。
-         之前和侧栏共用 --glass-1, 两列永远同一个色 —— 层次做不出来。
-         v7: 五层材质 (镜面边 + 厚度渐变 + 颗粒 + 双 hairline)。 */
-      background-color: var(--glass-list);
-      background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
-      background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
-      background-position: top left, center, center;
-      background-repeat: no-repeat, no-repeat, repeat;
-      background-clip: padding-box;
-      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-      /* 与 main-area 之间那条边界: 玻璃压玻璃时, 单靠 border-right
-         会显得是"两块纸拼起来"; 加一条内高光让会话栏读作浮在上层的那一块。 */
-      box-shadow: var(--glass-highlight);
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .conv-panel {
-      background: var(--col-list-solid);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  .panel-head {
+
+  .conv-panel { width: var(--conv-w); }
+
+  .panel-head,
+  .chat-heading,
+  .composer-actions,
+  .composer-tools {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 var(--space-2) var(--space-2);
-    margin-bottom: var(--space-1);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-2);
   }
+
+  .panel-head { flex: none; }
   .panel-title {
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: var(--tracking-wider);
-    color: var(--text-3);
-    text-transform: uppercase;
     flex: 1;
+    margin: 0;
+    color: var(--text-1);
+    font-size: var(--text-base);
+    font-weight: 690;
+    line-height: var(--leading-tight);
   }
-  .panel-count {
-    font-size: var(--text-2xs);
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
-    margin-right: var(--space-2);
-  }
-  .add-btn {
+
+  .panel-count,
+  .unread-badge,
+  .src-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-xs);
-    background: var(--surface);
+    min-height: 20px;
+    padding: 0 var(--optical-6);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .panel-count { background: var(--field-fill); color: var(--text-2); }
+  .unread-badge { background: var(--accent); color: var(--on-accent); }
+  .src-badge { background: var(--field-fill); color: var(--text-2); }
+
+  .icon-btn {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
     color: var(--text-2);
     cursor: pointer;
-    transition: background var(--transition), color var(--transition), border-color var(--transition);
   }
-  .add-btn:hover {
+
+  .icon-btn:hover:enabled,
+  .icon-btn[aria-expanded='true'] {
     background: var(--row-hover);
+    color: var(--accent);
+  }
+
+  .icon-btn:disabled { opacity: 0.48; cursor: default; }
+  .add-btn { background: var(--accent-soft); color: var(--accent); }
+  .add-btn:hover:enabled { background: var(--accent-glow); }
+
+  .conv-search {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
+    color: var(--text-2);
+  }
+
+  .conv-search:focus-within {
+    background: var(--field-fill-focus);
+    box-shadow: var(--focus-ring);
+  }
+
+  .conv-search input {
+    width: 100%;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
     color: var(--text-1);
+    font: inherit;
+    font-size: var(--text-13);
   }
-  .add-btn:active {
-    transform: scale(0.94);
-  }
+
+  .conv-search input:focus-visible { outline: 0; box-shadow: none; }
+  .conv-search input::placeholder { color: var(--text-2); }
 
   .conv-list {
     display: flex;
-    flex-direction: column;
-    gap: var(--optical-2);
-    overflow-y: auto;
-    min-height: 0;
     flex: 1;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-height: 0;
+    margin: -3px;
+    padding: 3px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
   }
+
+  .conv-entry {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    min-width: 0;
+    padding-inline-end: var(--space-1);
+    border-radius: var(--radius-md);
+    transition: background-color var(--transition), box-shadow var(--transition),
+      transform var(--transition-spring);
+  }
+
+  .conv-entry:hover { background: var(--row-hover); transform: translateY(-1px); }
+  .conv-entry.is-active { background: var(--accent-soft); }
+  .conv-entry.is-active::before {
+    position: absolute;
+    inset-block: 28%;
+    inset-inline-start: 3px;
+    width: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    content: '';
+    pointer-events: none;
+  }
+
   .conv-row {
     display: flex;
+    flex: 1;
     align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding: var(--space-2);
-    border: none;
-    border-left: 2px solid transparent;
-    border-radius: 0;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 54px;
+    padding: var(--space-2) var(--space-1) var(--space-2) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-1);
+    font: inherit;
     text-align: left;
     cursor: pointer;
-    transition: background var(--transition), border-color var(--transition);
-    position: relative;
   }
-  .conv-row:hover {
-    background: var(--row-hover);
-  }
-  .conv-row.is-active {
-    /* v16: 原来是 background: var(--surface) —— 不透明中性色。
-       它在一列有色玻璃上直接「打一个洞」, 洞外面是淡紫, 洞里是纯灰白,
-       选中态看起来像贴纸, 而不是「这一行被提亮了」。
-       现在走 --row-active (accent 7% + 白 4.5% 的半透明幕),
-       行下面那层的色相继续透上来, 只有明度与一点点蓝在变。 */
-    background: var(--row-active);
-    border-left-color: var(--accent);
-  }
-  .conv-dot {
-    flex: none;
-    width: 30px;
-    height: 30px;
-    border-radius: var(--radius-xs);
-    background: var(--surface-3);
-    color: var(--text-2);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 500;
-    font-size: var(--text-13);
-  }
-  .conv-row.is-active .conv-dot {
-    background: var(--accent-wash);
-    color: var(--accent);
-  }
+
   .conv-meta {
+    display: grid;
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--hair);
+    line-height: var(--leading-snug);
   }
-  .conv-name {
-    font-weight: 500;
-    font-size: var(--text-13);
+
+  .conv-name,
+  .conv-sub,
+  .persona-chip span:last-child,
+  .heading-text h1 {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .conv-sub {
-    font-size: var(--text-2xs);
-    color: var(--text-3);
-    letter-spacing: var(--tracking-wide);
-  }
-  .row-menu {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-xs);
-    color: var(--text-3);
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--transition), background var(--transition);
-  }
-  .conv-row:hover .row-menu,
-  .conv-row.is-active .row-menu {
-    opacity: 1;
-  }
-  .row-menu:hover {
-    background: var(--row-active);
-    color: var(--text-1);
-  }
-  /* 会话行上下拉菜单 */
-  .convs-menu {
-    position: fixed;
-    z-index: var(--z-popover);
-    min-width: 150px;
-    padding: var(--space-1);
-    background: var(--surface);
-    border: 1px solid var(--card-border);
-    border-radius: var(--card-radius);
-    box-shadow: var(--shadow-3);
-    display: flex;
-    flex-direction: column;
-    animation: convs-pop .14s ease-out;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .convs-menu { animation: none; }
-  }
-  @keyframes convs-pop {
-    from { opacity: 0; transform: translateY(-4px) scale(.98); }
-    to { opacity: 1; transform: none; }
-  }
-  .convs-menu-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-1);
-    font-size: var(--text-sm);
-    text-align: left;
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition);
-  }
-  .convs-menu-item:hover { background: var(--row-hover); }
-  .convs-menu-item.danger { color: var(--error); }
-  .convs-menu-item.danger:hover { background: color-mix(in srgb, var(--error) 12%, transparent); }
-  .convs-menu-ico { display: inline-flex; }
-  .conv-empty {
-    padding: var(--space-3) var(--space-2);
-    text-align: left;
-    font-size: var(--text-2xs);
-    line-height: 1.7;
-    color: var(--text-3);
-    border-left: 2px solid var(--border-strong);
-    padding-left: var(--space-3);
-  }
-  .panel-divider {
-    border-top: 1px solid var(--border);
-    margin: var(--space-2) 0;
-  }
+
+  .conv-name { font-size: var(--text-13); font-weight: 650; }
+  .conv-sub { color: var(--text-2); font-size: var(--text-2xs); }
+  .row-menu { width: 34px; }
+  .conv-empty { margin: 0; padding: var(--space-2); color: var(--text-2); font-size: var(--text-xs); }
+
   .persona-panel {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    flex: none;
     gap: var(--space-2);
   }
+
   .persona-row {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+    max-height: min(120px, 23dvh);
+    overflow-y: auto;
+    padding: 3px;
+    margin: -3px;
+    scrollbar-width: thin;
   }
+
   .persona-chip,
-  .welcome-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    background: var(--surface);
-    color: var(--text-1);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition: border-color var(--transition), background var(--transition), transform var(--transition);
-  }
-  /* 人设卡: 从「一个小 chip」变成「一行卡片」, 头像 22→28px,
-     名字下方加一行 10px 的动作暗示。整块可点, 目标区域从 ~72x26 提到 ~160x46,
-     空会话页从「没东西可点」变成「一眼看到两个入口」。 */
-  .welcome-chip {
-    width: 100%;
-    padding: var(--space-2);
-    gap: var(--space-3);
-    border-color: var(--border-strong);
-    text-align: left;
-  }
-  .welcome-chip .chip-avatar {
-    width: 28px;
-    height: 28px;
-  }
-  .chip-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--hair);
-    min-width: 0;
-  }
-  .welcome-chip .chip-name {
-    font-size: var(--text-13);
-    font-weight: 500;
-    max-width: none;
-  }
-  .chip-go {
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-    transition: color var(--transition);
-  }
-  .welcome-chip:hover .chip-go { color: var(--accent); }
-  .persona-chip:hover,
-  .welcome-chip:hover {
-    border-color: var(--accent);
-    background: var(--tint);
-  }
-  .persona-chip:active,
-  .welcome-chip:active {
-    transform: scale(0.96);
-  }
-  .chip-avatar {
-    width: 22px;
-    height: 22px;
-    border-radius: var(--radius-xs);
-    object-fit: cover;
-    background: var(--surface-2);
-  }
-  .chip-fallback {
+  .prompt-chip {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
+    color: var(--text-1);
+    font: inherit;
+    font-size: var(--text-xs);
     font-weight: 600;
-    color: var(--accent-strong);
-    background: var(--accent-soft);
-  }
-  .chip-name {
-    max-width: 90px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    cursor: pointer;
   }
 
-  /* ---- 聊天主区 ---- */
+  .persona-chip { max-width: 100%; padding-inline-start: var(--space-1); }
+  .persona-chip:hover,
+  .prompt-chip:hover:enabled { background: var(--accent-soft); color: var(--accent); }
+  .prompt-chip:disabled { opacity: 0.55; cursor: default; }
+
   .chat-stage {
+    position: relative;
+    display: flex;
     flex: 1;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    position: relative;
+    overflow: hidden;
   }
-  /* 正文列自带玻璃: .main-area 在聊天页已让成透明(见 PhoneShell),
-     玻璃必须由这一列自己承担, 否则整页没有内容面。
-     一列一层, 氛围色才能透到屏幕上来。 */
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .chat-stage {
-      background-color: var(--glass-content);
-      /* v7: 正文列是内容层, 用 Apple 的 thin 档 (弥散 + 轻微压暗)。
-         旧值 blur(14px) saturate(1.08) 是在**放大**背景色 —— 方向与
-         Apple 的 muted/darkened 相反, 所以底色看着永远比该有的艳。 */
-      background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
-      background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
-      background-position: top left, center, center;
-      background-repeat: no-repeat, no-repeat, repeat;
-      background-clip: padding-box;
-      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .chat-stage {
-      background: var(--col-content-solid);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  .msgs {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: var(--space-5) var(--space-4) var(--space-4);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    -webkit-overflow-scrolling: touch;
-  }
-  /* 空会话：欢迎区靠左上方起笔，而不是死居中。
-     居中会让整块内容随视口宽度漂移，且上下留白各占一半，
-     屏幕看起来「中间有个小岛，四周全是海」。改成 8vh 起笔后，
-     标题、说明、人设卡从左上角读完是一段完整的信息，视线有落点。 */
-  .msgs.empty {
-    justify-content: flex-start;
-    align-items: flex-start;
-    padding-top: clamp(var(--space-6), 9vh, 96px);
-    padding-left: var(--space-5);
-    padding-right: var(--space-5);
-  }
-  .msgs.empty .scroll-anchor {
+
+  .chat-heading {
     display: none;
-  }
-  .scroll-anchor {
-    height: 1px;
     flex: none;
+    gap: var(--space-3);
+    min-height: 64px;
+    padding: var(--space-2) clamp(var(--space-4), 3vw, var(--space-6));
+    box-shadow: inset 0 -0.5px 0 var(--surface-divider);
   }
+
+  .heading-text { display: grid; flex: 1; min-width: 0; }
+  .heading-text h1 {
+    margin: 0;
+    color: var(--text-1);
+    font-size: var(--text-base);
+    font-weight: 680;
+    line-height: var(--leading-snug);
+  }
+
+  .heading-text span { color: var(--text-2); font-size: var(--text-xs); }
+
+  .msgs {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding: var(--space-5)
+      max(clamp(var(--space-4), 3vw, var(--space-6)), calc((100% - var(--chat-msg-maxw)) / 2))
+      var(--space-3);
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .msgs.empty {
+    background: radial-gradient(ellipse 65% 58% at 50% 35%, var(--accent-soft), transparent 76%);
+  }
+
+  .scroll-anchor { flex: none; height: 1px; }
+  .msgs.empty .scroll-anchor { display: none; }
+
   .center-hint {
-    text-align: center;
-    padding: var(--space-6);
-    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    color: var(--text-2);
     font-size: var(--text-sm);
   }
 
-  /* 欢迎区 ----
-     原来是一个 360px 宽、全部居中的小方块: 72px 灰底 + 30px 黑方 + 17px 标题,
-     在 1000+px 宽的空白消息区里视觉权重约等于零, 整页看起来像没渲染完。
-     改成左对齐的「开启区」:
-     ① 一个 3px 冷蓝竖条作为页面锚点, 把视线固定在文字起点
-     ② 标题上到 --text-display(28px), 与说明文字形成 2.2 倍的字号落差
-     ③ 人设从「小 chip 一行」改成两列卡片网格, 每张卡带 22px 头像 + 名字 + 
-        「开始对话 →」暗示, 空页面立刻有了可操作的内容块
-     左对齐比居中更稳: 居中的空状态会随着视口宽度漂移, 左对齐的起点与
-     会话栏对齐, 整块界面显得是一个整体而不是浮在中间的一张卡片。 */
+  .msgs > .center-hint { margin: auto; }
+
   .welcome {
-    margin: 0;
-    width: 100%;
-    max-width: 460px;
-    align-self: flex-start;
-    text-align: left;
-    padding: var(--space-2) 0 var(--space-2) var(--space-5);
-    border-left: 3px solid var(--accent);
     display: flex;
+    flex: none;
     flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-3);
-  }
-  .welcome-mark {
-    display: none;
-  }
-  .brand-dot {
-    width: 26px;
-    height: 26px;
-    border-radius: var(--radius-xs);
-    background: var(--text-1);
-  }
-  .welcome-kicker {
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: var(--tracking-wider);
-    color: var(--accent);
-    text-transform: uppercase;
-  }
-  .welcome-title {
-    margin: 0;
-    font-size: var(--text-display);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    line-height: 1.1;
-    color: var(--text-1);
-  }
-  .welcome-desc {
-    margin: 0;
-    font-size: var(--text-15);
-    color: var(--text-2);
-    line-height: 1.72;
-    max-width: 40ch;
-  }
-  .welcome-personas {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: var(--space-2);
-    margin-top: var(--space-3);
-    width: 100%;
+    align-items: center;
+    gap: var(--space-4);
+    width: min(100%, 500px);
+    margin: auto;
+    padding-block: var(--space-3);
+    text-align: center;
+    animation: chat-appear var(--transition-spring);
   }
 
-  /* 气泡 */
-  /* 气泡列宽: 阅读行长已经由 --chat-msg-maxw(640px) 的居中列给出,
-     这里再从 78% 收到 92% —— 否则输入列 640px 里气泡只有 499px,
-     右侧总空出一指宽的缝, 看着像没对齐。 */
-  .bubble-row {
+  .welcome-avatar {
+    display: grid;
+    place-items: center;
+    width: 110px;
+    height: 110px;
+    border-radius: var(--radius-avatar);
+    background: radial-gradient(ellipse, var(--accent-glow) 18%, transparent 75%);
+    filter: drop-shadow(0 6px 12px var(--accent-glow));
+  }
+
+  .welcome-heading { display: grid; gap: var(--space-1); }
+  .welcome-heading h2 {
+    margin: 0;
+    color: var(--text-1);
+    font-size: clamp(1.8rem, 4vw, var(--text-3xl));
+    font-weight: 700;
+    letter-spacing: var(--tracking-tighter);
+    line-height: var(--leading-tight);
+    overflow-wrap: anywhere;
+  }
+
+  .welcome-heading p {
+    display: -webkit-box;
+    max-width: 42ch;
+    margin: 0 auto;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    color: var(--text-2);
+    font-size: var(--text-sm);
+  }
+
+  .welcome-note {
+    max-width: 100%;
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--surface-bubble);
+    box-shadow: var(--shadow-1);
+    color: var(--text-1);
+    font-size: var(--text-sm);
+  }
+
+  .prompt-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); }
+  .prompt-chip { min-height: 39px; padding-inline: var(--space-3); }
+  .prompt-chip :global(svg) { color: var(--accent); }
+
+  .msg-row {
     display: flex;
+    flex: none;
+    align-self: flex-start;
     align-items: flex-start;
     gap: var(--space-2);
-    max-width: min(var(--chat-msg-maxw), 92%);
+    min-width: 0;
+    max-width: min(var(--chat-msg-maxw), 90%);
   }
-  .bubble-row.self {
-    align-self: flex-end;
-    flex-direction: row-reverse;
-  }
-  .bubble-row.friend {
-    align-self: flex-start;
-  }
-  .av {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-xs);
-    background: var(--accent-wash);
-    color: var(--accent);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 500;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.02em;
-  }
+
+  .msg-row + .msg-row { margin-top: 18px; }
+  .msg-row.joins-before { margin-top: 5px; }
+  .msg-row.self { align-self: flex-end; }
+  .av { flex: none; padding-top: 1px; }
+  .joined-avatar { visibility: hidden; }
+
   .bubble-col {
     display: flex;
     flex-direction: column;
-    gap: var(--optical-4);
+    align-items: flex-start;
+    gap: 5px;
     min-width: 0;
+    max-width: 100%;
   }
-  /* 气泡: 从「纯黑底/直角灰盒」改成「有留白节奏的对话块」。
-     用户气泡改成冷蓝实底, 与发送键同一套色 —— 
-     整页只有「我说的话 + 发送键」是蓝色, 一眼能分清谁在说。
-     近黑留给真正的标题与主按钮, 不再被气泡消耗掉。 */
+
+  .self .bubble-col { align-items: flex-end; }
+
   .bubble {
-    padding: var(--space-3) var(--space-4);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--optical-10) var(--space-4);
     border-radius: var(--bubble-radius-lg);
-    line-height: 1.62;
-    word-break: break-word;
-    white-space: pre-wrap;
+    font-size: var(--text-15);
+    line-height: 1.65;
+    overflow-wrap: anywhere;
   }
+
   .bubble-user {
-    background: var(--bubble-self-bg);
-    color: var(--bubble-self-text);
-    border-bottom-right-radius: var(--bubble-radius-sm);
+    background: var(--self-fill);
+    box-shadow: inset 0 1px 0 var(--floating-highlight);
+    color: var(--self-ink);
   }
+
   .bubble-ai {
     background: var(--bubble-friend-bg);
+    box-shadow: inset 0 0 0 1px var(--surface-divider), var(--shadow-1);
     color: var(--bubble-friend-text);
-    border: 1px solid var(--bubble-border);
-    border-bottom-left-radius: var(--bubble-radius-sm);
   }
-  .bubble-text {
-    font-size: var(--text-15);
+
+  .joins-before .bubble-user { border-start-end-radius: var(--bubble-radius-sm); }
+  .joins-after .bubble-user { border-end-end-radius: var(--bubble-radius-sm); }
+  .joins-before .bubble-ai { border-start-start-radius: var(--bubble-radius-sm); }
+  .joins-after .bubble-ai { border-end-start-radius: var(--bubble-radius-sm); }
+
+  .bubble-text,
+  .bubble blockquote { white-space: pre-wrap; }
+
+  .bubble blockquote {
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    border-inline-start: 3px solid color-mix(in srgb, currentColor 48%, transparent);
+    border-radius: var(--radius-xs);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font-size: var(--text-sm);
   }
-  .caret {
-    display: inline-block;
-    width: 2px;
-    height: 1em;
-    margin-left: var(--optical-2);
-    vertical-align: text-bottom;
-    background: currentColor;
-    opacity: 0.7;
-    animation: caret-blink 1s steps(1) infinite;
-  }
-  @keyframes caret-blink {
-    50% { opacity: 0; }
-  }
+
   .bubble-time {
-    font-size: var(--text-xs);
+    padding-inline: var(--optical-3);
     color: var(--bubble-time);
-    padding: 0 var(--optical-2);
+    font-size: var(--text-2xs);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--leading-tight);
   }
-  .self .bubble-time {
-    text-align: right;
-  }
-  .sticker-bubble {
-    max-width: 150px;
-  }
-  .image-bubble {
-    max-width: min(260px, 78%);
-  }
-  .chat-image-btn {
-    display: block;
-    padding: 0;
-    border: none;
-    background: none;
-    cursor: zoom-in;
-    border-radius: var(--radius-md);
-  }
-  .chat-image-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .chat-image {
-    display: block;
-    width: auto;
-    height: auto;
+
+  .message-code {
+    min-width: 0;
     max-width: 100%;
-    max-height: 300px;
-    border-radius: var(--radius-md);
-    box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: var(--code-fill);
+    color: var(--code-ink);
   }
-  .src-badge {
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    opacity: 0.75;
-    margin: var(--optical-2) var(--optical-4);
-    user-select: none;
-  }
-  /* 图片预览: 全屏黑底是刻意的 —— 看图时界面应该彻底退场,
-     所以这里不用玻璃而用近实心黑, 也不加模糊(模糊会让图片本身变脏)。 */
-  .img-preview-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-lightbox);
-    background: rgba(0, 0, 0, 0.86);
+
+  .code-head {
     display: flex;
     align-items: center;
-    justify-content: center;
-    cursor: zoom-out;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+    background: color-mix(in srgb, var(--code-ink) 8%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
-  .img-preview-full {
-    max-width: 92vw;
-    max-height: 92vh;
+
+  .code-copy {
+    min-height: 30px;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: color-mix(in srgb, var(--code-ink) 10%, transparent);
+    color: var(--code-ink);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .code-copy:hover { background: color-mix(in srgb, var(--code-ink) 20%, transparent); }
+
+  .message-code pre {
+    max-width: 100%;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-13);
+    line-height: var(--leading-normal);
+    overflow-wrap: normal;
+    scrollbar-width: thin;
+  }
+
+  .message-code code { font: inherit; }
+
+  .chat-image-btn {
+    display: block;
+    max-width: min(100%, 290px);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    cursor: zoom-in;
+  }
+
+  .chat-image {
+    display: block;
+    max-width: 100%;
+    max-height: min(320px, 50dvh);
+    border-radius: inherit;
+    box-shadow: var(--shadow-2);
     object-fit: contain;
-    border-radius: var(--radius-sm);
   }
+
   .sticker-img {
-    width: 100%;
-    max-width: 150px;
-    border-radius: var(--radius-sm);
+    display: block;
+    width: min(132px, 100%);
+    max-height: 152px;
+    object-fit: contain;
+    filter: drop-shadow(0 5px 5px var(--surface-divider));
+    animation: chat-appear var(--transition-spring);
   }
-  /* 微信风格语音条 */
+
   .voice-bar {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-start;
     gap: var(--space-2);
-    height: 40px;
-    padding: 0 var(--optical-14);
-    border: none;
+    min-height: 42px;
+    padding-block: 0;
+    border: 0;
     cursor: pointer;
-    text-align: left;
-  }
-  .voice-bar .voice-icon {
-    flex: none;
-  }
-  .voice-bar .voice-dur {
-    font-size: var(--text-sm);
     white-space: nowrap;
   }
-  .voice-bar.playing .voice-icon {
-    animation: voice-pulse 0.8s ease-in-out infinite alternate;
-  }
-  @keyframes voice-pulse {
-    from { transform: scale(1); opacity: 1; }
-    to { transform: scale(1.25); opacity: 0.6; }
-  }
 
-  /* 深度思考：作为 assistant 气泡列的第一个子项，显示在该条回复上方 */
+  .voice-icon { display: inline-flex; }
+  .voice-bar.playing .voice-icon { animation: breathe 0.8s var(--ease-in-out) infinite; }
+
   .reasoning {
-    width: 100%;
+    min-width: 0;
     max-width: 100%;
-    box-sizing: border-box;
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    background: color-mix(in srgb, var(--surface-2) 60%, transparent);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--accent);
-    border-radius: var(--radius-sm);
     padding: var(--space-2) var(--space-3);
-    margin-bottom: var(--optical-2);
-  }
-  .reasoning summary {
-    cursor: pointer;
-    font-weight: 600;
-    user-select: none;
+    border-radius: var(--radius-md);
+    background: var(--field-fill);
     color: var(--text-2);
-  }
-  .reasoning-body {
-    margin-top: var(--space-2);
-    white-space: pre-wrap;
-    line-height: var(--leading-normal);
-    max-height: 260px;
-    overflow-y: auto;
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
   }
 
-  /* 输入区 */
-  .input-area {
-    flex: none;
-    /* v18: 原来是 1px 中性 --border, 在紫玻璃上是一条灰线。改同相暗线。 */
-    border-top: 1px solid var(--bar-line);
-    /* 玻璃而非 --surface: 输入区横跨整个内容区宽度, 若用不透明底,
-       氛围层会在页面最下方被一条硬边切断 —— 底部渐变(藕紫)全部失效。
-       用 glass-1 让它与侧栏同属一层 chrome, 同时透出下方氛围。
-       v18 修正: glass-1 = rgba(246,248,252,0.66) 是「近白 66%」, 把底下
-       的氛围紫几乎全部洗掉, 输入条于是成了页面底部一条灰白带。
-       改用 --bar-fill (列色 content 的 34%), 输入条与正文列同材质同色相。 */
-    background: var(--bar-fill);
-    position: relative;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .input-area {
-      background-color: var(--bar-fill);
-      /* 输入区是 chrome 层, 用 Apple 的 thin 档。
-         v18: 三层材质贴图全部撤掉, 只留底色 + 模糊。
-         实测原因 (1440x1000, 输入区高 69px):
-         - --mat-rim 的底色是 --mat-specular 白 0.92, 在这条 69px 的矮条上
-           直接画出一条 Y95.5 的纯白亮带, 而它上方的正文列只有 Y77.9 —— 
-           1px 的 rim 在高条上是「高光」, 在矮条上是「一条白边」。
-         - --mat-veil 起点是 --mat-specular-soft (白 0.40), 40px 的渐隐边
-           在这 69px 上占掉 58%, 把整条 bar 从 Y77.5 洗到 Y89.4、
-           饱和度从 S11.6 洗到 S4.7 —— 白幕把列色吃掉了。
-         - --mat-grain 是白色噪点 (alpha = 0.52*A - 0.16), 平均效果是
-           提亮 + 降饱和, 同样在吃色相。
-         三者叠加的净效果就是用户说的「灰灰的」。输入条只需要:
-         1 条同相暗线 (border-top) 交代上沿, 一层同列色的半透幕交代体量,
-         一次 backdrop blur 交代它压在内容之上。厚度感靠 --glass-highlight
-         的两条 inset 边就够了, 不需要噪声。 */
-      background-image: none;
-      background-clip: padding-box;
-      -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-      backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-        brightness(var(--mat-bri-thin));
-      box-shadow: var(--glass-highlight);
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .input-area {
-      background: var(--col-content-solid);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }  /* 配置守卫 banner (模型未配置时显示在输入框上方) */
-  .config-banner {
-    padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--warning-soft) 70%, transparent);
-  }
-  .config-recheck {
-    flex: none;
-    height: var(--btn-h-sm);
-    padding: 0 var(--space-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--btn-radius);
-    background: transparent;
-    color: var(--text-2);
-    font-size: var(--text-xs);
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition), border-color var(--transition);
-  }
-  .config-recheck:hover:not(:disabled) {
-    background: var(--tint);
-    border-color: var(--accent);
-    color: var(--text-1);
-  }
-  .config-recheck:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  /* 未产出内容时的思考提示（位于消息列内，不在输入区上方） */
+  .reasoning summary { color: var(--text-1); font-weight: 600; cursor: pointer; }
+  .reasoning summary .thinking-dots { margin-inline-start: var(--space-1); }
+  .reasoning-body { max-height: 260px; margin-top: var(--space-2); overflow-y: auto; white-space: pre-wrap; }
+
   .thinking-hint {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
+    color: var(--text-2);
     font-size: var(--text-xs);
-    color: var(--text-3);
-  }
-  .thinking-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: var(--radius-xs);
-    background: var(--accent);
-    animation: boot-pulse 1.2s var(--ease-in-out) infinite;
-  }
-  .debounce-hint {
-    align-self: flex-start;
-    padding-left: var(--optical-2);
-    color: var(--text-3);
-  }
-  @keyframes boot-pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.8); }
-    50% { opacity: 1; transform: scale(1.1); }
   }
 
-  .panel.sheet {
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
-    padding: var(--space-3);
-    max-height: 240px;
-    overflow-y: auto;
-  }
-  .sheet-head {
-    display: flex;
+  .thinking-dots {
+    display: inline-flex;
+    flex: none;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: var(--space-2);
-    font-weight: 600;
-    font-size: var(--text-sm);
-    color: var(--text-1);
+    gap: 3px;
+    color: var(--accent);
   }
-  .sticker-grid {
+
+  .thinking-dots i {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--radius-pill);
+    background: currentColor;
+    animation: breathe 1.18s var(--ease-in-out) infinite;
+  }
+
+  .thinking-dots i:nth-child(2) { animation-delay: 110ms; }
+  .thinking-dots i:nth-child(3) { animation-delay: 220ms; }
+  .streaming-indicator { line-height: 1; }
+  .debounce-hint { align-self: flex-end; margin-top: var(--space-2); }
+
+  @keyframes breathe {
+    0%, 65%, 100% { opacity: 0.45; transform: translateY(0); }
+    32% { opacity: 1; transform: translateY(-3px); }
+  }
+
+  .input-area {
+    position: relative;
+    z-index: var(--z-base);
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+    flex: none;
     gap: var(--space-2);
+    width: min(100%, calc(var(--chat-msg-maxw) + 2 * var(--space-4)));
+    margin-inline: auto;
+    padding: var(--space-1) var(--space-4) var(--space-4);
   }
-  .sticker-item {
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    padding: 0;
-    border-radius: var(--radius-sm);
-    transition: transform var(--transition), background var(--transition);
-  }
-  .sticker-item:hover {
-    transform: scale(1.08);
-    background: var(--tint);
-  }
-  .sticker-item img {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: contain;
+
+  .immersive .input-area {
+    padding-bottom: max(var(--space-4), env(safe-area-inset-bottom, 0px));
   }
 
   .composer {
-    display: flex;
-    align-items: flex-end;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4) var(--space-4);
-    /* 与消息列同宽(640px), 输入框右边缘和气泡右边缘对齐 —— 
-       原来 +200px 的宽限让输入条比对话宽出一截, 视线落点对不上。 */
-    max-width: var(--chat-msg-maxw);
-    margin: 0 auto;
-    width: 100%;
-  }
-  .act-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    flex: none;
-    margin-bottom: var(--optical-4);
-    border: none;
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-3);
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition);
-  }
-  .act-btn:hover {
-    background: var(--row-hover);
-    color: var(--text-1);
-  }
-  .act-btn.busy {
-    opacity: 0.45;
-    pointer-events: none;
-  }
-  /* 输入框: 34px 扁条 -> 40px 高度 + 微内阴影, 让输入区成一个「可写入的凹槽」,
-     而不是页面上又一根 1px 细线的装饰。focus 时边框转冷蓝并带 2px 环,
-     是整页最明确的「你现在在这里」提示。
-     v18: 背景从 var(--surface-2) (不透明 #edf0f5, H217.5 S3.3 Y86.9) 换成
-     --field-fill (text-1 6% 半透)。原来那块比所在正文列亮 9 个感知明度点、
-     色相偏 41°, 是「输入框灰灰的」的直接来源; 现在是同相压暗 9 点,
-     读成「材料被压进去了一道槽」而不是「贴了一张灰纸」。
-     边框同步换成同相暗线, 不再用中性 --border。 */
-  .text-input {
-    flex: 1;
+    display: grid;
     min-width: 0;
-    /* textarea: 高度由 JS 按内容伸缩 (单行 36px → 最多 6 行)。
-       固定 40px 的 input 装不下稍长的话, 用户看不到自己写了什么。 */
-    height: 36px;
-    min-height: 36px;
-    max-height: 148px;
-    padding: 7px var(--space-3);
-    border: 1px solid var(--field-line);
-    border-radius: var(--input-radius);
-    background: var(--field-fill);
-    color: var(--input-text);
-    font-family: inherit;
-    font-size: var(--text-15);
-    line-height: 1.5;
-    resize: none;
-    overflow-y: hidden;
-    box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text-1) 5%, transparent);
-    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
-  }
-  .text-input:hover {
-    border-color: var(--field-line-strong);
-    background: var(--field-fill-hover);
-  }
-  .text-input:focus {
-    outline: none;
-    /* v18: 原来 focus 跳回 var(--surface) —— 那是不透明白, 一聚焦就在
-       紫玻璃上挖出一块白板, 比静止态更突兀。改为同族加强一档。 */
-    background: var(--field-fill-focus);
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .text-input::placeholder {
-    color: var(--input-placeholder);
-  }
-  /* 发送键: 可发送时用冷蓝实底, 而不是近黑。
-     近黑是「破坏性/最高权重」的颜色, 用在发送这种高频动作上过重;
-     冷蓝是全站唯一的功能色, 留给唯一的主动作, 页面才有色彩呼吸点。
-     v18: 静止态从 --surface-2 (不透明中性) 换成 --field-fill, 与输入框同族,
-     两者共用一道「槽」的材质; 可发送时仍然是全页最亮的那点蓝。 */
-  .send-btn {
-    flex: none;
-    width: 40px;
-    height: 36px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: var(--field-fill);
-    color: var(--text-3);
-    cursor: not-allowed;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: background var(--transition), color var(--transition), transform var(--transition), box-shadow var(--transition);
-  }
-  /* 生成中: 同一个位置变成「停止」, 而不是留一个灰掉不可点的发送键。
-     会话跑一次长回复时, 用户最需要的是能叫停。 */
-  .send-btn.stop {
-    background: var(--field-fill);
-    color: var(--text-2);
-    cursor: pointer;
-    border: 1px solid var(--field-line-strong);
-  }
-  .send-btn.stop:hover {
-    background: var(--field-fill-hover);
-    color: var(--text-1);
-  }
-  .send-btn.active {
-    background: var(--accent);
-    color: var(--on-accent);
-    cursor: pointer;
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-  .send-btn.active:hover {
-    background: var(--accent-strong);
-  }
-  .send-btn.active:active {
-    transform: scale(0.94);
-  }
-  .send-btn:disabled {
-    background: var(--field-fill);
-    color: var(--text-3);
-    cursor: not-allowed;
-  }
-  .thinking-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius-xs);
-    background: var(--accent);
-    animation: caret-blink 1s steps(1) infinite;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-radius: var(--radius-lg);
   }
 
-  /* 移动端抽屉 */
+  .composer:focus-within {
+    box-shadow: 0 0 0 3px var(--accent-soft), var(--surface-floating-shadow);
+  }
+
+  .text-input {
+    width: 100%;
+    min-height: 40px;
+    max-height: 148px;
+    padding: 8px var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--input-text);
+    font: inherit;
+    font-size: var(--text-base);
+    line-height: 1.5;
+    resize: none;
+  }
+
+  .text-input:focus { outline: 0; box-shadow: none; }
+  .text-input::placeholder { color: var(--input-placeholder); }
+
+  .composer-actions { justify-content: space-between; }
+  .composer-tools { gap: var(--space-1); }
+
+  .send-btn {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--accent-gradient);
+    box-shadow: var(--shadow-accent);
+    color: var(--on-accent);
+    cursor: pointer;
+  }
+
+  .send-btn:hover:enabled { filter: brightness(1.08); }
+  .send-btn:disabled {
+    background: var(--field-fill);
+    box-shadow: none;
+    color: var(--text-3);
+    cursor: default;
+  }
+
+  .send-btn.stop { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
+
+  .attachment {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .attachment-thumb { position: relative; flex: none; width: 48px; aspect-ratio: 1; }
+  .attachment-thumb img { width: 100%; height: 100%; border-radius: var(--radius-sm); object-fit: cover; }
+
+  .attachment-close {
+    position: absolute;
+    inset-block-start: -4px;
+    inset-inline-end: -5px;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+    color: var(--text-1);
+    cursor: pointer;
+  }
+
+  .attachment-info { display: grid; min-width: 0; color: var(--text-2); font-size: var(--text-xs); }
+  .attachment-info strong { overflow: hidden; color: var(--text-1); text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-uploading { gap: var(--space-2); color: var(--text-2); font-size: var(--text-xs); }
+  .attachment-spinner {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--surface-divider);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-pill);
+    animation: spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .attachment-spinner { animation: none; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .config-recheck,
+  .popover-action {
+    min-height: 36px;
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--field-fill);
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--text-xs);
+    cursor: pointer;
+  }
+
+  .config-recheck:hover:enabled,
+  .popover-action:hover { background: var(--row-hover); color: var(--text-1); }
+  .config-recheck:disabled { opacity: 0.55; cursor: default; }
+
+  .sticker-panel,
+  .chat-tools,
+  .convs-menu {
+    z-index: var(--z-popover);
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    animation: chat-appear var(--transition-spring);
+  }
+
+  .sticker-panel,
+  .chat-tools {
+    position: absolute;
+    inset-inline-start: var(--space-4);
+    bottom: 100%;
+  }
+
+  .sticker-panel { width: min(420px, calc(100% - 2 * var(--space-4))); }
+  .sticker-panel .panel-head { padding-inline-start: var(--space-2); }
+
+  .sticker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+    gap: var(--space-1);
+    max-height: min(210px, 36dvh);
+    padding: 3px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .sticker-grid .center-hint { grid-column: 1 / -1; margin: 0; }
+
+  .sticker-item {
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    aspect-ratio: 1;
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .sticker-item:hover { background: var(--accent-soft); }
+  .sticker-item img { width: 100%; height: 100%; object-fit: contain; }
+
+  .chat-tools,
+  .convs-menu { display: grid; gap: var(--optical-3); width: 170px; }
+  .popover-action { display: flex; align-items: center; gap: var(--space-2); background: transparent; text-align: left; }
+  .popover-action.danger { color: var(--error); }
+  .popover-action.danger:hover { background: var(--error-soft); color: var(--error); }
+
+  .convs-menu {
+    position: fixed;
+    top: clamp(8px, var(--menu-top, 8px), calc(100dvh - 92px));
+    left: max(8px, calc(var(--menu-right, 178px) - 170px));
+  }
+
   .drawer-mask {
     position: absolute;
     inset: 0;
-    background: var(--glass-0);
     z-index: var(--z-scrim);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .drawer-mask {
-      -webkit-backdrop-filter: blur(var(--glass-blur-0));
-      backdrop-filter: blur(var(--glass-blur-0));
-    }
-  }
-  .drawer {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: min(300px, 82%);
-    z-index: var(--z-drawer);
-    background: var(--surface);
-    border-right: 1px solid var(--glass-border-2);
-    padding: var(--space-3);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    box-shadow: var(--shadow-3);
-    animation: draw-in 220ms var(--ease-out);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .drawer {
-      background: var(--glass-2);
-      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-      box-shadow: var(--glass-highlight), var(--shadow-3);
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .drawer {
-      background: var(--surface);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .drawer { animation: none; }
-  }
-  @keyframes draw-in {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(0); }
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    cursor: pointer;
   }
 
-  /* toast */
-  .toast {
+  .drawer-mask:active { transform: none; }
+
+  .drawer {
+    position: absolute;
+    inset-block: var(--space-2);
+    inset-inline-start: var(--space-2);
+    z-index: var(--z-drawer);
+    width: min(310px, calc(100% - var(--space-6)));
+    animation: chat-appear var(--transition-spring);
+  }
+
+  .chat-toast {
     position: absolute;
     top: var(--space-3);
     left: 50%;
-    transform: translateX(-50%);
     z-index: var(--z-toast);
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    max-width: 90%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--toast-bg);
-    color: var(--toast-text);
-    border-radius: var(--toast-radius);
-    box-shadow: var(--toast-shadow);
+    width: max-content;
+    max-width: min(92%, 480px);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--text-1);
     font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+    transform: translateX(-50%);
   }
 
-  @media (max-width: 899px) {
-    .bubble-row {
-      max-width: 86%;
-    }
-    .msgs {
-      padding: var(--space-3);
-    }
-    .composer {
-      padding: var(--space-2) var(--space-3) var(--space-3);
-      gap: var(--optical-6);
-    }
-    /* 单列时正文铺到底，不再留 680 的居中框：
-       680 是「宽屏别把一行拉太长」的上限，窄屏本来就到不了。 */
-    .msgs.empty {
-      padding-top: clamp(var(--space-5), 7vh, 72px);
-    }
+  .img-preview-overlay {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+  }
+
+  .img-preview-overlay::backdrop { background: rgb(0 0 0 / 0.82); }
+
+  .img-preview-hit {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    padding: var(--space-3);
+    border: 0;
+    background: transparent;
+    cursor: zoom-out;
+  }
+
+  .img-preview-hit:active { transform: none; }
+  .img-preview-full { max-width: 100%; max-height: 88dvh; border-radius: var(--radius-sm); object-fit: contain; }
+
+  .img-preview-close {
+    position: absolute;
+    top: max(var(--space-3), env(safe-area-inset-top, 0px));
+    inset-inline-end: var(--space-3);
+    border-radius: var(--radius-pill);
+  }
+
+  @keyframes chat-appear {
+    from { opacity: 0; transform: translateY(var(--motion-offset)); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (min-width: 768px) {
+    .chat-heading { display: flex; }
+  }
+
+  @media (max-width: 767px) {
+    .msgs { padding: var(--space-4) var(--space-3) var(--space-2); }
+    .msg-row { max-width: 93%; }
+    .bubble { padding-inline: var(--space-3); }
+    .input-area { padding: var(--space-1) var(--space-3) var(--space-2); }
+    .sticker-panel, .chat-tools { inset-inline-start: var(--space-3); }
+    .sticker-panel { width: calc(100% - 2 * var(--space-3)); }
+    .conv-search input { font-size: var(--text-base); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .thinking-dots i,
+    .voice-bar.playing .voice-icon,
+    .sticker-img { animation: none; }
+    .conv-entry:hover { transform: none; }
   }
 </style>

@@ -1,21 +1,11 @@
 <script>
-  // Toast.svelte — 轻量消息提示 (单一消息, 自动消失)
-  // 页面持有 `toast` 状态 (null 或 {type, text}), 传入本组件渲染。
-  // 入场/退场使用 Svelte transition (fade + fly 复合), 类型用到 tokens 里 toast-* 语义色。
+  import { fly } from 'svelte/transition';
 
   let { toast = null } = $props();
-  // toast: { type:'success'|'error'|'info', text }
 
-  // 自定义复合过渡: 淡入 + 上浮 (进出场共用, 反向播放)
-  function toastTransition(node, { y = 14, duration = 240 } = {}) {
-    return {
-      duration,
-      easing: (t) => 1 - Math.pow(1 - t, 3),
-      css: (t) => `
-        opacity: ${t};
-        transform: translateY(${(1 - t) * y}px) scale(${0.96 + 0.04 * t});
-      `,
-    };
+  function toastTransition(node) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    return fly(node, { y: reduce ? 0 : 6, duration: reduce ? 0 : 200 });
   }
 </script>
 
@@ -23,10 +13,15 @@
   <div class="toast-zone" role="status" aria-live="polite">
     {#key toast}
       <div
-        class="toast {toast.type === 'success' ? 'is-success' : toast.type === 'error' ? 'is-error' : 'is-info'}"
-        transition:toastTransition
+        class="toast glass-3 {toast.type === 'success' ? 'is-success' : toast.type === 'error' ? 'is-error' : 'is-info'}"
+        transition:toastTransition|global
       >
-        {toast.text}
+        <span class="toast-mark" aria-hidden="true">
+          {toast.type === 'success' ? '✓' : toast.type === 'error' ? '!' : 'i'}
+        </span>
+        <span class="toast-text">
+          <span class="sr-only">{toast.type === 'success' ? '成功：' : toast.type === 'error' ? '错误：' : '提示：'}</span>{toast.text}
+        </span>
       </div>
     {/key}
   </div>
@@ -35,48 +30,43 @@
 <style>
   .toast-zone {
     position: fixed;
-    bottom: calc(var(--tabbar-h) + var(--space-5));
-    left: 50%;
-    transform: translateX(-50%);
+    inset-inline: 0;
+    bottom: calc(var(--tabbar-h) + var(--space-5) + env(safe-area-inset-bottom, 0px));
     z-index: var(--z-toast);
-    width: max-content;
-    max-width: calc(100vw - var(--space-6) * 2);
+    display: grid;
+    justify-items: center;
+    margin-inline: var(--space-4);
     pointer-events: none;
   }
+
   .toast {
-    position: relative;
-    padding: var(--optical-10) var(--space-4) var(--optical-10) var(--space-5);
-    border-radius: var(--toast-radius);
-    background: var(--toast-info-bg);
-    color: var(--toast-info-text);
+    --toast-tone: var(--info);
+    --toast-tint: var(--info-soft);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: min(440px, 100%);
+    padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+    border-radius: var(--radius-lg);
+    color: var(--text-1);
     font-size: var(--text-13);
-    font-weight: 500;
-    letter-spacing: var(--tracking-tight);
-    box-shadow: var(--toast-shadow);
-    text-align: left;
-    will-change: transform, opacity;
+    font-weight: 550;
+    overflow-wrap: anywhere;
   }
-  /* 左侧 2px 状态条: 原来三种类型只靠底色区分, 但 toast 底色本来就浅
-     (info 是炭黑、success 深绿、error 深红), 在小尺寸下区分度靠色相,
-     红绿色觉差异的用户读不出来。补一条左侧实心竖条 + 类型色, 形状与颜色
-     两个通道同时表达状态。 */
-  .toast::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: currentColor;
-    opacity: 0.55;
-    border-radius: var(--toast-radius) 0 0 var(--toast-radius);
+
+  .toast-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    border-radius: var(--radius-pill);
+    background: var(--toast-tint);
+    color: var(--toast-tone);
+    font-weight: 700;
+    line-height: 1;
   }
-  .toast.is-success {
-    background: var(--toast-success-bg);
-    color: var(--toast-success-text);
-  }
-  .toast.is-error {
-    background: var(--toast-error-bg);
-    color: var(--toast-error-text);
-  }
+
+  .toast.is-success { --toast-tone: var(--success); --toast-tint: var(--success-soft); }
+  .toast.is-error { --toast-tone: var(--error); --toast-tint: var(--error-soft); }
 </style>

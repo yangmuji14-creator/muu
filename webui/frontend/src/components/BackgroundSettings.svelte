@@ -78,32 +78,29 @@
   }
 </script>
 
-<section class="card card-pad bg-settings">
+<section class="settings-group settings-group-pad">
   <div class="section-head">
-    <h4>📸 背景图设置</h4>
-    <span class="head-sub">自定义应用背景，支持图片或渐变</span>
+    <h2>背景图设置</h2>
   </div>
 
-  <!-- 预设渐变 -->
-  <div class="presets-group">
-    <label>预设渐变</label>
+  <fieldset class="presets-group">
+    <legend class="group-label">预设渐变</legend>
     <div class="presets-grid">
       {#each PRESETS as preset, i}
         <button
           type="button"
           class="preset-btn"
           class:active={(config.type === 'preset' || config.type === 'none') && config.preset === i}
-          style={swatchStyle(preset)}
-          title={preset.name}
           onclick={() => applyPreset(i)}
           aria-label={preset.name}
           aria-pressed={(config.type === 'preset' || config.type === 'none') && config.preset === i}
         >
+          <span class="preset-swatch" style={swatchStyle(preset)} aria-hidden="true"></span>
           <span class="preset-name">{preset.name}</span>
         </button>
       {/each}
     </div>
-  </div>
+  </fieldset>
 
   <!-- 自定义上传 -->
   <div class="upload-group">
@@ -127,32 +124,34 @@
         {#if uploading}
           上传中…
         {:else}
-          💾 选择图片（限 3MB）
+          选择图片（限 3 MB）
         {/if}
       </button>
     </div>
     {#if errorMsg}
       <div class="badge error upload-status" role="alert">{errorMsg}</div>
     {:else if okMsg}
-      <div class="badge ok upload-status">{okMsg}</div>
+      <div class="badge ok upload-status" role="status">{okMsg}</div>
     {/if}
   </div>
 
   <!-- 透明度调节 -->
   <div class="opacity-group">
-    <label for="opacity-slider">
-      背景透明度
-      <span class="opacity-val">{Math.round(config.opacity * 100)}%</span>
+    <label class="group-label opacity-label" for="opacity-slider">
+      <span>背景透明度</span>
+      <span class="opacity-val" aria-hidden="true">{Math.round(config.opacity * 100)}%</span>
     </label>
     <input
       type="range"
       id="opacity-slider"
+      aria-valuetext={Math.round(config.opacity * 100) + '%'}
       min="0.3"
       max="1"
       step="0.05"
       value={config.opacity}
       oninput={updateOpacity}
-      class="slider"
+      class="settings-range"
+      style:--range-progress={((config.opacity - 0.3) / 0.7) * 100 + '%'}
     />
   </div>
 
@@ -165,188 +164,95 @@
 </section>
 
 <style>
-  /* 根元素复用 settings-base 的 .card.card-pad：与其它设置分区同一套
-     间距与分隔线，不再自带 16px 内边距。 */
-
-  /* .section-head / .head-sub 复用 settings-base.css 的共享样式，
-     这里不再另起一套字号与颜色。 */
-
   .group-label {
     display: block;
-    font-size: var(--text-sm);
-    font-weight: 500;
-    color: var(--text-2);
     margin-bottom: var(--space-2);
+    padding: 0;
+    color: var(--text-2);
+    font-size: var(--text-sm);
+    font-weight: 550;
   }
 
   .presets-group,
   .upload-group,
   .opacity-group {
-    margin-bottom: var(--space-4);
+    margin: 0 0 var(--space-4);
   }
 
-  label {
-    display: block;
-    font-size: var(--text-sm);
-    font-weight: 500;
-    color: var(--text-2);
-    margin-bottom: var(--space-2);
-  }
-
-  .opacity-val {
-    float: right;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-3);
-  }
+  .presets-group { min-width: 0; padding: 0; border: 0; }
 
   .presets-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(76px, 100%), 1fr));
     gap: var(--space-2);
   }
 
   .preset-btn {
-    height: 60px;
-    border: 2px solid var(--border);
+    display: grid;
+    min-width: 0;
+    gap: var(--space-1);
+    justify-items: stretch;
+    padding: var(--space-1);
+    border: 0;
     border-radius: var(--radius-md);
+    background: var(--field-fill);
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--text-xs);
     cursor: pointer;
-    transition: all var(--transition);
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
-  .preset-btn:hover {
-    border-color: var(--accent);
-    transform: scale(1.05);
+  .preset-btn:hover { background: var(--row-hover); color: var(--text-1); }
+  .preset-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+
+  .preset-btn.active .preset-swatch {
+    box-shadow: 0 0 0 1px var(--accent), 0 0 0 2px var(--accent-glow);
   }
 
-  .preset-btn.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+  .preset-swatch {
+    width: 100%;
+    min-height: 48px;
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 0 0 1px var(--surface-divider);
   }
 
-  .preset-name {
-    position: absolute;
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.8);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity var(--transition);
-  }
+  .preset-name { overflow-wrap: anywhere; }
 
-  .preset-btn:hover .preset-name {
-    opacity: 1;
-  }
-
-  .upload-box {
-    position: relative;
-    border: 2px dashed var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--space-4);
-    text-align: center;
-    transition: all var(--transition);
-  }
-
-  .file-input {
-    display: none;
-  }
+  .file-input { display: none; }
 
   .upload-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     width: 100%;
-    min-height: 60px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    color: var(--text-2);
-    font-family: inherit;
-    font-size: var(--text-sm);
-    transition: color var(--transition);
-  }
-
-  .upload-btn:hover:not(:disabled) {
+    min-height: 48px;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--field-fill);
     color: var(--text-1);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
   }
 
-  .upload-btn:disabled {
-    opacity: 0.6;
-    cursor: wait;
-  }
-
-  .upload-box:hover {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 4%, transparent);
-  }
+  .upload-btn:hover:enabled { background: var(--accent-soft); color: var(--accent); }
+  .upload-btn:disabled { opacity: 0.6; cursor: wait; }
 
   .upload-status {
     margin-top: var(--space-2);
     max-width: 100%;
     white-space: normal;
+    overflow-wrap: anywhere;
   }
 
-  .slider {
-    width: 100%;
-    height: 6px;
-    border-radius: var(--radius-full);
-    background: var(--surface-2);
-    outline: none;
-    -webkit-appearance: none;
-    appearance: none;
-  }
-
-  .slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: var(--radius-full);
-    background: var(--accent);
-    cursor: pointer;
-    transition: all var(--transition);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .slider::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: var(--radius-full);
-    background: var(--accent);
-    cursor: pointer;
-    border: none;
-    transition: all var(--transition);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .slider::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-  }
-
-  .slider::-moz-range-thumb:hover {
-    transform: scale(1.2);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-  }
-
-  .reset-btn-group {
+  .opacity-label {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
+    margin: 0;
   }
 
-  /* 外观复用 settings-base 的 .btn-outline，这里只负责撑满一行 */
-  .reset-btn {
-    flex: 1;
-  }
+  .opacity-val { color: var(--accent); font-variant-numeric: tabular-nums; }
 
-  @media (max-width: 640px) {
-    .presets-grid {
-      grid-template-columns: repeat(3, 1fr);
-    }
-  }
+  .reset-btn-group { display: flex; }
+  .reset-btn { flex: 1; min-height: 40px; }
 </style>

@@ -1,12 +1,6 @@
 <script>
-  // SettingsAppearance.svelte — 主题与界面
-  // 三组：① 外观主题（含真实缩略预览）② 布局模式 ③ 当前生效一览
-  // 预览不再画抽象的太阳/月亮图标，也不再写死十六进制色值 ——
-  // 而是从 tokens.css 里把那套主题真实的四列底色、主色、气泡色读出来画一张缩略界面。
-  // 这样 tokens 一改，预览自动跟着变，永远是「点下去长什么样」。
   import { onMount } from 'svelte';
   import SettingsShell from './SettingsShell.svelte';
-  import ThemeToggle from '../ThemeToggle.svelte';
   import './settings-base.css';
   import { I } from './icons.js';
   import { LAYOUTS, LAYOUT_META, layout, setLayout } from '../../lib/layout.svelte.js';
@@ -20,9 +14,9 @@
   }
 
   const THEME_MODES = [
-    { value: 'light', icon: 'sun', label: '浅色', desc: '淡紫白 · 日光' },
-    { value: 'dark', icon: 'moon', label: '深色', desc: '午夜紫 · 室内' },
-    { value: 'system', icon: 'monitor', label: '跟随系统', desc: '按系统偏好自动切换' },
+    { value: 'light', label: '浅色' },
+    { value: 'dark', label: '深色' },
+    { value: 'system', label: '跟随系统' },
   ];
 
   // 从 tokens.css 读真实变量：给一个带 data-theme 的隐身探针，取完就删。
@@ -30,22 +24,23 @@
     '--col-nav-solid', '--col-list-solid', '--col-content-solid',
     '--accent', '--bubble-self-bg', '--bubble-friend-bg', '--border', '--text-1',
   ];
-  function readThemeVars(theme) {
+  function readThemeVars(theme, accentKey, vars = PROBE_VARS) {
     const el = document.createElement('div');
     el.setAttribute('data-theme', theme);
     // 缩略图必须带上当前强调色，否则换色后预览仍画默认的琥珀
-    el.setAttribute('data-accent', accent);
+    el.setAttribute('data-accent', accentKey);
     el.style.cssText = 'position:absolute;left:-9999px;top:0;width:0;height:0;overflow:hidden;pointer-events:none';
     document.body.appendChild(el);
     const cs = getComputedStyle(el);
     const out = {};
-    for (const k of PROBE_VARS) out[k] = cs.getPropertyValue(k).trim() || 'transparent';
+    for (const k of vars) out[k] = cs.getPropertyValue(k).trim() || 'transparent';
     el.remove();
     return out;
   }
 
   let swatch = $state(null); // { light: {...}, dark: {...} }
   let effective = $state('dark');
+  let palettes = $state({});
   let panelOpen = $state(true);
 
   function syncEffective(mode) {
@@ -81,6 +76,20 @@
     return () => mq.removeEventListener('change', on);
   });
 
+  // 外壳顶栏的 ThemeToggle 也会改 cc-theme（它写具体 light/dark）。它改完会
+  // 派发 cc-theme-change；这里同步 themeMode/effective，否则设置页会一直
+  // 高亮「跟随系统」、而页面其实已经是固定主题。
+  $effect(() => {
+    const onThemeChange = (event) => {
+      const mode = event?.detail;
+      if (mode !== 'light' && mode !== 'dark' && mode !== 'system') return;
+      themeMode = mode;
+      effective = syncEffective(mode);
+    };
+    window.addEventListener('cc-theme-change', onThemeChange);
+    return () => window.removeEventListener('cc-theme-change', onThemeChange);
+  });
+
   function applyTheme(mode) {
     themeMode = mode;
     try {
@@ -96,12 +105,12 @@
   // data-accent 挂在 <html> 上，theme-liquid.css 里按主题分别给出变量，
   // 深色模式不再被锁死在琥珀色。
   const ACCENTS = [
-    { key: 'amber', label: '琥珀', color: '#e08a2e' },
-    { key: 'blue', label: '海蓝', color: '#3d8fd6' },
-    { key: 'teal', label: '青绿', color: '#2fa99a' },
-    { key: 'rose', label: '玫瑰', color: '#d4658a' },
-    { key: 'violet', label: '紫罗兰', color: '#9a7ce8' },
-    { key: 'slate', label: '石墨', color: '#8a97ad' },
+    { key: 'amber', label: '琥珀' },
+    { key: 'blue', label: '海蓝' },
+    { key: 'teal', label: '青绿' },
+    { key: 'rose', label: '玫瑰' },
+    { key: 'violet', label: '紫罗兰' },
+    { key: 'slate', label: '石墨' },
   ];
   let accent = $state((() => {
     try {
@@ -127,24 +136,31 @@
     try {
       document.documentElement.setAttribute('data-accent', key);
       swatch = {
-        light: readThemeVars('light'),
-        dark: readThemeVars('dark'),
+        light: readThemeVars('light', key),
+        dark: readThemeVars('dark', key),
       };
     } catch { /* ignore */ }
   });
+  $effect(() => {
+    // 强调色样本只需要主色与自己的气泡色；只探这两个，别为 6 个色各读 8 个变量。
+    const PALETTE_VARS = ['--accent', '--bubble-self-bg'];
+    palettes = Object.fromEntries(
+      ACCENTS.map(({ key }) => [key, readThemeVars(effective, key, PALETTE_VARS)]),
+    );
+  });
 </script>
 
-<SettingsShell title="主题与界面" desc="外观主题、布局模式与当前生效状态" {onback}>
-  <section class="card card-pad">
+<SettingsShell title="主题与界面" desc="自定义主题、强调色、布局和背景图" {onback}>
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>外观主题</h4>
-      <span class="head-sub">缩略图就是这套主题的真实配色</span>
+      <h2>外观主题</h2>
+
     </div>
-    <div class="theme-options" role="radiogroup" aria-label="外观主题">
+    <div class="theme-options" role="group" aria-label="外观主题">
       {#each THEME_MODES as m}
         <button
           class="theme-opt {themeMode === m.value ? 'on' : ''}"
-          type="button" role="radio" aria-checked={themeMode === m.value}
+          type="button" aria-pressed={themeMode === m.value}
           onclick={() => applyTheme(m.value)}
         >
           <span class="theme-opt-main">
@@ -162,7 +178,6 @@
             {/if}
             <span class="theme-opt-txt">
               <span class="theme-opt-label">{m.label}</span>
-              <span class="theme-opt-desc">{m.desc}</span>
             </span>
           </span>
           {#if themeMode === m.value}
@@ -172,20 +187,21 @@
       {/each}
     </div>
 
-    <div class="quick-toggle card-row">
+    <div class="settings-row quick-toggle">
       <div class="row-main">
         <span class="row-title">快速切换</span>
         <span class="row-sub">在浅色与深色之间一键来回</span>
       </div>
-      <ThemeToggle />
+      <button class="btn-outline sm" type="button" onclick={() => applyTheme(effective === 'light' ? 'dark' : 'light')}>
+        {effective === 'light' ? '切换到深色' : '切换到浅色'}
+      </button>
     </div>
-    <p class="hint">选择记忆在本机（cc-theme）；「跟随系统」会在系统主题变化时自动同步。</p>
   </section>
 
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>强调色</h4>
-      <span class="head-sub">按钮、选中态与自己的消息气泡；深浅色各有对应版本</span>
+      <h2>强调色</h2>
+      <span class="head-sub">适用于按钮、选中状态和发出的消息。</span>
     </div>
     <div class="accent-row" role="radiogroup" aria-label="强调色">
       {#each ACCENTS as a}
@@ -195,18 +211,19 @@
           title={a.label}
           onclick={() => applyAccent(a.key)}
         >
-          <span class="accent-dot" style="background:{a.color}"></span>
+          <span class="accent-sample" aria-hidden="true">
+            <span class="accent-dot" style:background={palettes[a.key]?.['--accent']}></span>
+            <span class="accent-bubble" style:background={palettes[a.key]?.['--bubble-self-bg']}></span>
+          </span>
           <span class="accent-label">{a.label}</span>
         </button>
       {/each}
     </div>
-    <p class="hint">选择记忆在本机（cc-accent），切换后立即生效。</p>
   </section>
 
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>布局模式</h4>
-      <span class="head-sub">三档布局共用同一套配色与组件</span>
+      <h2>布局模式</h2>
     </div>
     <div class="layout-options" role="radiogroup" aria-label="布局模式">
       {#each LAYOUTS as key}
@@ -226,35 +243,34 @@
         </button>
       {/each}
     </div>
-    <p class="hint">选择记忆在本机（cc-layout），切换后立即生效。</p>
   </section>
 
-  <section class="card card-pad">
+  <BackgroundSettings />
+
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>当前生效</h4>
-      <span class="head-sub">只读，改动请在上面的分组里操作</span>
+      <h2>当前生效</h2>
     </div>
-    <dl class="now">
-      <div class="now-row">
+    <dl class="card-list now">
+      <div class="settings-row now-row">
         <dt>外观</dt>
         <dd>{effective === 'dark' ? '深色 · Midnight Violet' : '浅色 · 淡紫日光'}{themeMode === 'system' ? '（跟随系统）' : ''}</dd>
       </div>
-      <div class="now-row">
+      <div class="settings-row now-row">
         <dt>布局</dt>
         <dd>{LAYOUT_META[layout.mode].label}</dd>
       </div>
-      <div class="now-row">
+      <div class="settings-row now-row">
         <dt>聊天三栏</dt>
         <dd>导航 · 会话 · 正文{layout.mode === 'panel' ? ` · 状态（${panelOpen ? '展开' : '收起'}）` : '（该布局不显示状态栏）'}</dd>
       </div>
-      <div class="now-row">
+      <div class="settings-row now-row">
         <dt>阅读宽度</dt>
         <dd>正文单栏最宽 680px，超宽屏居中不拉长</dd>
       </div>
     </dl>
   </section>
 
-  <BackgroundSettings />
 </SettingsShell>
 
 {#snippet mini(v)}
@@ -275,7 +291,7 @@
 {/snippet}
 
 {#snippet layoutPreview(key)}
-  <span class="layout-preview" class:col={key === 'immersive'} aria-hidden="true">
+  <span class="layout-preview" aria-hidden="true">
     {#if key === 'panel'}
       <span class="lp rail"></span>
       <span class="lp list"></span>
@@ -298,174 +314,86 @@
 {/snippet}
 
 <style>
-  /* ---- 主题选项 ---- */
-  .theme-options { display: flex; flex-direction: column; gap: var(--space-2); }
-
-  /* ---- 强调色 ---- */
-  .accent-row {
-    display: flex;
-    flex-wrap: wrap;
+  .theme-options, .layout-options, .accent-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 146px), 1fr));
     gap: var(--space-2);
   }
-  .accent-opt {
-    display: inline-flex;
-    align-items: center;
+  .theme-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .accent-row { grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr)); }
+  .theme-opt, .layout-opt, .accent-opt {
+    position: relative;
+    display: grid;
+    align-content: start;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    color: var(--text-2);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition: border-color var(--transition), background var(--transition), transform var(--transition);
-  }
-  .accent-opt:hover { border-color: var(--border-strong); background: var(--row-hover); }
-  .accent-opt:active { transform: scale(0.96); }
-  .accent-opt.on {
-    border-color: var(--accent);
-    background: var(--accent-soft);
-    color: var(--text-1);
-    font-weight: 600;
-  }
-  .accent-dot {
-    width: 14px;
-    height: 14px;
-    border-radius: var(--radius-full);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-  }
-  .accent-label { line-height: 1; }
-  .theme-opt {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    cursor: pointer;
-    transition: border-color var(--transition), background var(--transition), transform var(--transition);
-    font-family: inherit;
-  }
-  .theme-opt:hover { background: var(--row-hover); }
-  .theme-opt:active { transform: scale(0.995); }
-  .theme-opt.on { border-color: var(--accent); background: var(--tint); }
-  .theme-opt-main { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-  .theme-opt-txt { display: flex; flex-direction: column; gap: var(--hair); text-align: left; min-width: 0; }
-  .theme-opt-label { font-weight: 600; color: var(--text-1); font-size: var(--text-sm); }
-  .theme-opt-desc { font-size: var(--text-xs); color: var(--text-3); }
-  .theme-check { flex: none; color: var(--accent); }
-
-  /* ---- 真实缩略预览 ---- */
-  .theme-swatch {
-    flex: none;
-    display: flex;
-    width: 72px;
-    height: 44px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    overflow: hidden;
-  }
-  .theme-swatch.placeholder { background: var(--surface-2); }
-  .theme-opt.on .theme-swatch { border-color: var(--accent-line); }
-  .swatch-pair { flex: none; display: flex; gap: 4px; }
-  .swatch-pair .theme-swatch { width: 40px; }
-  .swatch-pair .theme-swatch .sw-list { display: none; }
-
-  .sw-nav { width: 12px; flex: none; }
-  .sw-list {
-    width: 22px;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 3px;
-    padding: 5px 4px;
-  }
-  .sw-pill { height: 3px; border-radius: 1px; width: 100%; }
-  .sw-stage {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 4px;
-    padding: 5px 5px;
-  }
-  .sw-bub { height: 8px; border-radius: 3px; width: 78%; border: 1px solid transparent; }
-  .sw-bub.self { width: 56%; align-self: flex-end; }
-
-  /* ---- 布局预览 ---- */
-  .layout-options { display: flex; flex-direction: column; gap: var(--space-2); }
-  .layout-opt {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    cursor: pointer;
-    transition: border-color var(--transition), background var(--transition);
-    font-family: inherit;
-  }
-  .layout-opt:hover { background: var(--row-hover); }
-  .layout-opt.on { border-color: var(--accent); background: var(--tint); }
-  .layout-txt { display: flex; flex-direction: column; gap: var(--hair); text-align: left; min-width: 0; flex: 1; }
-  .layout-label { font-weight: 500; color: var(--text-1); font-size: var(--text-sm); }
-  .layout-desc { font-size: var(--text-xs); color: var(--text-3); }
-
-  /* 布局示意按真实比例画：panel = 导航/会话/正文/状态四柱；
-     immersive = 顶栏/正文/输入条；today = 顶栏/三卡/底栏。 */
-  .layout-preview {
-    flex: none;
-    display: flex;
-    gap: 2px;
-    width: 64px;
-    height: 40px;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    background: var(--surface-2);
-  }
-  .layout-preview.col { flex-direction: column; }
-  .lp { border-radius: 1px; background: var(--surface-3); }
-  .layout-opt.on .lp { background: var(--accent-soft); }
-  .lp.rail { width: 5px; flex: none; }
-  .lp.list { width: 10px; flex: none; }
-  .lp.panel { width: 8px; flex: none; }
-  .lp.stage { flex: 1; }
-  .lp.bar { height: 4px; flex: none; }
-  .lp.bar.low { opacity: .7; }
-  .lp-row { display: flex; gap: 2px; flex: 1; }
-  .lp.card { flex: 1; }
-
-  /* ---- 当前生效一览 ---- */
-  .now { margin: 0; display: flex; flex-direction: column; }
-  .now-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .now-row:last-child { border-bottom: none; padding-bottom: 0; }
-  .now-row dt {
-    flex: none;
-    width: 76px;
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-  }
-  .now-row dd {
-    margin: 0;
-    flex: 1;
     min-width: 0;
-    font-size: var(--text-13);
-    line-height: 1.6;
+    padding: var(--space-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    background: var(--settings-control);
     color: var(--text-1);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
   }
-
-  .quick-toggle { margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); }
-  .quick-toggle > :global(.theme-toggle) { flex: none; }
+  .theme-opt:hover, .layout-opt:hover, .accent-opt:hover { background: var(--field-fill-focus); }
+  .theme-opt.on, .layout-opt.on, .accent-opt.on { border-color: var(--accent); background: var(--settings-selected); }
+  .theme-opt-main, .layout-txt { display: grid; gap: var(--space-2); min-width: 0; }
+  .theme-opt-txt, .layout-txt { padding: var(--space-1); }
+  .theme-opt-label, .layout-label, .accent-label { display: block; font-size: var(--text-13); font-weight: 650; }
+  .layout-label { padding-inline-end: 28px; }
+  .layout-desc { color: var(--text-2); font-size: var(--text-xs); line-height: 1.5; }
+  .theme-check {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+    padding: 3px;
+    box-sizing: content-box;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .theme-swatch {
+    display: grid;
+    grid-template-columns: 14% 29% 1fr;
+    height: 78px;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+  }
+  .theme-swatch.placeholder { background: var(--surface-3); }
+  .swatch-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+  .sw-list, .sw-stage { display: grid; align-content: center; gap: var(--space-1); min-width: 0; padding: var(--space-1); }
+  .sw-pill { display: block; height: 4px; border-radius: var(--radius-pill); }
+  .sw-bub { display: block; width: 65%; height: 13px; border: 1px solid transparent; border-radius: var(--radius-md); }
+  .sw-bub.self { width: 55%; justify-self: end; }
+  .quick-toggle { justify-content: space-between; flex-wrap: wrap; margin-top: var(--space-2); }
+  .accent-opt { justify-items: center; text-align: center; }
+  .accent-sample { display: flex; align-items: center; gap: var(--space-1); min-height: 30px; }
+  .accent-dot { width: 22px; height: 22px; border-radius: 50%; }
+  .accent-bubble { width: 24px; height: 13px; border-radius: var(--radius-pill); }
+  .layout-preview {
+    display: flex; gap: var(--space-1); height: 64px; padding: var(--space-2);
+    border-radius: var(--radius-md); background: var(--surface-2);
+  }
+  .layout-preview:has(.bar) { flex-direction: column; }
+  .lp { display: block; min-width: 0; border-radius: var(--radius-sm); background: var(--surface-3); }
+  .lp.rail, .lp.bar { background: var(--accent-soft); }
+  .lp.rail { flex: 1; }
+  .lp.list, .lp.panel { flex: 2; }
+  .lp.stage { flex: 4; background: var(--surface); }
+  .lp.bar { height: 8px; }
+  .lp.bar.low { opacity: .6; }
+  .lp-row { display: flex; gap: var(--space-1); flex: 1; }
+  .lp.card { flex: 1; background: var(--surface); }
+  .now { margin: 0; }
+  .now-row { justify-content: space-between; flex-wrap: wrap; font-size: var(--text-13); }
+  .now-row dt { flex: 0 0 auto; color: var(--text-2); }
+  .now-row dd { margin: 0; overflow-wrap: anywhere; }
+  @media (max-width: 600px) {
+    .theme-swatch { height: 52px; }
+    .theme-opt-txt { padding-inline: 0; }
+    .theme-opt .theme-check { top: var(--space-2); right: var(--space-2); width: 14px; height: 14px; }
+  }
 </style>

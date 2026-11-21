@@ -7,7 +7,7 @@
   //
   // 子页组件在 src/components/settings/, 通过 props 接收 { notify, onback }。
   // route: 让 #/settings/<sub> 直接打开对应子页。
-  import { route } from '../lib/router.js';
+  import { navigate, route } from '../lib/router.js';
   import Toast from '../components/Toast.svelte';
   import SettingsIndex from '../components/settings/SettingsIndex.svelte';
   import SettingsModel from '../components/settings/SettingsModel.svelte';
@@ -35,8 +35,6 @@
     appearance: SettingsAppearance,
   };
 
-  let current = $state(null);
-
   // 桌面端: 分类已在侧栏, 子页内联渲染
   $effect(() => {
     const mq = window.matchMedia('(min-width: 768px)');
@@ -55,35 +53,18 @@
     toastTimer = setTimeout(() => (toast = null), 3200);
   }
 
-  function open(key) {
-    current = key;
-  }
-  function back() {
-    current = null;
-  }
+  $effect(() => () => clearTimeout(toastTimer));
 
-  // 同步路由子路径 -> 当前子页。
-  // 桌面端且无子路径时, 默认落到第一个分类, 不再显示索引页。
-  $effect(() => {
-    const key = Array.isArray($route.sub) && $route.sub.length > 0 ? $route.sub[0] : null;
-    if (key && SUB[key]) {
-      current = key;
-    } else if (!key && settingsNav.inline && !current) {
-      current = SETTINGS_KEYS[0];
-    }
-  });
-
-  let Active = $derived(current && SUB[current] ? SUB[current] : null);
+  const current = $derived($route.sub[0]);
+  const Active = $derived(
+    Object.hasOwn(SUB, current) ? SUB[current] : settingsNav.inline ? SUB[SETTINGS_KEYS[0]] : null,
+  );
 </script>
 
-{#if settingsNav.inline}
-  {#if Active}
-    <Active notify={notify} onback={back} />
-  {/if}
-{:else if !current}
-  <SettingsIndex onopen={open} />
-{:else if Active}
-  <Active notify={notify} onback={back} />
+{#if Active}
+  <Active notify={notify} onback={() => navigate('settings')} />
+{:else}
+  <SettingsIndex onopen={(key) => navigate(`settings/${key}`)} />
 {/if}
 
 <Toast {toast} />

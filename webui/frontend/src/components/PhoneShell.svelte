@@ -7,10 +7,6 @@
   //
   // 可选 panel snippet: 传入时在桌面端作为右侧第三栏, 窄屏端收为底部抽屉。
   //
-  // 视觉语言 (v2): 暖纸底 + 1px 细线分隔 + 四档玻璃材质。
-  //   玻璃只用于「浮在内容之上」的表面 (顶栏/底栏/侧栏/抽屉/弹窗),
-  //   内容区仍是实心 --surface —— 正文永不放在玻璃上。
-  //   每处玻璃都带 @supports 不透明兜底与 prefers-reduced-transparency 退让。
   import TabBar from './TabBar.svelte';
   import TopBar from './TopBar.svelte';
   import ThemeToggle from './ThemeToggle.svelte';
@@ -87,6 +83,25 @@
   // 否则 900px 下三栏并排会把正文压成一条缝。
   let panelOpen = $derived(canDock && (userToggle ?? wide));
 
+  function openPanel() {
+    if (canDock) userToggle = true;
+    else shell.panelSheetOpen = true;
+  }
+
+  function closeSheetOnEscape(event) {
+    // 有模态 <dialog> 打开时，Esc 归它处理：原生 dialog 的 cancel 不会把
+    // keydown 标成 defaultPrevented，所以必须显式查一次，否则「确认删除」
+    // 弹窗按 Esc 会把它背后的状态面板也一起关掉。
+    if (
+      event.key === 'Escape'
+      && !event.defaultPrevented
+      && !document.querySelector('dialog[open]')
+      && shell.panelSheetOpen
+    ) {
+      closePanelSheet();
+    }
+  }
+
   let prevWide = null;
   $effect(() => {
     const w = wide;
@@ -111,35 +126,43 @@
       shell.panelAvailable = false;
     };
   });
+
+  $effect(() => {
+    if (!panel || (isDesktop && panelOpen)) closePanelSheet();
+  });
 </script>
+
+<svelte:window onkeydown={closeSheetOnEscape} />
 
 <div class="app-shell" class:desktop={isDesktop} class:multi-col={multiCol} class:rail={railMode} class:panel-closed={!panelOpen}>
   {#if isDesktop}
-    <aside class="sidebar" aria-label="主导航">
+    <aside class="sidebar glass-1" aria-label="主导航">
       <div class="sidebar-brand">
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">慕</span>
       </div>
       <TabBar {active} vertical rail={railMode} />
-      <div class="sidebar-foot">
-        {#if sidefoot}{@render sidefoot()}{/if}
-      </div>
+      {#if sidefoot}<div class="sidebar-foot">{@render sidefoot()}</div>{/if}
     </aside>
 
-    <section class="main-area">
-      {@render children?.()}
+    <section class="main-frame">
+      {#if !multiCol}<div class="main-material glass-2" aria-hidden="true"></div>{/if}
+      <div class="main-area">{@render children?.()}</div>
     </section>
 
     {#if panel}
       {#if panelOpen}
-        <aside class="panel-col" aria-label="她的状态">
-          <button class="panel-collapse" type="button" aria-label="收起状态面板" title="收起" onclick={() => (userToggle = false)}>
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-          </button>
+        <aside class="panel-col glass-1" aria-label="她的状态">
+          <div class="panel-header">
+            <span class="panel-title">她的状态</span>
+            <button class="panel-collapse" type="button" aria-label="收起状态面板" title="收起" onclick={() => (userToggle = false)}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
           {@render panel()}
         </aside>
       {:else}
-        <button class="panel-rail-tab" type="button" aria-label="展开状态面板" title="她的状态" onclick={() => (userToggle = true)}>
+        <button class="panel-rail-tab" type="button" aria-label="展开状态面板" aria-expanded={shell.panelSheetOpen} title="她的状态" onclick={openPanel}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
           <span class="rail-tab-text">状态</span>
         </button>
@@ -178,30 +201,31 @@
           </button>
         {/if}
         {#if panel}
-          <button class="panel-trigger" type="button" onclick={() => (shell.panelSheetOpen = true)}>状态</button>
+          <button class="panel-trigger" type="button" aria-expanded={shell.panelSheetOpen} onclick={openPanel}>状态</button>
         {/if}
         <ThemeToggle />
       {/snippet}
     </TopBar>
 
-    <section class="main-area">
-      {@render children?.()}
+    <section class="main-frame">
+      {#if !multiCol}<div class="main-material glass-2" aria-hidden="true"></div>{/if}
+      <div class="main-area">{@render children?.()}</div>
     </section>
 
     <TabBar {active} vertical={false} />
+  {/if}
 
-    {#if panel && shell.panelSheetOpen}
-      <div class="sheet-scrim" role="presentation" onclick={closePanelSheet}></div>
-      <div class="sheet" role="dialog" aria-label="她的状态">
-        <div class="sheet-head">
-          <span class="micro-label">她的状态</span>
-          <button class="sheet-close" type="button" aria-label="关闭" onclick={closePanelSheet}>
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
-          </button>
-        </div>
-        <div class="sheet-body">{@render panel()}</div>
+  {#if panel && shell.panelSheetOpen && !panelOpen}
+    <div class="sheet-scrim scrim-layer" role="presentation" onclick={closePanelSheet}></div>
+    <div class="sheet glass-3" class:side-sheet={isDesktop} role="dialog" aria-label="她的状态">
+      <div class="panel-header">
+        <span class="panel-title">她的状态</span>
+        <button class="sheet-close" type="button" aria-label="关闭" onclick={closePanelSheet}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
-    {/if}
+      <div class="sheet-body">{@render panel()}</div>
+    </div>
   {/if}
 </div>
 
@@ -211,144 +235,90 @@
     flex-direction: column;
     width: 100%;
     height: 100dvh;
-    /* 透明而非 --bg: 氛围层铺在 body::before (z-index:-1),
-       外壳必须让出来, 否则玻璃底下永远是一块纯色 —— 那正是
-       "磨砂玻璃做了却看不见"的根因。 */
-    background: transparent;
     overflow: hidden;
+  }
+
+  .main-frame {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .main-material {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
   }
 
   .main-area {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
+    position: relative;
+    height: 100%;
+    overflow: hidden auto;
     overscroll-behavior: contain;
-    /* 内容区用 --glass-content 而非不透明的 --surface:
-       让氛围层以极淡的方式透上来, 页面才有"纸下有光"的层次。
-       不支持 backdrop-filter 时退回 --surface (见下方 @supports)。 */
-    background: var(--surface);
+    scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
-    /* 两侧都预留滚动条槽位: 无论是否出现滚动条, 内容左右间距始终对称 */
-    scrollbar-gutter: stable both-edges;
   }
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      .main-area {
-        /* 列级玻璃: 正文是全页最亮的一档 (浅色) / 最暗的一档 (深色),
-           明度阶梯的锚点就在这一块。
-           v7: 正文是内容层, 按 HIG 用 standard material 的 thin 档,
-           不用 Liquid Glass —— Liquid Glass 属于控件与导航层,
-           铺在正文上会让"什么是可点的"失去区分。 */
-        background-color: var(--glass-content);
-        background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
-        background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
-        background-position: top left, center, center;
-        background-repeat: no-repeat, no-repeat, repeat;
-        background-clip: padding-box;
-        -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-        backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-      }
-      /* 聊天页是唯一的「多列内嵌」布局: .conv-panel 与 .chat-stage 都长在
-         .main-area 里面。外壳若继续铺玻璃, 会话列就会变成
-         「main-area 玻璃 × conv-panel 玻璃」两层叠加, 等效 alpha 从 .58 涨到
-         .82 (深色 .68 → .90) —— 氛围色被彻底吃掉, 实测会话列 spread 只剩 25,
-         这就是"配色明明调了却看不出蓝紫"的结构性根因。
-         所以聊天页把外壳让成透明, 玻璃改由两列各自承担, 每列只有一层。 */
-      .app-shell.multi-col .main-area {
-        background-color: transparent;
-        background-image: none;
-        -webkit-backdrop-filter: none;
-        backdrop-filter: none;
-        /* 聊天页自己管理滚动 (.msgs 是滚动容器), 外壳不该再留滚动条槽位 ——
-           两侧各 10px 的 gutter 会把正文无端缩窄 20px。 */
-        overflow: hidden;
-        scrollbar-gutter: auto;
-      }
-    }
-  @media (prefers-reduced-transparency: reduce) {
-    .main-area {
-      background: var(--col-content-solid);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  /* 聊天页自己管理滚动 (.msgs 是滚动容器), 外壳不该再留滚动条槽位 ——
-     两侧各 10px 的 gutter 会把正文无端缩窄 20px。这条必须无条件生效,
-     不能只在 @supports 里写一遍。 */
-  .app-shell.multi-col .main-area {
+
+  .multi-col .main-area {
     overflow: hidden;
     scrollbar-gutter: auto;
   }
-  .main-area::-webkit-scrollbar {
-    width: 8px;
-  }
-  .main-area::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border: 2px solid transparent;
-    background-clip: padding-box;
-    border-radius: var(--radius-full);
-  }
-  .main-area::-webkit-scrollbar-thumb:hover {
-    background: var(--text-3);
-    border: 2px solid transparent;
-    background-clip: padding-box;
-  }
-  .main-area::-webkit-scrollbar-track {
-    background: transparent;
-  }
 
-  /* ---- 窄屏: 页面接管顶栏时的按钮与标题 ---- */
-  .head-btn {
-    flex: none;
+  .head-btn,
+  .panel-trigger,
+  .panel-collapse,
+  .sheet-close {
     display: inline-flex;
+    flex: none;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    min-width: 36px;
+    min-height: 36px;
     padding: 0;
-    border: none;
+    border: 0;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-2);
     cursor: pointer;
-    transition: background var(--transition), color var(--transition);
   }
-  .head-btn:hover {
+
+  .head-btn:hover:enabled,
+  .panel-collapse:hover,
+  .sheet-close:hover {
     background: var(--row-hover);
     color: var(--text-1);
   }
+
+  .head-btn:disabled {
+    opacity: 0.42;
+    cursor: default;
+  }
+
   .head-title {
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    color: var(--text-1);
+    font-size: var(--text-15);
+    font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-13);
-    font-weight: 500;
-    color: var(--text-2);
   }
 
-  /* ---- 窄屏: 面板触发按钮 + 底部抽屉 ---- */
   .panel-trigger {
-    height: 26px;
-    padding: 0 var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-2);
+    padding-inline: var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
     font-family: inherit;
     font-size: var(--text-xs);
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition), border-color var(--transition);
+    font-weight: 600;
   }
-  .panel-trigger:hover {
-    background: var(--accent-wash);
-    border-color: var(--accent-line);
+
+  .panel-trigger:hover,
+  .panel-trigger[aria-expanded='true'] {
+    background: var(--accent-soft);
     color: var(--accent);
   }
 
@@ -356,290 +326,163 @@
     position: fixed;
     inset: 0;
     z-index: var(--z-scrim);
-    background: var(--glass-0);
+    animation: fadeIn var(--transition);
   }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .sheet-scrim {
-      -webkit-backdrop-filter: blur(var(--glass-blur-0));
-      backdrop-filter: blur(var(--glass-blur-0));
-    }
-  }
-  /* 底部 sheet: glass-2 档。与 .imm-drawer 同级 —— 两者都是"盖在页面上
-     但不离开页面"的表面, 必须用同一种材质语言, 否则窄屏下两种浮层
-     看起来像来自两个产品。 */
+
   .sheet {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset-inline: var(--space-3);
+    bottom: max(var(--space-3), env(safe-area-inset-bottom, 0px));
     z-index: var(--z-drawer);
-    max-height: 68vh;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
-    border-top: 1px solid var(--glass-border-2);
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    box-shadow: var(--shadow-4);
+    max-height: 72dvh;
+    margin-inline: auto;
+    max-width: 520px;
+    border-radius: var(--radius-xl);
+    animation: sheet-enter var(--transition-snap);
   }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .sheet {
-      background: var(--glass-2);
-      -webkit-backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-      backdrop-filter: blur(var(--glass-blur-2)) saturate(var(--glass-sat-2));
-      box-shadow: var(--glass-highlight), var(--shadow-4);
-    }
+
+  .sheet.side-sheet {
+    inset-block: var(--space-3);
+    inset-inline: auto var(--space-3);
+    max-height: none;
+    width: min(340px, 90vw);
+    animation-name: slideInRight;
   }
-  @media (prefers-reduced-transparency: reduce) {
-    .sheet {
-      background: var(--surface);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
+
+  @keyframes sheet-enter {
+    from { opacity: 0; transform: translateY(var(--motion-offset)); }
+    to { opacity: 1; transform: translateY(0); }
   }
-  .sheet-head {
-    flex: none;
+
+  .panel-header {
     display: flex;
+    flex: none;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-2) 0 var(--space-4);
   }
-  .sheet-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border: none;
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-3);
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition);
+
+  .panel-title {
+    font-size: var(--text-sm);
+    font-weight: 650;
+    color: var(--text-1);
   }
-  .sheet-close:hover { background: var(--row-hover); color: var(--text-1); }
+
   .sheet-body {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   }
 
-  /* ---- 桌面端 (>=768px) ---- */
+  .sheet-body :global(.state-panel) {
+    height: auto;
+    overflow: visible;
+  }
+
+  .brand-name {
+    color: var(--text-1);
+    font-size: var(--text-base);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
   @media (min-width: 768px) {
     .app-shell.desktop {
       flex-direction: row;
+      gap: var(--optical-10);
+      padding: var(--space-3);
     }
 
-    /* 侧栏: glass-1 (chrome 档)。桌面端侧栏是"常驻但非主体"的一列,
-       用最薄玻璃让主内容区的暖纸底透一点过来, 两列才像同一张纸上的
-       两个区域, 而不是被一条硬线拼起来的两块。
-       注意: 侧栏底下是 --bg 而非图片, 玻璃在这里主要靠"内高光 + 细结构线"
-       表达层次, 模糊本身几乎不可见 —— 这是刻意的, 避免侧栏看起来发灰。 */
-    .sidebar {
-      flex: none;
-      width: var(--sidebar-w);
+    .main-area,
+    .main-material {
+      border-radius: var(--radius-xl);
+    }
+
+    .multi-col .main-area :global(.chat-body) {
+      gap: var(--optical-10);
+    }
+
+    .multi-col .main-area :global(.conv-panel) {
+      border-right: 0;
+      border-radius: var(--radius-lg);
+    }
+
+    .multi-col .main-area :global(.chat-stage) {
+      overflow: hidden;
+      border-radius: var(--radius-xl);
+      box-shadow: var(--surface-stage-shadow);
+    }
+
+    .sidebar,
+    .panel-col {
       display: flex;
+      flex: none;
       flex-direction: column;
-      background: var(--bg);
-      border-right: 1px solid var(--glass-border-2);
+      min-height: 0;
+      border-radius: var(--radius-lg);
     }
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      .sidebar {
-        /* 列级玻璃: 侧栏是四列里最暗的一档, 主动退到氛围层后面。
-           之前和 conv-panel / panel-col 共用 --glass-1, 三列同进同退,
-           所以四列永远只有 4 个明度点的差 —— 看不出层次。
 
-           v7 (Apple 材质): 列是**内容层**, 按 HIG 该用 standard material
-           而不是 Liquid Glass。所以这里不再是"一个 rgba + 一条斜向白斑",
-           而是五层结构: 色膜 + 厚度渐变 + 颗粒 + 1px 镜面边 + 双 hairline 边。
-           玻璃的"材质感"全部来自后四层, 色膜只负责决定压到多亮。 */
-        background-color: var(--glass-nav);
-        background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
-        background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
-        background-position: top left, center, center;
-        background-repeat: no-repeat, no-repeat, repeat;
-        background-clip: padding-box;
-        -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-        backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-        box-shadow: var(--glass-highlight);
-      }
-    }
-    @media (prefers-reduced-transparency: reduce) {
-      .sidebar {
-        /* 兜底不能用 --bg: 那会把四列压回同一个色, 层次当场消失。
-           用各列自己的实色, 减弱透明模式下仍然读得出四层。 */
-        background: var(--col-nav-solid);
-        -webkit-backdrop-filter: none;
-        backdrop-filter: none;
-      }
-    }
-    /* 品牌区: 原来是「10px 黑方块 + 14px 慕」，高度只有 44px，
-       在 196px 宽的侧栏顶部看起来像一行没加载完的占位。
-       现在把方块做成「双色方形标」（黑块右下角挂 4px 冷蓝角），
-       并给名字配一行 11px 等宽副标，让顶部成为一个真正的标识区。 */
+    .sidebar { width: var(--sidebar-w); }
+    .panel-col { width: var(--panel-w); }
+
     .sidebar-brand {
       display: flex;
+      flex: none;
       align-items: center;
-      gap: var(--optical-9);
-      height: calc(var(--topbar-h) + 8px);
-      padding: 0 var(--space-4);
-      border-bottom: 1px solid var(--border);
-      flex: none;
+      gap: var(--space-3);
+      min-height: calc(var(--topbar-h) + var(--space-3));
+      padding-inline: var(--space-4);
     }
-    .brand-mark {
-      position: relative;
-      flex: none;
-      width: 11px;
-      height: 11px;
-      background: var(--text-1);
-    }
-    .brand-mark::after {
-      content: '';
-      position: absolute;
-      right: -2px;
-      bottom: -2px;
-      width: 5px;
-      height: 5px;
-      background: var(--accent);
-    }
-    .brand-name {
-      font-size: var(--text-13);
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      color: var(--text-1);
-      white-space: nowrap;
-    }
+
     .sidebar-foot {
+      flex: none;
       margin-top: auto;
-      flex: none;
-      border-top: 1px solid var(--border);
       padding: var(--space-3) var(--space-4) var(--space-4);
-      font-size: var(--text-2xs);
-      letter-spacing: 0.02em;
-      line-height: 1.6;
-      color: var(--text-3);
+      color: var(--text-2);
+      font-size: var(--text-xs);
     }
 
-    .panel-col {
-      flex: none;
-      width: var(--panel-w);
-      border-left: 1px solid var(--glass-border-2);
-      min-height: 0;
-      display: flex;
-      position: relative;
-      background: var(--bg);
-    }
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      .panel-col {
-        /* 列级玻璃: 右栏是次级信息, 明度夹在侧栏与会话列表之间 ——
-           必须比正文暗 (浅色) 才不会抢走视觉重心。
-           v7: 与 .sidebar 同一套五层材质, 只有色膜 (--glass-aside) 不同。
-           材质参数刻意一致 —— 同一次交互里相邻的两列如果模糊半径不同,
-           边框的锐度就会不一致, 读起来像两块贴在一起的不同的板。 */
-        background-color: var(--glass-aside);
-        background-image: var(--mat-rim), var(--mat-veil), var(--mat-grain);
-        background-size: 100% var(--mat-rim-h), 100% 100%, 128px 128px;
-        background-position: top left, center, center;
-        background-repeat: no-repeat, no-repeat, repeat;
-        background-clip: padding-box;
-        -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-        backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin))
-          brightness(var(--mat-bri-thin));
-        box-shadow: var(--glass-highlight);
-      }
-    }
-    @media (prefers-reduced-transparency: reduce) {
-      .panel-col {
-        background: var(--col-aside-solid);
-        -webkit-backdrop-filter: none;
-        backdrop-filter: none;
-      }
-    }
-    .panel-col > :global(:not(.panel-collapse)) {
+    .panel-col :global(.state-panel) {
       flex: 1;
-      min-width: 0;
+      min-height: 0;
     }
 
-    /* ---- 右侧状态面板的开合 ----
-       面板是辅助信息, 必须能一键让位给正文。收起后不留一条空栏,
-       只在右缘留一枚 28px 竖标签, 需要时再展开。 */
-    .panel-collapse {
-      position: absolute;
-      top: var(--space-3);
-      right: var(--space-2);
-      z-index: var(--z-sticky);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      padding: 0;
-      border: none;
-      border-radius: var(--radius-xs);
-      background: transparent;
-      color: var(--text-3);
-      cursor: pointer;
-      transition: background var(--transition), color var(--transition);
-    }
-    .panel-collapse:hover {
-      background: var(--row-hover);
-      color: var(--text-1);
-    }
     .panel-rail-tab {
-      flex: none;
-      width: 28px;
       display: flex;
+      flex: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      align-self: center;
       gap: var(--space-2);
-      padding: var(--space-4) 0;
-      border: none;
-      border-left: 1px solid var(--glass-border-2);
-      /* 透明底在最右缘会直接露出 ambient-b 色团(实测 rel 30.7,
-         比正文亮三倍), 读成一条紫色胶带。铺一层列玻璃把它压回 chrome 层。 */
-      background: var(--glass-nav);
+      width: 36px;
+      min-height: 80px;
+      padding: var(--space-3) 0;
+      border: 0;
+      border-radius: var(--radius-pill);
+      background: var(--col-nav-solid);
       color: var(--text-2);
-      font-family: inherit;
-      font-size: var(--text-2xs);
-      letter-spacing: 0.18em;
+      font: inherit;
+      font-size: var(--text-xs);
       cursor: pointer;
-      transition: background var(--transition), color var(--transition);
-    }
-    @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-      .panel-rail-tab {
-        background: var(--col-nav-solid);
-        -webkit-backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin));
-        backdrop-filter: blur(var(--mat-blur-thin)) saturate(var(--mat-sat-thin));
-      }
-    }
-    .panel-rail-tab:hover {
-      background: var(--row-hover);
-      color: var(--accent);
-    }
-    .rail-tab-text {
-      writing-mode: vertical-rl;
-      text-transform: uppercase;
     }
 
-    /* ---- 图标轨: 1024px 以下侧栏只留图标 ----
-       一级导航一旦占满 200px, 会话列和正文就没有余量了。
-       这一档把侧栏压到 64px, 名字收进 title, 选中态换成图标底色。 */
-    .app-shell.rail .sidebar {
-      width: var(--sidebar-rail);
+    .panel-rail-tab:hover,
+    .panel-rail-tab[aria-expanded='true'] {
+      background: var(--accent-soft);
+      color: var(--accent);
     }
-    .app-shell.rail .sidebar-brand {
-      justify-content: center;
-      padding: 0;
-    }
-    .app-shell.rail .brand-name {
-      display: none;
-    }
-    .app-shell.rail .sidebar-foot {
-      display: none;
-    }
+
+    .rail-tab-text { writing-mode: vertical-rl; }
+
+    .app-shell.rail .sidebar { width: var(--sidebar-rail); }
+    .app-shell.rail .sidebar-brand { justify-content: center; padding: 0; }
+    .app-shell.rail .brand-name,
+    .app-shell.rail .sidebar-foot { display: none; }
   }
 </style>

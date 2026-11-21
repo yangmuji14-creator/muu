@@ -17,8 +17,6 @@
   let loaded = $state(false);
   let saving = $state(false);
 
-  // 高级设置折叠
-  let showAdvanced = $state(false);
   let wf = $state({ id: '', persona_id: '', enabled: true, auto_start: false });
 
   // 平台选择弹层
@@ -271,6 +269,13 @@
     };
   }
 
+  function openDialog(node) {
+    queueMicrotask(() => {
+      if (node.isConnected) node.showModal();
+    });
+    return { destroy: () => node.close() };
+  }
+
   function closeQr() {
     if (qrReconnectTimer) { clearTimeout(qrReconnectTimer); qrReconnectTimer = null; }
     teardownEs();
@@ -282,33 +287,30 @@
   }
 </script>
 
-<SettingsShell title="微信账号" desc="选平台、扫码即绑定" {onback}>
+<SettingsShell title="微信账号" desc="绑定微信账号并管理登录状态与人设" {onback}>
   <!-- 一键绑定引导卡 -->
-  <section class="card card-pad bind-hero">
+  <section class="settings-group settings-group-pad bind-hero">
     <div class="bind-hero-icon" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${I.wechat}</svg>`}</div>
     <div class="bind-hero-text">
-      <h4>绑定微信账号</h4>
-      <p class="bind-hero-desc">三步搞定：① 选择平台 → ② 扫码 → ③ 完成。无需手动填写账号信息。</p>
+      <h2>绑定微信账号</h2>
+      <p class="bind-hero-desc">选择平台后，使用微信扫描登录二维码。</p>
     </div>
     <button class="btn-primary" type="button" onclick={startBind}>开始扫码绑定</button>
   </section>
 
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>已绑定账号</h4>
-      <button class="btn-outline sm" type="button" onclick={() => (showAdvanced = !showAdvanced)}>{showAdvanced ? '收起高级' : '高级'}</button>
+      <h2>已绑定账号</h2>
     </div>
 
     {#if !loaded}
       <EmptyState icon="wechat" title="正在加载…" compact />
     {:else if !accounts.length}
-      <EmptyState icon="wechat" title="暂未绑定" desc="点「开始扫码绑定」，选平台后扫码即可" compact>
-        <button class="btn-primary" type="button" onclick={startBind}>开始扫码绑定</button>
-      </EmptyState>
+      <EmptyState icon="wechat" title="暂未绑定" compact />
     {:else}
       <div class="card-list">
-        {#each accounts as acc}
-          <div class="card-row">
+        {#each accounts as acc (acc.id)}
+          <div class="settings-row account-row">
             <span class="row-icon" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.wechat}</svg>`}</span>
             <div class="row-main">
               <span class="row-title">{acc.id}</span>
@@ -345,7 +347,7 @@
                   <option value={p.id}>{personaLabel(p)}</option>
                 {/each}
               </select>
-              <button class="icon-btn danger" type="button" title="删除" onclick={() => removeAccount(acc.id)}>
+              <button class="icon-btn danger" type="button" aria-label={`删除账号 ${acc.id}`} title="删除" onclick={() => removeAccount(acc.id)}>
                 {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.trash}</svg>`}
               </button>
             </div>
@@ -355,38 +357,36 @@
     {/if}
   </section>
 
-  {#if showAdvanced}
-    <section class="card card-pad">
-      <div class="section-head"><h4>高级：手动新增账号</h4></div>
-      <p class="field-hint">一般不需手动填写。仅在自动绑定遇到问题时，用高级选项手工指定账号 ID 与乐观人设。</p>
-      <form class="form" onsubmit={submitAdd}>
-        <label class="field"><span>Account ID</span><input class="input" type="text" bind:value={wf.id} placeholder="如 wx_001" required /></label>
-        <label class="field">
-          <span>人设（来自通讯录）</span>
-          <select class="input" bind:value={wf.persona_id}>
-            <option value="">不指定</option>
-            {#each personas as p (p.id)}
-              <option value={p.id}>{personaLabel(p)}</option>
-            {/each}
-          </select>
-        </label>
-        <div class="switch-row"><span class="switch-label">启用</span><Switch checked={wf.enabled} onchange={(v) => (wf.enabled = v)} label="启用" /></div>
-        <div class="switch-row"><span class="switch-label">自动启动</span><Switch checked={wf.auto_start} onchange={(v) => (wf.auto_start = v)} label="自动启动" /></div>
-        <div class="form-actions">
-          <button class="btn-outline" type="button" onclick={() => (showAdvanced = false)}>收起</button>
-          <button class="btn-primary" type="submit" disabled={saving}>保存账号</button>
-        </div>
-      </form>
-    </section>
-  {/if}
+  <details class="settings-group settings-group-pad advanced-group">
+    <summary><h2>手动添加账号</h2></summary>
+    <p class="field-hint">自动绑定失败时，可以指定账号 ID 和人设。</p>
+    <form class="form" onsubmit={submitAdd}>
+      <label class="field"><span>Account ID</span><input class="input" type="text" bind:value={wf.id} placeholder="如 wx_001" required /></label>
+      <label class="field">
+        <span>人设（来自通讯录）</span>
+        <select class="input" bind:value={wf.persona_id}>
+          <option value="">不指定</option>
+          {#each personas as p (p.id)}
+            <option value={p.id}>{personaLabel(p)}</option>
+          {/each}
+        </select>
+      </label>
+      <div class="settings-row switch-row"><span class="switch-label">启用</span><Switch checked={wf.enabled} onchange={(v) => (wf.enabled = v)} label="启用" /></div>
+      <div class="settings-row switch-row"><span class="switch-label">自动启动</span><Switch checked={wf.auto_start} onchange={(v) => (wf.auto_start = v)} label="自动启动" /></div>
+      <div class="form-actions">
+        <button class="btn-primary" type="submit" disabled={saving}>保存账号</button>
+      </div>
+    </form>
+  </details>
 
   <!-- 平台选择弹层 -->
   {#if showPlatform}
-    <div class="qr-overlay" role="dialog" aria-modal="true" aria-label="选择平台">
-      <div class="card card-pad platform-card">
+    <dialog class="settings-group-pad settings-dialog glass-3" aria-labelledby="platform-title"
+      use:openDialog oncancel={(e) => { e.preventDefault(); cancelPlatform(); }}>
+      <div>
         <div class="section-head">
-          <h4>选择平台</h4>
-          <button class="icon-btn" type="button" title="关闭" onclick={cancelPlatform}>
+          <h2 id="platform-title">选择平台</h2>
+          <button class="icon-btn" type="button" aria-label="关闭" title="关闭" onclick={cancelPlatform}>
             {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.close}</svg>`}
           </button>
         </div>
@@ -398,20 +398,21 @@
                 <span class="platform-label">{p.label}</span>
                 <span class="platform-desc">{p.desc}</span>
               </span>
-              <span class="platform-arrow" aria-hidden="true">→</span>
+              <svg viewBox="0 0 24 24" class="chevron" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{@html I.chevron}</svg>
             </button>
           {/each}
         </div>
       </div>
-    </div>
+    </dialog>
   {/if}
 
   <!-- 扫码登录弹层 -->
   {#if qrAccount}
-    <div class="qr-overlay" role="dialog" aria-modal="true" aria-label="扫码登录">
-      <div class="card card-pad qr-card">
+    <dialog class="settings-group-pad settings-dialog qr-card glass-3" aria-labelledby="qr-title"
+      use:openDialog oncancel={(e) => { e.preventDefault(); closeQr(); }}>
+      <div>
         <div class="section-head">
-          <h4>微信扫码登录 · {qrAccount}</h4>
+          <h2 id="qr-title">微信扫码登录 · {qrAccount}</h2>
           <button class="icon-btn" type="button" title="关闭" onclick={closeQr}>
             {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.close}</svg>`}
           </button>
@@ -424,7 +425,7 @@
           <div class="qr-wait"><span class="badge info">等待二维码…</span></div>
         {/if}
         {#if qrStatus}
-          <p class="qr-status {qrStatusKind === 'error' ? 'is-error' : qrStatusKind === 'ok' ? 'is-ok' : 'is-muted'}">{qrStatus}</p>
+          <p role="status" class="qr-status {qrStatusKind === 'error' ? 'is-error' : qrStatusKind === 'ok' ? 'is-ok' : 'is-muted'}">{qrStatus}</p>
         {/if}
         <div class="qr-actions">
           <button class="btn-outline sm" type="button" onclick={() => openQr(qrAccount)}>
@@ -432,72 +433,84 @@
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   {/if}
 </SettingsShell>
 
 <style>
-  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; }
-  .switch-label { font-size: var(--text-sm); color: var(--text-1); }
-  .field-hint { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--text-2); }
-
-  /* 一键绑定引导 */
-  .bind-hero { display: flex; align-items: center; gap: var(--space-3); }
-  .bind-hero-icon {
-    flex: none; width: 52px; height: 52px; border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    color: var(--accent); background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  .bind-hero {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
   }
-  .bind-hero-text { flex: 1; min-width: 0; }
-  .bind-hero-text h4 { margin: 0 0 var(--optical-2); }
-  .bind-hero-desc { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
-
-  /* 平台选择 */
-  .platform-card { width: 100%; max-width: 400px; }
-  .platform-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+  .bind-hero-icon, .platform-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-lg);
+    color: var(--accent-strong);
+    background: var(--settings-selected);
+  }
+  .bind-hero-text { flex: 1 1 190px; min-width: 0; }
+  .bind-hero-text h2, .advanced-group h2 { margin: 0; font-size: var(--text-base); font-weight: 650; }
+  .bind-hero-desc { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--text-13); line-height: 1.5; }
+  .advanced-group summary { color: var(--text-1); cursor: pointer; }
+  .advanced-group h2 { display: inline; margin-inline-start: var(--space-1); }
+  .advanced-group .form { margin-top: var(--space-3); }
+  .account-row { flex-wrap: wrap; }
+  .account-row .row-main { flex: 1 1 120px; }
+  .persona-select { width: 14rem; max-width: 100%; }
+  .settings-dialog {
+    width: min(420px, calc(100% - 32px));
+    max-height: calc(100% - 32px);
+    box-sizing: border-box;
+    border: 1px solid var(--glass-border-2);
+    border-radius: var(--radius-xl);
+    color: var(--text-1);
+    overflow: auto;
+  }
+  .settings-dialog::backdrop { background: var(--scrim); }
+  .platform-list { display: grid; gap: var(--space-2); }
   .platform-item {
-    display: flex; align-items: center; gap: var(--space-3);
-    padding: var(--space-3); border: 1px solid var(--border);
-    border-radius: var(--radius); background: var(--surface-2); cursor: pointer;
-    text-align: left; transition: border-color .15s, background .15s;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3);
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--settings-control);
+    color: var(--text-1);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  .platform-item:hover { border-color: var(--accent); background: var(--accent-soft, color-mix(in srgb, var(--accent) 8%, transparent)); }
-  .platform-icon { flex: none; color: var(--accent); display: flex; }
-  .platform-main { flex: 1; min-width: 0; }
-  .platform-label { display: block; font-weight: 600; color: var(--text-1); }
-  .platform-desc { display: block; font-size: var(--text-sm); color: var(--text-2); margin-top: var(--optical-2); }
-  .platform-arrow { color: var(--text-3); font-size: var(--text-lg); }
-
-  /* 扫码 */
-  .qr-overlay {
-    position: fixed; inset: 0; z-index: var(--z-modal-scrim);
-    display: flex; align-items: center; justify-content: center;
-    background: var(--glass-0); padding: var(--space-4);
+  .platform-item:hover { background: var(--settings-selected); }
+  .platform-main { display: grid; gap: var(--space-1); flex: 1 1 auto; min-width: 0; }
+  .platform-label { font-size: var(--text-sm); font-weight: 650; }
+  .platform-desc { color: var(--text-2); font-size: var(--text-xs); line-height: 1.5; }
+  .qr-card { text-align: center; }
+  .qr-card .section-head { text-align: start; }
+  .qr-img {
+    display: block;
+    width: min(200px, 100%);
+    aspect-ratio: 1;
+    margin: var(--space-3) auto;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    background: white;
   }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .qr-overlay {
-      -webkit-backdrop-filter: blur(var(--glass-blur-0));
-      backdrop-filter: blur(var(--glass-blur-0));
-    }
-  }
-  .qr-card { width: 100%; max-width: 320px; text-align: center; }
-  /* 二维码底必须是纯白: 扫码器靠黑白对比识别, 用 --surface 的冷调
-     会降低识别率。这是唯一允许写死 #fff 的地方。 */
-  .qr-img { width: 200px; height: 200px; object-fit: contain; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; margin: var(--space-2) auto; display: block; }
-  .qr-link { display: inline-block; margin: var(--space-3) auto; color: var(--accent); font-size: var(--text-sm); word-break: break-all; }
-  .qr-wait { padding: var(--space-5); }
-  .qr-status { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+  .qr-link { display: inline-block; margin: var(--space-3) auto; color: var(--accent-strong); font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .qr-wait { padding: var(--space-4); }
+  .qr-status { margin: 0; color: var(--text-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .qr-status.is-ok { color: var(--success); }
   .qr-status.is-error { color: var(--error); }
-  .qr-status.is-muted { color: var(--text-3); }
-  .qr-actions { margin-top: var(--space-3); display: flex; justify-content: center; gap: var(--space-2); }
-
-  /* 账号行里的人设下拉：紧凑，避免挤压「扫码登录/删除」按钮。
-     用元素+类选择器提高优先级，覆盖全局 .input 的 width:100% */
-  select.persona-select {
-    width: auto;
-    max-width: 190px;
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--text-xs);
+  .qr-actions { display: flex; justify-content: center; margin-top: var(--space-3); }
+  @media (max-width: 600px) {
+    .account-row .row-actions { flex-basis: 100%; }
   }
 </style>

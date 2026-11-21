@@ -22,6 +22,8 @@
   //   hobby : list[dict{name,detail}] -> list-dict 两列编辑
   //   高级 dict 字段 (identity_anchor/speaking_style/...) -> json 文本区  // ============================================================
 import { get, post, del, postFile } from '../lib/pages-api.js';
+import { listConversations, fetchHistory } from '../lib/chatApi.js';
+import { friendlyTime } from '../lib/format.js';
 import { goTab } from '../lib/router.js';
 import { confirmDialog } from '../lib/dialog.svelte.js';
 import Avatar from '../components/Avatar.svelte';
@@ -308,6 +310,9 @@ import Avatar from '../components/Avatar.svelte';
   let list = $state([]);
   let loading = $state(true);
   let query = $state('');
+  let previews = $state(new Map());
+  let rosterConversations;
+  const previewRequests = new Set();
   let selected = $state(null); // persona id in detail
   let detail = $state(null); // USER_FIELDS dict
   let advanced = $state(null); // ADVANCED_FIELDS dict
@@ -464,8 +469,93 @@ import Avatar from '../components/Avatar.svelte';
     if (gender) bits.push(gender);
     const occ = (p.occupation || '').trim();
     if (occ) bits.push(occ);
-    if (bits.length) return bits.join(' · ');
-    return (p.summary || '').trim();
+    return bits.join(' · ');
+  }
+
+  function messageSnippet(message) {
+    const blocks = Array.isArray(message.blocks) ? message.blocks : [];
+    const text = String(blocks.find((block) => block.type === 'text')?.text ?? message.content ?? '').trim();
+    const caption = /^对方同时说：「([\s\S]*?)」。\s*对方发了一张图片：/.exec(text);
+    if (caption) return caption[1];
+    if (/^对方发了一张图片：/.test(text)) return '图片';
+    if (text) return text;
+    if (message.image || blocks.some((block) => block.type === 'image')) return '图片';
+    if (message.sticker || blocks.some((block) => block.type === 'emoji')) return '贴纸';
+    if (message.voice_url || blocks.some((block) => block.type === 'voice')) return '语音';
+    return '';
+  }
+
+  async function loadPreview(id) {
+    if (previews.has(id) || previewRequests.has(id)) return;
+    previewRequests.add(id);
+    try {
+      rosterConversations ??= listConversations().catch(() => {
+        rosterConversations = null;
+        return [];
+      });
+      const conversations = await rosterConversations;
+      if (!Array.isArray(conversations)) return;
+      // 一个角色可能同时有 Web / 微信两条会话。`updated_at` 只在建会话时
+      // 写入、发消息不会刷新（后端 binding 不追踪最后消息时间），所以不能
+      // 只挑“最近更新”的那条 —— 那常常是空的微信会话。改成最多取三条候选，
+      // 各自拉一次历史，按**真实消息时间**取最新的那条。
+      const candidates = conversations
+        .filter((item) => item.persona_id === id && item.conversation_id)
+        .sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0))
+        .slice(0, 3);
+      if (!candidates.length) {
+        previews = new Map(previews).set(id, null);
+        return;
+      }
+      let latest = null;
+      let snippet = '';
+      for (const conversation of candidates) {
+        let history;
+        try {
+          history = await fetchHistory(conversation.conversation_id);
+        } catch {
+          continue;
+        }
+        for (const message of history) {
+          if (message.role !== 'user' && message.role !== 'assistant') continue;
+          const time = Date.parse(message.timestamp) || 0;
+          if (latest && time <= latest.time) continue;
+          const text = messageSnippet(message);
+          if (!text) continue;
+          latest = { time, label: friendlyTime(message.timestamp) };
+          snippet = text;
+        }
+      }
+      previews = new Map(previews).set(id, latest ? { text: snippet, time: latest.label } : null);
+    } catch {
+      // 摘要是辅助信息，接口不可用时仍可浏览角色与编辑设定。
+    } finally {
+      previewRequests.delete(id);
+    }
+  }
+
+  function watchPreview(node, id) {
+    if (typeof IntersectionObserver === 'undefined') {
+      loadPreview(id);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      loadPreview(id);
+    });
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
+
+  function showCreateDialog(node) {
+    node.showModal();
+    node.querySelector('.create-name')?.focus();
+  }
+
+  function closeCreate(event) {
+    event?.preventDefault();
+    showCreate = false;
   }
 
   $effect(() => {
@@ -499,13 +589,15 @@ import Avatar from '../components/Avatar.svelte';
   }
 
   async function loadDetail() {
-    if (selected == null) return;
+    const id = selected;
+    if (id == null) return;
     loadingDetail = true;
     detailError = '';
     const [b, a] = await Promise.all([
-      get(`/api/persona/${selected}`),
-      get(`/api/persona/${selected}/advanced`),
+      get(`/api/persona/${id}`),
+      get(`/api/persona/${id}/advanced`),
     ]);
+    if (selected !== id) return;
     loadingDetail = false;
     if (!b.ok) {
       detailError = '加载失败，请重试';
@@ -582,6 +674,7 @@ import Avatar from '../components/Avatar.svelte';
 
   // ---- 新建 ----
   async function createPersona() {
+    if (creating) return;
     const name = newForm.name.trim();
     if (!name) {
       showToast('请填写名字', 'error');
@@ -717,9 +810,8 @@ import Avatar from '../components/Avatar.svelte';
     <!-- ================= 列表视图 ================= -->
     <header class="page-top">
       <div class="page-top-main">
-        <span class="micro-label">人物</span>
         <h1 class="page-title">通讯录</h1>
-        <p class="page-lede">设定她是谁，之后所有对话都建立在这些设定之上。</p>
+        <p class="page-lede">管理角色与她们的人设。</p>
       </div>
       <button class="btn btn-primary btn-sm" type="button" onclick={() => (showCreate = true)}>
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -728,11 +820,11 @@ import Avatar from '../components/Avatar.svelte';
     </header>
 
     <div class="search-box">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input
         class="search-input"
-        type="text"
-        placeholder="搜索名字…"
+        type="search"
+        placeholder="搜索角色"
         bind:value={query}
         aria-label="搜索角色"
       />
@@ -764,33 +856,43 @@ import Avatar from '../components/Avatar.svelte';
       </div>
     {:else}
       <ul class="list">
-        {#each filtered as p, i (p.id)}
-          <li class="roster-row">
-            <button class="roster-main" type="button" onclick={() => openDetail(p.id)}>
-              <Avatar name={p.name} src={p.avatar || ''} size={40} />
-              <span class="roster-body">
-                <span class="roster-name">{p.name}</span>
-                {#if personaMeta(p)}
-                  <span class="roster-meta">{personaMeta(p)}</span>
-                {:else}
-                  <span class="roster-meta roster-meta-empty">还没填设定</span>
-                {/if}
-                {#if (p.personality || []).length > 0}
-                  <span class="roster-tags">
-                    {#each p.personality.slice(0, 3) as tag}<span class="roster-tag">{tag}</span>{/each}
-                  </span>
-                {/if}
+        {#each filtered as p (p.id)}
+          {@const meta = personaMeta(p)}
+          {@const preview = previews.get(p.id)}
+          {@const summary = p.summary || p.description || ''}
+          <li class="roster-row" use:watchPreview={p.id}>
+            <button class="roster-main" type="button" aria-label={'打开' + p.name + '的角色详情'} onclick={() => openDetail(p.id)}>
+              <span class="roster-identity">
+                <Avatar name={p.name} src={p.avatar || ''} size={50} />
+                <span class="roster-body">
+                  <span class="roster-name">{p.name}</span>
+                  {#if meta}<span class="roster-meta">{meta}</span>{/if}
+                </span>
               </span>
+              {#if Array.isArray(p.personality) && p.personality.length}
+                <span class="roster-tags">
+                  {#each p.personality.slice(0, 3) as tag}<span class="roster-tag">{tag}</span>{/each}
+                </span>
+              {/if}
+              {#if preview}
+                <span class="roster-preview">
+                  <span class="roster-preview-head">
+                    <span>最近互动</span>
+                    {#if preview.time}<span>{preview.time}</span>{/if}
+                  </span>
+                  <span class="preview-text">{preview.text}</span>
+                </span>
+              {:else if summary}
+                <span class="roster-preview"><span class="preview-text">{summary}</span></span>
+              {/if}
             </button>
-            <button class="icon-btn outline roster-go" type="button" title="去聊天" onclick={() => goChat(p.id)}>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            <button class="btn roster-go" type="button" title="去聊天" aria-label={'和' + p.name + '聊天'} onclick={() => goChat(p.id)}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              去聊天
             </button>
           </li>
         {/each}
       </ul>
-      <!-- 名单只有两三行时，下面会剩一大片空白，看起来像「还没加载完」。
-           补一条收尾行：左边是计数，右边是「再建一个」——
-           空白变成可操作的位置，而不是页面没铺满。 -->
       <div class="list-foot">
         <span class="list-foot-count">
           共 <span class="mono">{list.length}</span> 位角色
@@ -904,12 +1006,15 @@ import Avatar from '../components/Avatar.svelte';
 
 <!-- 新建弹窗 -->
 {#if showCreate}
-  <div class="overlay" role="dialog" aria-modal="true" aria-label="新建角色">
-    <div class="modal">
-      <h2 class="modal-title">新建角色</h2>
+  <dialog class="modal glass-3" aria-label="新建角色" oncancel={closeCreate} use:showCreateDialog>
+    <form class="modal-form" onsubmit={(event) => { event.preventDefault(); createPersona(); }}>
+      <header class="modal-head">
+        <h2 class="modal-title">新建角色</h2>
+        <button class="icon-btn" type="button" aria-label="关闭新建角色窗口" onclick={closeCreate}>×</button>
+      </header>
       <label class="field">
         <span class="field-label">名字 *</span>
-        <input class="field-plain" type="text" placeholder="如 小月" bind:value={newForm.name} />
+        <input class="field-plain create-name" type="text" aria-required="true" placeholder="如 小月" bind:value={newForm.name} />
       </label>
 
       {#if personaTags.length}
@@ -997,721 +1102,303 @@ import Avatar from '../components/Avatar.svelte';
         <input class="field-plain" type="text" placeholder="留空自动生成" bind:value={newForm.id} />
         <p class="tag-hint">技术标识，仅在你需要固定引用它时填写（调用接口、写配置用）</p>
       </label>
+      {#if toast?.type === 'error'}<p class="create-error" role="alert">{toast.text}</p>{/if}
       <div class="modal-actions">
-        <button class="btn btn-outline" type="button" onclick={() => (showCreate = false)}>取消</button>
-        <button class="btn btn-primary" type="button" disabled={creating} onclick={createPersona}>
+        <button class="btn btn-outline" type="button" onclick={closeCreate}>取消</button>
+        <button class="btn btn-primary" type="submit" disabled={creating}>
           {creating ? '创建中…' : '创建'}
         </button>
       </div>
-    </div>
-  </div>
+    </form>
+  </dialog>
 {/if}
 
 <style>
-  /* 页面骨架 (padding / max-width): 通讯录 / 发现 / 记忆 三页共用同一套数值,
-     改动时三处要一起改, 否则页头基线会在切页时跳一下。 */
-  /* ---- 页面容器 ----
-     原来 max-width 820px + margin:0 是最刺眼的一处：1440 宽的窗口里
-     内容全挤在左上角，右侧留下 600px 纯空白，读起来像「没铺满」。
-     改成居中 + 960px：一行角色能放下更多信息，页面也不再偏左。
-     详情视图是纵向表单，宽了不好读，单独收窄到 760px。 */
   .page {
-    padding: var(--page-pad-y) var(--page-pad-x) var(--space-8);
     max-width: var(--page-maxw);
-    margin: 0 auto;
-    width: 100%;
-  }
-  .page.detail {
-    max-width: 760px;
+    margin-inline: auto;
+    padding: clamp(16px, 4vw, 48px) clamp(12px, 4vw, 40px) var(--space-6);
   }
 
-  /* ---- 页头 ----
-     原来标题只有 16px/500, 与正文 14px 只差 2px、字重只差 100 ——
-     一进页面没有「这是哪」的落点。改成: 11px 微标签(拉字距) +
-     26px 主标题 + 13px 一句说明, 三层在同一条左基线上。
-     结构线用 --border-strong(比内容区的 --border 重一档),
-     让「页头/内容」的边界靠线的重量而不是靠留白去区分。 */
-  .page-top {
+  .page.detail { max-width: 970px; }
+  .page-top, .detail-head, .hero-main, .hero-name-row, .modal-head, .modal-actions, .field-row {
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding-bottom: var(--space-4);
-    margin-bottom: var(--space-5);
-    border-bottom: 1px solid var(--border-strong);
+    align-items: center;
+    gap: var(--space-2);
   }
-  .page-top-main {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
+
+  .page-top { justify-content: space-between; margin-bottom: var(--space-4); }
   .page-title {
     margin: 0;
-    font-size: var(--text-display);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    line-height: 1.12;
     color: var(--text-1);
-  }
-  .page-lede {
-    margin: var(--optical-6) 0 0;
-    font-size: var(--text-13);
-    line-height: 1.65;
-    color: var(--text-2);
-    max-width: 52ch;
+    font-size: clamp(1.8rem, 4vw, 2.9rem);
+    letter-spacing: var(--tracking-tighter);
+    line-height: var(--leading-tight);
   }
 
-  /* ---- 搜索框 ----
-     原来 search-input 是 16px, 比它承载的列表项(14px)还大,
-     输入框在页面里抢眼睛。降到 14px, 并把右侧计数做成等宽小字。 */
+  .page-lede { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--text-sm); }
+
   .search-box {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: 0 var(--space-4);
-    height: var(--input-h);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--input-radius);
-    margin-bottom: var(--space-2);
-    transition: border-color var(--transition), box-shadow var(--transition);
+    max-width: 460px;
+    min-height: 43px;
+    padding: 0 var(--space-3);
+    margin-bottom: var(--space-4);
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
+    color: var(--text-2);
   }
-  .search-box:focus-within {
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
+
+  .search-box svg { flex: none; }
+  .search-box:focus-within { background: var(--field-fill-focus); box-shadow: var(--focus-ring); }
   .search-input {
     flex: 1;
     min-width: 0;
-    border: none;
+    padding: 0;
+    border: 0;
     background: transparent;
-    color: var(--input-text);
+    color: var(--text-1);
+    font: inherit;
     font-size: var(--text-sm);
-    outline: none;
   }
-  .search-input::placeholder {
-    color: var(--input-placeholder);
-  }
-  .search-count {
-    flex: none;
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    padding-left: var(--space-2);
-    border-left: 1px solid var(--border);
-  }
+  .search-input:focus { outline: 0; box-shadow: none; }
+  .search-count { color: var(--text-2); font-size: var(--text-xs); }
 
-  /* ---- 列表: 细线分隔的密集行, 不用卡片 ----
-     hover 从「整行变色块」改成「左侧 2px 冷蓝短竖线」:
-     变色块在暖纸底上是一片糊掉的灰, 竖线才是这套设计语言里
-     已经用惯了的「指向」符号 (侧栏选中也是它)。 */
   .list {
-    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+    gap: var(--space-3);
     margin: 0;
     padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    background: transparent;
-    border: none;
-    border-top: 1px solid var(--border);
-    border-radius: 0;
-  }
-  .roster-row {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) 0 var(--space-3) var(--space-3);
-    border-radius: 0;
-    border-bottom: 1px solid var(--border);
-    transition: background var(--transition), padding-left var(--transition);
-  }
-  .roster-row::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    width: 2px;
-    height: 0;
-    background: var(--accent);
-    transform: translateY(-50%);
-    transition: height var(--transition-slow);
-  }
-  .roster-row:hover {
-    background: var(--row-hover);
-  }
-  .roster-row:hover::before {
-    height: 60%;
-  }
-  .roster-row:active {
-    background: var(--row-active);
-  }
-  .roster-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-3);
-    border: none;
-    background: transparent;
-    padding: 0;
-    cursor: pointer;
-    text-align: left;
-    color: var(--text-1);
-  }
-  /* 每行三段: 名字 / 一行摘要 / 最多三个性格标签。
-     原来一行只有名字, 40px 行高里 36px 是头像, 名字右侧全是空白 ——
-     名单看起来像没加载完。有摘要 + 标签之后这一行才承载「她是谁」。 */
-  .roster-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-3);
-  }
-  .roster-name {
-    font-size: var(--text-sm);
-    font-weight: 500;
-    letter-spacing: var(--tracking-tight);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .roster-meta {
-    font-size: var(--text-xs);
-    line-height: 1.45;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .roster-meta-empty { color: var(--text-3); opacity: 0.75; font-style: normal; }
-  .roster-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--optical-5);
-    margin-top: var(--hair);
-  }
-  .roster-tag {
-    font-size: var(--text-2xs);
-    line-height: 1.5;
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-2);
-    background: var(--surface-2);
-    border-radius: var(--radius-xs);
-    padding: 0 var(--optical-5);
-  }
-  /* 「去聊天」按钮平时隐去, hover 行时才出现 —— 一列灰框按钮
-     会让名单看起来像表格, 而这里应该是「人」。 */
-  .roster-go {
-    flex: none;
-    opacity: 0;
-    transition: opacity var(--transition), color var(--transition),
-      border-color var(--transition);
-  }
-  .roster-row:hover .roster-go,
-  .roster-go:focus-visible {
-    opacity: 1;
-  }
-  .roster-go:hover {
-    color: var(--accent);
-    border-color: var(--accent-line);
+    list-style: none;
   }
 
-  /* 名单收尾行 —— 顺带把「共 N 位角色 / 再建一个」放在这里,
-     让两三行名单下面的空白有一个可操作的落点。 */
-  .list-foot {
+  .roster-row, .hero-card, .empty-state {
+    min-width: 0;
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--surface-stage-shadow);
+  }
+
+  .roster-row {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    transition: box-shadow var(--transition), transform var(--transition-spring);
+  }
+
+  .roster-row:hover { box-shadow: var(--shadow-2); transform: translateY(-2px); }
+
+  .roster-main {
+    display: grid;
+    flex: 1;
+    align-content: start;
+    gap: var(--space-2);
+    width: 100%;
+    padding: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-1);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .roster-main:hover { background: var(--row-hover); }
+  .roster-identity { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .roster-body { display: grid; gap: var(--optical-2); min-width: 0; }
+  .roster-name { color: var(--text-1); font-size: var(--text-lg); font-weight: 680; line-height: var(--leading-tight); overflow-wrap: anywhere; }
+  .roster-meta { color: var(--text-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .roster-tags, .tag-cloud { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+  .roster-tag {
+    max-width: 100%;
+    padding: var(--optical-2) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+  }
+
+  .roster-preview {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--field-fill);
+    color: var(--text-2);
+    font-size: var(--text-xs);
+  }
+
+  .roster-preview-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1); }
+  .preview-text {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--text-1);
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .list-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-3); color: var(--text-2); font-size: var(--text-xs); }
+
+  .btn, .icon-btn, .avatar-edit, .tag-chip, .draft-reset {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    min-height: 36px;
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--field-fill);
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--text-13);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .btn-primary { background: var(--accent); color: var(--on-accent); }
+  .btn-primary:hover:enabled { background: var(--accent-hover); }
+  .btn:not(.btn-primary):hover:enabled, .icon-btn:hover, .draft-reset:hover { background: var(--accent-soft); color: var(--accent); }
+  .btn-outline { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--text-1); }
+  .btn-outline:hover:enabled { background: var(--accent-soft); color: var(--accent); }
+  /* 幽灵按钮：完全透明、无描边，用于「删除 / 移除」这类次要动作。 */
+  .btn-ghost { background: transparent; color: var(--text-2); }
+  .btn-ghost:hover:enabled { background: var(--row-hover); color: var(--text-1); }
+  .btn-sm { min-height: 30px; padding-inline: var(--space-2); font-size: var(--text-xs); }
+  .empty-btn { margin-top: var(--space-2); }
+  .name-save { flex: none; }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .btn.danger { color: var(--error); }
+  .btn.danger:hover:enabled { background: var(--error-soft); color: var(--error); }
+  .btn.roster-go { margin: 0 var(--space-2) var(--space-2) auto; background: var(--accent-soft); color: var(--accent); }
+  .btn.roster-go:hover { background: var(--accent-glow); }
+
+  .icon-btn { width: 36px; padding: 0; background: var(--field-fill); font-size: var(--text-lg); }
+  .detail-head { margin-bottom: var(--space-3); }
+  .detail-title { min-width: 0; color: var(--text-1); font-size: var(--text-15); font-weight: 650; }
+  .detail-spacer { flex: 1; }
+
+  .hero-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-3) 0 0 var(--space-3);
-  }
-  .list-foot-count {
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    letter-spacing: var(--tracking-wide);
+    padding: clamp(14px, 3vw, 24px);
+    margin-bottom: var(--space-4);
+    background: radial-gradient(ellipse 80% 145% at 0% 0%, var(--accent-soft), transparent 80%), var(--surface);
   }
 
-  /* ---- 详情区 ----
-     详情页原来有三层盒子叠着: hero 灰卡 + 若干 PersonaCard 白卡 + 折叠组卡片,
-     每层都是「1px 线 + 圆角 + 内边距」, 一屏看下去就是盒套盒。
-     统一成一套分区语法: 不用盒子, 用一道更重的横线切段, 段标题降成 11px 微标签。 */
-  .detail-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding-bottom: var(--space-3);
-    margin-bottom: var(--space-5);
-    border-bottom: 1px solid var(--border-strong);
-  }
-  /* 「角色详情」降级成微标签: 它只是个位置提示, 真正的主角是下面的名字。
-     原来它 18px/700, 和名字 22px/700 抢同一档视觉权重。 */
-  .detail-title {
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: var(--tracking-wider);
-    color: var(--text-3);
-  }
-  .detail-spacer {
-    flex: 1;
-  }
-  .btn.danger {
-    color: var(--error);
-  }
-  .btn.danger:hover {
-    background: color-mix(in srgb, var(--error) 12%, transparent);
-  }
-
-  /* ---- 身份区: 不再是灰盒子, 而是一个「档案抬头」----
-     去掉背景/边框/圆角, 只用一道底线收尾, 头像和名字直接落在纸面上。
-     这样详情页的层级是: 返回条 → 身份(最大) → 各字段分区(细线隔开)。
-     .card 已收归 .settings-main 作用域 (见 settings-base.css 头部说明)。 */
-  .hero-card {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    padding: 0 0 var(--space-5);
-    margin-bottom: var(--space-5);
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--border-strong);
-    border-radius: 0;
-  }
-  .hero-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-  }
-  .hero-avatar {
-    position: relative;
-    flex: none;
-  }
+  .hero-main { flex: 1; min-width: 0; gap: var(--space-3); }
+  .hero-avatar { position: relative; flex: none; }
   .avatar-edit {
     position: absolute;
     right: -4px;
     bottom: -4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-xs);
-    border: 2px solid var(--surface);
-    background: var(--accent);
-    color: var(--on-accent);
-    cursor: pointer;
-    transition: background var(--transition), transform var(--transition);
-  }
-  .avatar-edit:hover {
-    background: var(--accent-strong);
-  }
-  .hero-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .hero-name-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  /* 名字是这一页唯一的「大字号」: 26px/600 与页面主标题同档,
-     输入态用底部细线, 静态时几乎是纯文本 —— 不再像个表单框。 */
-  .hero-name-input {
-    flex: 1;
-    min-width: 0;
-    border: none;
-    border-bottom: 1px solid transparent;
-    background: transparent;
-    color: var(--text-1);
-    font-size: var(--text-display);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    line-height: 1.15;
-    padding: 0 0 var(--optical-2);
-    transition: border-color var(--transition);
-  }
-  .hero-name-input:hover {
-    border-bottom-color: var(--border-strong);
-  }
-  .hero-name-input:focus-visible {
-    outline: none;
-    border-bottom-color: var(--input-focus-border);
-  }
-  .hero-name-input.dirty {
-    border-bottom-color: var(--accent);
-  }
-  .hero-name-input::placeholder {
-    color: var(--input-placeholder);
-    font-weight: 500;
-  }
-  .name-save {
-    flex: none;
-  }
-  .hero-sub {
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-  }
-  .avatar-actions {
-    display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .go-chat {
-    flex: none;
-  }
-  /* 主操作给足横向留白, 让它比「保存」这一类的次级主按钮更有分量 */
-  .btn.go-chat {
-    height: var(--btn-h-md);
-    padding: 0 var(--space-5);
-  }
-
-  /* ---- 精简人设卡区 ----
-     卡片之间不再用 gap 分隔 (每张卡自己带一道顶线), 所以 gap 归零,
-     由卡片自身的 border-top 完成分区, 避免「线 + 留白 + 留白」的双重间距。 */
-  .lean-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    margin-bottom: var(--space-2);
-  }
-
-  /* ---- 字段 ---- */
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .field-label {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .field-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  /* 计数: 3/3 时变成强调色, 让"已经满了"在点之前就能看见 */
-  .field-count {
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-  }
-
-  /* ---- 性格标签 ----
-     原来这些 chip 没有任何样式规则(类名写了但 CSS 不存在), 渲染成
-     浏览器默认按钮: 灰底、1px 凸边、系统字体。在一屏暖纸底 + 细线
-     的界面里, 那是最刺眼的一块"外来物"。
-     新样式: 细描边胶囊, 选中时冷蓝浅底 + 冷蓝文字 + 冷蓝描边,
-     形状与颜色两个通道同时表达"选中"。 */
-  .tag-hint {
-    margin: 0;
-    font-size: var(--text-xs);
-    line-height: 1.55;
-    color: var(--text-3);
-  }
-  .tag-cloud {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    margin-top: var(--space-1);
-  }
-  .tag-chip {
-    height: 28px;
-    padding: 0 var(--optical-11);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-full);
-    background: transparent;
-    color: var(--text-2);
-    font-family: inherit;
-    font-size: var(--text-xs);
-    letter-spacing: 0.01em;
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition),
-      border-color var(--transition), transform var(--transition);
-  }
-  .tag-chip:hover {
-    background: var(--accent-wash);
-    border-color: var(--accent-line);
-    color: var(--accent);
-  }
-  .tag-chip:active { transform: scale(0.96); }
-  .tag-chip.on {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
-    font-weight: 500;
-  }
-  /* 已选满时未选中的项降权: 仍然可点(会提示), 但不再抢视线 */
-  .tag-chip.is-full {
-    opacity: 0.42;
-    border-style: dashed;
-  }
-  .tag-chip.is-full:hover { opacity: 0.7; }
-  @media (prefers-reduced-motion: reduce) {
-    .tag-chip { transition: none; }
-    .tag-chip:active { transform: none; }
-  }
-
-  /* ---- 草稿预览区 ----
-     用左侧一道 2px 冷蓝竖线把它和上面的"选择区"分开: 上面是"挑",
-     下面是"结果", 两种心理动作不该长得一样。
-     底色用 --surface-inset (凹槽), 表达"这里是内容, 可以改"。 */
-  .draft-block {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3) 0 var(--space-3) var(--space-3);
-    border-left: 2px solid var(--accent-line);
-  }
-  .draft-reset {
-    border: none;
-    background: transparent;
+    z-index: 3;
+    width: 36px;
+    min-height: 36px;
     padding: 0;
-    font-family: inherit;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.02em;
-    color: var(--accent);
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    text-decoration-thickness: 1px;
-    text-decoration-color: var(--accent-line);
-  }
-  .draft-reset:hover { text-decoration-color: var(--accent); }
-  .draft-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-5);
-  }
-  .draft-key {
-    font-size: var(--text-2xs);
-    font-weight: 600;
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
-  }
-  .draft-input {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface-inset);
-    border: 1px solid var(--border);
-    border-radius: var(--input-radius);
-    color: var(--text-1);
-    font-family: inherit;
-    font-size: var(--text-sm);
-    line-height: var(--leading-snug);
-    resize: vertical;
-    /* 自动增高(action)会写 inline height, 这里给个下限防止空内容塌成一条 */
-    min-height: 3.2em;
-    overflow-y: hidden;
-    transition: border-color var(--transition), box-shadow var(--transition);
-  }
-  .draft-input:focus-visible {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .draft-input::placeholder { color: var(--input-placeholder); }
-
-  /* ---- 空状态 ----
-     原来只是「一段左对齐的灰字」, 在整片白底里没有被识别为一个
-     状态, 看起来像页面没加载完。加一道 2px 左侧竖线做锚点:
-     视线有落点, 同时竖线天然把「空状态」和「列表内容」区分开,
-     不需要额外卡片或虚线框。 */
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    gap: var(--space-2);
-    padding: var(--space-5) 0 var(--space-5) var(--space-4);
-    border-left: 2px solid var(--border-strong);
-  }
-  .empty-icon {
-    display: inline-flex;
-    color: var(--empty-icon);
-    margin-bottom: var(--space-1);
-  }
-  .empty-title {
-    margin: 0;
-    font-size: var(--text-lg);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-1);
-    line-height: 1.3;
-  }
-  .empty-desc {
-    margin: 0;
-    font-size: var(--text-13);
-    line-height: 1.72;
-    color: var(--text-2);
-    max-width: 46ch;
-  }
-  .empty-btn {
-    margin-top: var(--space-2);
-  }
-
-  /* ---- 通用按钮 (对齐组件 token) ----
-     字重从 600 降到 500: 中文在 14px 下 600 已经是伪粗体,
-     一排按钮全粗会显得用力过猛; 500 + 略收字距更贴这套「安静的纸面」。 */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    border-radius: var(--btn-radius);
-    font-size: var(--text-sm);
-    font-weight: 500;
-    letter-spacing: var(--tracking-tight);
-    cursor: pointer;
-    transition: background var(--transition), border-color var(--transition), transform var(--transition), box-shadow var(--transition);
-    border: 1px solid transparent;
-    white-space: nowrap;
-  }
-  .btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-  .btn:active:not(:disabled) { transform: scale(0.97); }
-  .btn-primary {
-    height: var(--btn-h-md);
-    padding: 0 var(--space-4);
-    background: var(--btn-primary-bg);
-    color: var(--btn-primary-text);
-    box-shadow: var(--btn-primary-shadow);
-  }
-  .btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
-  .btn-outline {
-    height: var(--btn-h-md);
-    padding: 0 var(--space-4);
-    background: var(--btn-outline-bg);
-    border-color: var(--btn-outline-border);
-    color: var(--btn-outline-text);
-  }
-  .btn-outline:hover:not(:disabled) { background: var(--btn-outline-hover); }
-  .btn-ghost {
-    height: var(--btn-h-md);
-    padding: 0 var(--space-3);
-    background: transparent;
-    color: var(--text-2);
-  }
-  .btn-ghost:hover:not(:disabled) { background: var(--row-hover); }
-  .btn-sm { height: var(--btn-h-sm); padding: 0 var(--space-3); font-size: var(--text-xs); }
-
-  .icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--btn-h-md);
-    height: var(--btn-h-md);
-    border-radius: var(--radius-xs);
-    border: 1px solid var(--btn-outline-border);
-    background: var(--btn-outline-bg);
-    color: var(--btn-outline-text);
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition), transform var(--transition);
-  }
-  .icon-btn:hover { background: var(--btn-outline-hover); color: var(--accent); }
-  .icon-btn:active { transform: scale(0.94); }
-
-  /* ---- 弹窗 ----
-     「新建角色」是低频但高注意力的任务: 用户在这里填 5~8 个字段,
-     需要完整专注。所以用 glass-3 (模态档) 而不是玻璃-1。
-     z-index 全部走 --z-* 阶梯 —— 原来写死的 50 比 AppDialog 的 100 低,
-     于是"新建角色"开着时触发全局 confirm 会被压在下面, 用户看不到。 */
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-modal-scrim);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--glass-0);
-    padding: var(--space-4);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .overlay {
-      -webkit-backdrop-filter: blur(var(--glass-blur-0));
-      backdrop-filter: blur(var(--glass-blur-0));
-    }
-  }
-  .modal {
-    width: 100%;
-    max-width: 460px;
-    max-height: calc(100dvh - var(--space-6));
-    overflow-y: auto;
-    padding: var(--space-5);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
     background: var(--surface);
-    border: 1px solid var(--glass-border-2);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-4);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .modal {
-      background: var(--glass-3);
-      -webkit-backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
-      backdrop-filter: blur(var(--glass-blur-3)) saturate(var(--glass-sat-3));
-      box-shadow: var(--glass-highlight), var(--shadow-4);
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .modal {
-      background: var(--surface);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  .modal-title {
-    margin: 0 0 var(--space-1);
-    font-size: var(--text-lg);
-    font-weight: 700;
-    color: var(--text-1);
-  }
-  .field-plain {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--input-radius);
-    color: var(--input-text);
-    font-size: var(--text-base);
-    line-height: var(--leading-snug);
-  }
-  .field-plain:focus-visible {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .field-plain::placeholder {
-    color: var(--input-placeholder);
-  }
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
+    color: var(--accent);
+    box-shadow: var(--shadow-2);
   }
 
-  /* 桌面区: 身份区给多一点底部留白, 但不回到盒子内边距 */
-  @media (min-width: 768px) {
-    .hero-card {
-      padding: 0 0 var(--space-6);
-      margin-bottom: var(--space-6);
-    }
+  .hero-info { display: grid; flex: 1; min-width: 0; gap: var(--space-2); }
+  .hero-name-row { align-items: stretch; }
+  .hero-name-input, .field-plain, .draft-input {
+    min-width: 0;
+    width: 100%;
+    min-height: 40px;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--field-fill);
+    color: var(--text-1);
+    font: inherit;
+    font-size: var(--text-base);
+  }
+
+  .hero-name-input { font-size: clamp(1.1rem, 2.4vw, 1.55rem); font-weight: 680; }
+  .hero-name-input.dirty { background: var(--accent-soft); }
+  .hero-name-input:focus, .field-plain:focus, .draft-input:focus {
+    outline: 0;
+    background: var(--field-fill-focus);
+    box-shadow: var(--focus-ring);
+  }
+
+  .avatar-actions { display: flex; align-items: center; min-height: 30px; }
+  .hero-sub, .tag-hint { margin: 0; color: var(--text-2); font-size: var(--text-xs); }
+  .lean-section { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-3); margin-bottom: var(--space-3); }
+  .lean-section :global(.persona-card:last-child:nth-child(odd)) { grid-column: 1 / -1; }
+  .page.detail :global(.prompt-advanced) { margin-top: var(--space-4); }
+
+  .empty-state {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-5);
+    text-align: center;
+  }
+  .empty-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent); }
+  .empty-title, .empty-desc { margin: 0; }
+  .empty-title { font-weight: 650; }
+  .empty-desc { color: var(--text-2); font-size: var(--text-13); }
+
+  .modal {
+    width: min(560px, calc(100% - 2 * var(--space-3)));
+    max-height: calc(100dvh - 2 * var(--space-4));
+    padding: clamp(14px, 3vw, 22px);
+    overflow: auto;
+    border: 0;
+    border-radius: var(--radius-xl);
+    color: var(--text-1);
+    animation: rise var(--transition-spring);
+  }
+
+  .modal::backdrop { background: var(--scrim); }
+  .modal-form, .field, .draft-block, .draft-row { display: grid; gap: var(--space-2); min-width: 0; }
+  .modal-form { gap: var(--space-3); }
+  .modal-head, .field-row { justify-content: space-between; }
+  .modal-title { margin: 0; font-size: var(--text-lg); }
+  .modal-actions { justify-content: flex-end; }
+  .field-label, .draft-key { color: var(--text-1); font-size: var(--text-13); font-weight: 650; }
+  .field-count { color: var(--text-2); font-size: var(--text-xs); }
+
+  .tag-chip { min-height: 34px; color: var(--text-1); }
+  .tag-chip.on, .tag-chip:hover { background: var(--accent-soft); color: var(--accent); }
+  .tag-chip.is-full { color: var(--text-2); }
+  .draft-block { padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-2); }
+  .draft-reset { min-height: 32px; font-size: var(--text-xs); }
+  .draft-input, textarea.field-plain { resize: vertical; }
+  .create-error { margin: 0; color: var(--error); font-size: var(--text-13); }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(var(--motion-offset)); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 650px) {
+    .page { padding-inline: var(--space-3); }
+    .search-input { font-size: var(--text-base); }
+    .lean-section { grid-template-columns: minmax(0, 1fr); }
+    .hero-card { flex-wrap: wrap; }
+    .hero-main { flex-basis: 100%; }
+    .go-chat { margin-inline-start: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .roster-row:hover { transform: none; }
   }
 </style>

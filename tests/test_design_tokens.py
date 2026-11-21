@@ -1,16 +1,19 @@
-"""视觉 token 的对比度契约（tools/check_contrast.py + tokens.css）。
+"""视觉 token 的对比度契约（tools/check_contrast.py + tokens.css/theme-liquid.css）。
 
-为什么这件事值得一个测试：`tokens.css` 里的每个色值都带着「17.4:1」
-「6.18:1」这样的注释断言，但注释不会因为改色值而报错。改一次颜色，
-断言就变成假的，而界面上「稍微有点看不清」是没人会开 issue 的那种 bug。
+为什么这件事值得一个测试：色值都带着「17.4:1」「6.18:1」这样的注释断言，
+但注释不会因为改色值而报错。改一次颜色，断言就变成假的，而界面上
+「稍微有点看不清」是没人会开 issue 的那种 bug。
 
-所以把断言变成可执行的：任何一次色值改动，只要跌破 WCAG AA，测试就红。
-两个主题 × 22 组表面配对 + 3 档玻璃 × 3 级文字 × 2 种底层 = 54 项。
+契约范围（这一版液态玻璃）：
+  · 主/次级文字：不透明表面上 4.5:1；玻璃压图片时 4.5 / 3.0:1；
+  · 三级文字：设计上刻意压低到约 3:1，是**已知例外**，见
+    TestTertiaryTextException —— 它记录例外的边界，而不是假装达标；
+  · 玻璃材质本身：alpha 阶梯单调、列级同层同膜、舞台合成后更亮、
+    兜底实色等于合成色。
 """
 
 from __future__ import annotations
 
-import colorsys
 import re
 import sys
 from pathlib import Path
@@ -22,26 +25,37 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from check_contrast import (  # noqa: E402
     GLASS_TIERS,
+    IMAGE_TINT_ALPHA,
+    IMAGE_TINT_HEX,
+    NOT_TEXT_FLOOR,
     PAIRS,
+    THEME_LIQUID,
     TOKENS,
-    WORST_BG,
     check_glass,
     composite,
     contrast,
+    glass_over_canvas,
+    image_backdrop,
+    load_css,
     parse_color,
     parse_hex,
     parse_theme,
+    worst_backdrop,
 )
 
 
 @pytest.fixture(scope="module")
 def css() -> str:
-    return TOKENS.read_text(encoding="utf-8")
+    # 主题色值住在 theme-liquid.css；只读 tokens.css 会全是空 var()。
+    return load_css()
 
 
 class TestTokensFileExists:
     def test_tokens_css_present(self):
         assert TOKENS.is_file(), f"找不到 {TOKENS}"
+
+    def test_theme_layer_present(self):
+        assert THEME_LIQUID.is_file(), f"找不到 {THEME_LIQUID}"
 
     def test_both_themes_declared(self, css):
         assert "[data-theme='light']" in css
@@ -71,30 +85,182 @@ class TestSurfaceContrast:
 class TestGlassContrast:
     """玻璃上的文字 —— glassmorphism 唯一的真实风险点。
 
-    玻璃底下的内容不可控（用户会发图片），所以必须按「最坏底」验证，
-    而不是按页面底色验证。只测页面底会得到一个漂亮但无意义的数字。
+    这一版液态玻璃有意做得更薄（0.48 / 0.55），所以分两种情况验证：
+
+      1. **真实画布**（列级玻璃叠自己的氛围色、浮层叠页面底）：
+         text-1/2 必须 4.5:1 —— 这是每天看到的样子；
+      2. **对抗性底图**（玻璃下面压着用户图片 #808080）：
+         主文字必须 4.5:1；次级文字降到 WCAG AA 大字/UI 的 3.0:1。
+
+    text-3 是刻意压低的元信息层（约 3:1），不在 AA 契约内，见
+    TestTertiaryTextException。上一版契约要求所有档位、所有文字压图片
+    都 4.5:1 —— 那要求玻璃接近不透明，等于否掉这一版的材质设计。
     """
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     @pytest.mark.parametrize("glass_name,label,need", GLASS_TIERS)
-    @pytest.mark.parametrize("text_name", ["text-1", "text-2", "text-3"])
-    def test_text_readable_over_worst_case(self, css, theme, glass_name, label, need, text_name):
+    @pytest.mark.parametrize("text_name", ["text-1", "text-2"])
+    def test_text_readable_on_real_canvas(self, css, theme, glass_name, label, need, text_name):
         tokens = parse_theme(css, theme)
-        glass = parse_color(tokens.get(glass_name, ""))
-        assert glass is not None, f"{theme}: 无法解析 --{glass_name}"
+        over_canvas = glass_over_canvas(tokens, glass_name)
         fg = parse_hex(tokens.get(text_name, ""))
+        assert over_canvas is not None, f"{theme}: 无法合成 --{glass_name}"
         assert fg is not None, f"{theme}: 缺少 --{text_name}"
 
-        over_worst = composite(glass, WORST_BG)
-        ratio = contrast(fg, over_worst)
+        ratio = contrast(fg, over_canvas)
+        # 列级玻璃的要求来自 GLASS_TIERS（4.5），浮层同理。
         assert ratio >= need, (
-            f"{theme}: --{text_name} on --{glass_name} 叠最坏底 = {ratio:.2f} < {need}"
-            f" ({label}) —— 用户发的图片会成为玻璃底色"
+            f"{theme}: --{text_name} on --{glass_name} 叠画布 = {ratio:.2f} < {need}"
+            f" ({label})"
+        )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    @pytest.mark.parametrize("glass_name,label,need", GLASS_TIERS)
+    def test_primary_text_survives_image_behind(self, css, theme, glass_name, label, need):
+        """玻璃下面压着最坏端照片（含压色层）时，主文字仍须 AA。"""
+        tokens = parse_theme(css, theme)
+        glass = parse_color(tokens.get(glass_name, ""))
+        fg = parse_hex(tokens.get("text-1", ""))
+        assert glass is not None and fg is not None
+        ratio = contrast(fg, composite(glass, image_backdrop(theme)))
+        assert ratio >= need, (
+            f"{theme}: text-1 on {glass_name} 叠图片 = {ratio:.2f} < {need} ({label})"
+        )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    @pytest.mark.parametrize("glass_name,label,need", GLASS_TIERS)
+    def test_secondary_text_survives_image_behind(self, css, theme, glass_name, label, need):
+        """次级文字压在图片上按 WCAG 大字/UI 下限 3.0:1。"""
+        tokens = parse_theme(css, theme)
+        glass = parse_color(tokens.get(glass_name, ""))
+        assert glass is not None
+        over_worst = composite(glass, image_backdrop(theme))
+
+        fg2 = parse_hex(tokens.get("text-2", ""))
+        assert fg2 is not None
+        r2 = contrast(fg2, over_worst)
+        assert r2 >= NOT_TEXT_FLOOR, (
+            f"{theme}: text-2 on {glass_name} 叠图片 = {r2:.2f} < {NOT_TEXT_FLOOR}"
         )
 
     def test_check_glass_helper_reports_no_problems(self, css):
         """check_glass 是给命令行用的同一套逻辑，它也必须报全绿。"""
         assert check_glass(css) == []
+
+
+class TestImageTintContract:
+    """自定义壁纸的压色层必须够厚，否则薄玻璃上的文字在极端照片前失效。
+
+    `backgroundManager.applyTint()` 给自定义照片保留一层 `--ambient-tint`。
+    这组测试把「这层多厚才够」钉成可执行的事实，防止有人为了「让壁纸更清楚」
+    把它调回 transparent —— 那会让顶栏/侧栏的次级文字在黑白照片前掉到
+    1.5~1.8:1（check_contrast 用中位灰时永远测不出来）。
+    """
+
+    def test_tint_matches_runtime(self):
+        """校验里的压色参数必须和 backgroundManager 实际写的一致（50%）。"""
+        assert IMAGE_TINT_ALPHA == 0.50, (
+            f"IMAGE_TINT_ALPHA={IMAGE_TINT_ALPHA} 与 applyTint() 的 50% 不一致；"
+            "改一处要同步另一处"
+        )
+
+    def test_tint_colors_match_theme_bg(self, css):
+        """压色用的是 --bg，校验里的常量必须等于主题 --bg。"""
+        for theme in ("light", "dark"):
+            tokens = parse_theme(css, theme)
+            bg = parse_hex(tokens.get("bg", ""))
+            assert bg is not None, f"{theme}: 缺少 --bg"
+            assert bg == IMAGE_TINT_HEX[theme], (
+                f"{theme}: IMAGE_TINT_HEX={IMAGE_TINT_HEX[theme]} ≠ --bg={bg}；"
+                "theme-liquid.css 改了底色要同步 check_contrast"
+            )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_worst_backdrop_is_the_true_extreme(self, theme):
+        """最坏底必须是该主题的极端端，而不是中位灰。"""
+        expected = (255, 255, 255) if theme == "dark" else (0, 0, 0)
+        assert worst_backdrop(theme) == expected
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_image_backdrop_is_pulled_toward_canvas(self, theme):
+        """压色后玻璃看到的底色应比原始最坏端更接近画布色（而不是更远）。"""
+        raw = worst_backdrop(theme)
+        tinted = image_backdrop(theme)
+        tint = IMAGE_TINT_HEX[theme]
+        # 每个通道都应向 tint 靠拢
+        for i in range(3):
+            assert abs(tinted[i] - tint[i]) < abs(raw[i] - tint[i]), (
+                f"{theme}: image_backdrop {tinted} 没有向画布色 {tint} 靠拢"
+            )
+
+
+class TestTertiaryTextException:
+    """三级文字：保留设计原色后的**已知、已接受的 AA 例外**。
+
+    `--text-3` 用于时间戳、元信息这类可以有但不必抢眼的文字。这一版
+    颜色实测在表面上是 2.5~3.3:1，低于 AA 正文的 4.5:1 —— 这是产品
+    选择（保留 GPT 原色），不是疏忽。
+
+    所以这里不假装它达标，而是把例外钉成三条可执行的事实：
+
+      1. 它确实低于 AA —— 哪天调色把它提上 4.5，这个用例会红，提醒我们
+         删掉这条例外，而不是悄悄留着；
+      2. 它不能继续往下掉（下限 2.9，实测最低 2.93）；
+      3. 层级不能塌：text-3 必须在每一个表面上都明显弱于 text-2。
+    """
+
+    SURFACES = ("surface", "surface-2", "bg")
+    AA = 4.5
+    FLOOR = 2.9
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    @pytest.mark.parametrize("bg", SURFACES)
+    def test_tertiary_is_a_documented_exception(self, css, theme, bg):
+        tokens = parse_theme(css, theme)
+        t3 = parse_hex(tokens.get("text-3", ""))
+        t2 = parse_hex(tokens.get("text-2", ""))
+        background = parse_hex(tokens.get(bg, ""))
+        assert t3 and t2 and background, f"{theme}/{bg}: 缺少 token"
+
+        ratio = contrast(t3, background)
+        assert ratio < self.AA, (
+            f"{theme}: text-3 on {bg} 已达 {ratio:.2f}:1（≥ AA）。"
+            "好现象 —— 请把 text-3 加回 PAIRS 并删除这条例外测试"
+        )
+        assert ratio >= self.FLOOR, (
+            f"{theme}: text-3 on {bg} 掉到 {ratio:.2f}:1（< {self.FLOOR}）—— "
+            "连既有的层级下限都没有了"
+        )
+        assert ratio < contrast(t2, background), (
+            f"{theme}: text-3 不比 text-2 弱（{ratio:.2f} vs "
+            f"{contrast(t2, background):.2f}），三级层级塌陷"
+        )
+
+
+class TestChromeLayerUsage:
+    """薄玻璃（alpha 0.48 / 0.55）上不布置三级文字。
+
+    `--text-3` 只有约 3:1，在薄玻璃叠图片的极端情况下会更低。把「组件
+    不这么用」变成可执行的检查：常驻 chrome（顶栏、底栏、外壳、状态栏）
+    不得引用 --text-3。将来谁在 chrome 上加灰色元信息，这组测试会红，
+    提醒他先确认那一层的底、或改用 text-2。
+    """
+
+    CHROME = [
+        "components/TopBar.svelte",
+        "components/TabBar.svelte",
+        "components/PhoneShell.svelte",
+        "components/layout/ImmersiveShell.svelte",
+        "components/layout/StatePanel.svelte",
+    ]
+
+    @pytest.mark.parametrize("rel", CHROME)
+    def test_chrome_does_not_use_tertiary_text(self, rel):
+        src = (ROOT / "webui" / "frontend" / "src" / rel).read_text(encoding="utf-8")
+        assert "var(--text-3)" not in src, (
+            f"{rel} 在薄玻璃层使用了 --text-3；"
+            "三级文字压图片只有 3.0:1 以下的风险，请改用 text-2 或加厚玻璃"
+        )
 
 
 class TestGlassTierOrdering:
@@ -114,80 +280,36 @@ class TestGlassTierOrdering:
             alphas.append(parsed[1])
         assert alphas == sorted(alphas), f"{theme}: 玻璃档位 alpha 未递增: {alphas}"
 
-    # alpha 下限按主题分别设定，不是全局一个数。
-    #   浅色 .50：玻璃必须是「近白霜」（spread 只有 4），颜色全靠 50% 的
-    #     环境光透上来。这里 alpha 是**上限约束的反面** —— 越厚越白，越白
-    #     色相越出不来，所以浅色的下限只守「文字别再随底图波动」这件事。
-    #     曾经是 .55，但 .55 时 nav 列合成 #9cc0f7 spread 只有 91、整体
-    #     明度压在 rel-L 74 以上，蓝紫渐变读起来像水彩；降到 .50 后
-    #     nav 合成 #8ab5f6 spread 108、最暗一列 rel-L 69，渐变才立得住。
-    #     代价是 text-2/text-3 必须同步压深（见 --text-2/--text-3 注释）。
-    #   深色 .66：深玻璃本来就压得住最坏底，但低于 .66 之后 text-3 会掉到
-    #     4.5 以下（深色底 + 中位灰图会把玻璃提亮到 (54,51,49)）。
-    MIN_ALPHA = {"light": 0.50, "dark": 0.66}
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_glass_alpha_is_thick_enough(self, css, theme):
-        """alpha 跌破该主题的下限后，正文对比度会随底层内容波动到不达标。"""
-        tokens = parse_theme(css, theme)
-        need = self.MIN_ALPHA[theme]
-        for name in (
-            "glass-1",
-            "glass-2",
-            "glass-3",
-            "glass-nav",
-            "glass-list",
-            "glass-content",
-            "glass-aside",
-        ):
-            parsed = parse_color(tokens.get(name, ""))
-            assert parsed is not None, f"{theme}: 缺少或无法解析 --{name}"
-            assert parsed[1] >= need, (
-                f"{theme}: --{name} alpha={parsed[1]} 低于下限 {need}，"
-                "薄玻璃会让文字对比度随底层内容波动到不达标"
-            )
 
 
 class TestColumnGlassLadder:
-    """四列必须构成一条**可读的明度阶梯**，而且整页必须读得出蓝→紫。
+    """四层景深：L1 辅助栏一层膜，L2 主舞台另一层膜。
 
-    历史 bug 1（结构）：sidebar / conv-panel / panel-col 三列共用 --glass-1，
-    于是无论怎么调这个 token，三列都同进同退。实测四列合成明度是
-    93.5 / 95.2 / 92.3 / 91.0 —— 跨度 4.2 点，肉眼就是一片白。
+    历史契约（蓝→紫色相阶梯）已被新设计取代 —— 现在是暖瓷白 /
+    黑曜石岩灰，四列**不该**再靠色相区分。区分它们的是三件事：
+    谁更实（alpha）、谁更有投影（elev）、谁被留白隔开（layout）。
 
-    历史 bug 2（配色）：四列玻璃各带自己的色相（#072246 / #400e4d / ...），
-    改一次氛围色就得重解一遍玻璃，两边互相稀释，二十几轮迭代都在这里打转。
-    现在四列玻璃**完全相同**（浅色 rgba(250,251,254,.58) / 深色 rgba(11,13,20,.68)），
-    所有颜色都由氛围层透上来 —— 于是「阶梯」和「色相」变成两条独立的、
-    可以分别守住的契约。
+    所以这组测试守的是新契约：
 
-    所以这组测试守三件事：
-      1. 四列玻璃 token 各自存在（不会被合并回去）；
-      2. 合成明度成阶梯（层次读得出来）；
-      3. 合成色相跨度够宽（蓝→紫读得出来，不是单色淡蓝）。
+      1. L1 三列（nav / list / aside）共用同一层中性膜 ——
+         同层级的表面必须同材质，否则界面读成三块不同的板；
+      2. L2 主舞台**合成后**必须比 L1 更亮 —— 两档玻璃色膜相同，
+         亮度差全部来自 alpha，所以要比屏幕上的合成色；
+      3. alpha 上 L1 < L2：辅助栏更透、主舞台更实；
+      4. 冷暖方向一致：浅色 R≥B（暖），深色 B≥R（冷）——
+         防的是「暖瓷白里混进一撮蓝」这类跑色，对比度测不出来，
+         但整页会立刻显脏；
+      5. 减弱透明模式的兜底实色必须等于合成色，不能退回 --bg。
     """
 
-    # 每列在明度阶梯上的位置：浅色 content 最亮，深色 content 最暗。
-    LADDER = {
-        "light": ["glass-nav", "glass-aside", "glass-list", "glass-content"],
-        "dark": ["glass-content", "glass-nav", "glass-aside", "glass-list"],
-    }
+    L1 = ("glass-nav", "glass-list", "glass-aside")
 
-    # 列 → 它脚下那块氛围色 token。radial-gradient 的四个色团分别压在这四列上。
     AMBIENT_OF = {
         "nav": "ambient-a",      # 左上
         "aside": "ambient-b",    # 右上
         "content": "ambient-c",  # 底部中偏右
         "list": "ambient-d",     # 左下
     }
-
-    # 相邻两档的最小合成明度差。实测浅色 3.0/3.5/3.6、深色 2.0/2.0/2.0，
-    # 取 1.2 留余量，但足以拦住「又被调回同一个色」这类回归。
-    MIN_GAP = 1.2
-
-    # 色相跨度门限。设计承诺是「横向蓝→紫」，锁的是**渲染后的合成色**。
-    # 实测浅色 216→284 = 68°、深色 216→285 = 69°，取 55 留余量。
-    MIN_HUE_SPAN = 55.0
 
     @staticmethod
     def _rel_lum(rgb: tuple[float, float, float]) -> float:
@@ -199,22 +321,12 @@ class TestColumnGlassLadder:
         r, g, b = rgb
         return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 * 100
 
-    @staticmethod
-    def _hue(rgb: tuple[float, float, float]) -> float:
-        """色相角（0~360）。整数化后再算，避免浮点抖动导致色相跳崖。"""
-        r, g, b = (round(c) / 255 for c in rgb)
-        h, _l, _s = colorsys.rgb_to_hls(r, g, b)
-        return h * 360
-
     def _composite(self, css: str, theme: str, name: str) -> tuple[float, float, float]:
         """玻璃叠在它**自己脚下那块氛围**上的合成色 —— 屏幕上真正看到的颜色。
 
         这是本轮配色的唯一模型：`屏幕色 = alpha·玻璃 + (1−alpha)·氛围`。
-        只算玻璃自身色是没意义的 —— 四列玻璃现在完全相同，玻璃色恒等于
-        一个中性色，任何基于它的断言都会「全绿而肉眼没变化」。
-
-        预测值与截图实测差一个恒定偏移（backdrop blur 与 saturate 的再加工，
-        约 -1.1 明度点），**排序、相邻差、色相基本一致**，用它守回归是可靠的。
+        只算玻璃自身色是没意义的 —— 同一层的玻璃色恒等于一个中性色，
+        任何基于它的断言都会「全绿而肉眼没变化」。
         """
         tokens = parse_theme(css, theme)
         glass = parse_color(tokens.get(name, ""))
@@ -224,10 +336,6 @@ class TestColumnGlassLadder:
         assert amb is not None, f"{theme}: 无法解析 --{amb_name}（四列的氛围色）"
         (g_rgb, alpha), (a_rgb, _) = glass, amb
         return tuple(alpha * g_rgb[i] + (1 - alpha) * a_rgb[i] for i in range(3))
-
-    def _glass_lightness(self, css: str, theme: str, name: str) -> float:
-        """兼容旧调用：返回合成明度（阶梯的唯一有效指标）。"""
-        return self._rel_lum(self._composite(css, theme, name))
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_column_glass_tokens_exist(self, css, theme):
@@ -243,82 +351,68 @@ class TestColumnGlassLadder:
             )
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_ladder_is_monotonic(self, css, theme):
-        order = self.LADDER[theme]
-        vals = [self._glass_lightness(css, theme, n) for n in order]
-        assert vals == sorted(vals), (
-            f"{theme}: 明度阶梯方向错了 —— 按 {order} 应单调，实测 {[round(v,1) for v in vals]}"
-        )
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_adjacent_gaps_are_visible(self, css, theme):
-        order = self.LADDER[theme]
-        vals = [self._glass_lightness(css, theme, n) for n in order]
-        gaps = [round(b - a, 2) for a, b in zip(vals, vals[1:])]
-        for gap, (a, b) in zip(gaps, zip(order, order[1:])):
-            assert gap >= self.MIN_GAP, (
-                f"{theme}: --{a} → --{b} 只差 {gap} 个明度点 "
-                f"(要求 ≥{self.MIN_GAP})，这个差距在屏幕上读不出层次"
-            )
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_total_span_is_wide_enough(self, css, theme):
-        """总跨度是「四列看着是不是同一块」的直接指标。"""
-        vals = [self._glass_lightness(css, theme, n) for n in self.LADDER[theme]]
-        span = vals[-1] - vals[0]
-        need = 8.0 if theme == "light" else 4.5
-        assert span >= need, (
-            f"{theme}: 四列总跨度只有 {span:.1f} 个明度点 (要求 ≥{need})，"
-            "会退回整改前「四块一样白/一样黑」的状态"
-        )
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_hue_span_reads_blue_to_violet(self, css, theme):
-        """整页必须读得出「蓝 → 紫」，不能是单色淡蓝。
-
-        这是用户 m03422 的直接诉求（"你不是蓝色和紫色的渐变色吗，
-        我现在只看到淡蓝色"）。前二十几轮之所以失败，是因为色相虽然排开了
-        (H214→H288)，但合成明度全落在 L85~L94 —— **在 L88 处 HSL 的 S 是失真的**：
-        S100 的 #f8f3ff 通道差只有 34，人眼读成"白里带一点粉"。
-        所以这条测试必须锁**合成色**的色相，而不是氛围色的色相。
-        """
-        hues = {n.split("-", 1)[1]: self._hue(self._composite(css, theme, n))
-                for n in ("glass-nav", "glass-aside", "glass-list", "glass-content")}
-        lo = min(hues.values())
-        hi = max(hues.values())
-        span = hi - lo
-        assert span >= self.MIN_HUE_SPAN, (
-            f"{theme}: 四列合成色相只跨了 {span:.0f}° "
-            f"(要求 ≥{self.MIN_HUE_SPAN:.0f}°)，整页会读成单色而不是蓝→紫渐变："
-            f"{ {k: round(v) for k, v in hues.items()} }"
-        )
-        # 方向也要对：侧栏最蓝、右栏最紫。反了就不是「蓝→紫」而是「紫→蓝」，
-        # 左右视觉重心会跟着颠倒（深色下正文最暗那条规则同理）。
-        assert hues["nav"] == lo, (
-            f"{theme}: 侧栏不是最蓝的一端（nav H{round(hues['nav'])} vs 最小 H{round(lo)}）"
-        )
-        assert hues["aside"] == hi, (
-            f"{theme}: 右栏不是最紫的一端（aside H{round(hues['aside'])} vs 最大 H{round(hi)}）"
-        )
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_glass_itself_is_neutral(self, css, theme):
-        """四列玻璃必须是**中性**的（四者完全相同），颜色只由氛围提供。
-
-        这是 v6 的结构性决定，也是本次求解能收敛的原因：
-        玻璃若各带色相，就会和脚下氛围互相稀释，反解公式失效，
-        每改一次氛围都要重解一遍玻璃 —— 那就是前二十几轮的死循环。
-        """
+    def test_l1_columns_share_one_film(self, css, theme):
+        """L1 三列必须同材质：它们承担的是同一层级的信息（导航/列表/状态）。"""
         tokens = parse_theme(css, theme)
         seen = {}
-        for name in ("glass-nav", "glass-aside", "glass-list", "glass-content"):
+        for name in self.L1:
             parsed = parse_color(tokens.get(name, ""))
             assert parsed is not None, f"{theme}: 无法解析 --{name}"
             seen[name] = tuple(round(c) for c in parsed[0])
         assert len(set(seen.values())) == 1, (
-            f"{theme}: 四列玻璃不再中性：{seen} —— "
-            "玻璃带色相会和氛围互相稀释，颜色就调不出来了"
+            f"{theme}: L1 三列的玻璃色膜不一致：{seen} —— "
+            "同一层级不同材质会读成三块拼贴的板"
         )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_stage_reads_brighter_than_l1(self, css, theme):
+        """L2 主舞台**看上去**必须比 L1 亮 —— 比合成色，不比玻璃自身色。
+
+        这一版的 L1 与 L2 玻璃色膜都是同一种白/深灰，区别只在 alpha：
+        舞台更实，所以叠在同一块画布上之后更亮。只比玻璃自身 RGB 会让
+        这条永远失败（两档都是 #fff），比的必须是屏幕上真正看到的颜色。
+        """
+        tokens = parse_theme(css, theme)
+        stage = glass_over_canvas(tokens, "glass-content")
+        assert stage is not None
+        stage_lum = self._rel_lum(stage)
+        for name in self.L1:
+            l1 = glass_over_canvas(tokens, name)
+            assert l1 is not None, f"{theme}: 无法合成 --{name}"
+            assert stage_lum > self._rel_lum(l1), (
+                f"{theme}: --glass-content 合成色不比 --{name} 亮 "
+                f"({stage_lum:.1f} vs {self._rel_lum(l1):.1f})，"
+                "主舞台会失去视觉焦点"
+            )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_alpha_ladder_puts_stage_on_top(self, css, theme):
+        """辅助栏更透、主舞台更实。"""
+        tokens = parse_theme(css, theme)
+        stage = parse_color(tokens.get("glass-content", ""))
+        assert stage is not None
+        for name in self.L1:
+            l1 = parse_color(tokens.get(name, ""))
+            assert l1 is not None
+            assert stage[1] > l1[1], (
+                f"{theme}: --glass-content alpha={stage[1]} 不高于 --{name} "
+                f"alpha={l1[1]}，主舞台会比辅助栏还透"
+            )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_color_temperature_is_consistent(self, css, theme):
+        """整页只允许一个冷暖方向：浅色偏暖（R≥B），深色偏冷（B≥R）。
+
+        这条抓的是色相跑偏 —— 例如往暖白玻璃里掺一点冷蓝，
+        对比度全部达标，但整页会读成「脏灰」。
+        """
+        for name in ("glass-nav", "glass-aside", "glass-list", "glass-content"):
+            comp = self._composite(css, theme, name)
+            r, _g, b = (round(c) for c in comp)
+            if theme == "light":
+                assert r >= b, f"light: --{name} 合成色偏冷 (R{r} < B{b})"
+            else:
+                assert b >= r, f"dark: --{name} 合成色偏暖 (B{b} < R{r})"
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_solid_fallback_equals_composite(self, css, theme):

@@ -31,7 +31,7 @@
   };
 </script>
 
-<div class="notice n-{variant} n-tone-{tone} {checking ? 'is-checking' : ''}" role="alert">
+<div class="notice n-{variant} n-tone-{tone}" class:is-checking={checking} role="alert">
   <span class="n-icon" aria-hidden="true">
     {#if checking}
       <span class="n-spin" aria-hidden="true"></span>
@@ -54,122 +54,82 @@
 
 <style>
   .notice {
+    --notice-color: var(--warning);
+    --notice-fill: var(--warning-soft);
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--notice-fill);
     color: var(--text-1);
+  }
+
+  .n-tone-error { --notice-color: var(--error); --notice-fill: var(--error-soft); }
+  .n-tone-info { --notice-color: var(--info); --notice-fill: var(--info-soft); }
+
+  .n-banner { width: 100%; }
+
+  .n-card {
+    max-width: min(340px, 100%);
+    border-end-start-radius: var(--bubble-radius-sm);
   }
 
   .n-icon {
+    display: grid;
     flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    place-items: center;
+    width: 33px;
+    height: 33px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--notice-color);
   }
 
-  .n-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-2);
-  }
+  .n-body { flex: 1 1 10rem; min-width: 0; }
+
   .n-title {
-    font-weight: 600;
-    font-size: var(--text-sm);
     color: var(--text-1);
+    font-size: var(--text-sm);
+    font-weight: 650;
   }
+
   .n-text {
-    font-size: var(--text-xs);
     color: var(--text-2);
-    line-height: var(--leading-snug);
+    font-size: var(--text-xs);
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
   }
 
   .n-action {
     flex: none;
-    height: var(--btn-h-md);
-    padding: 0 var(--space-3);
-    border: none;
-    border-radius: var(--btn-radius);
+    min-height: 36px;
+    padding: var(--space-1) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-pill);
     background: var(--accent);
     color: var(--on-accent);
     font-size: var(--text-xs);
-    font-weight: 600;
+    font-weight: 650;
     cursor: pointer;
-    white-space: nowrap;
-    transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
-  }
-  .n-action:hover {
-    background: var(--accent-strong);
-  }
-  .n-action:active {
-    transform: scale(0.96);
   }
 
-  /* ---- 形态: banner (输入框上方的全宽警示条) ---- */
-  .n-banner {
-    width: 100%;
-    padding: var(--space-3) var(--space-4);
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--warning-soft);
-  }
-  .n-banner.n-tone-error {
-    background: var(--error-soft);
-  }
-  .n-banner.n-tone-info {
-    background: var(--info-soft);
-  }
+  .n-action:hover { background: var(--accent-hover); }
+  .is-checking .n-icon { color: var(--text-2); }
 
-  /* ---- 形态: card (取代正常气泡的配置提示卡) ---- */
-  .n-card {
-    max-width: 320px;
-    padding: var(--space-3) var(--space-3);
-    border-radius: var(--bubble-radius-lg);
-    border-bottom-left-radius: var(--bubble-radius-sm);
-    border: 1px solid var(--border-strong);
-    background: var(--warning-soft);
-    box-shadow: var(--shadow-sm);
-    align-items: flex-start;
-  }
-  .n-card.n-tone-error {
-    background: var(--error-soft);
-  }
-  .n-card.n-tone-info {
-    background: var(--info-soft);
-  }
-  .n-card .n-action {
-    margin-top: var(--space-2);
-  }
-
-  .n-is-checking .n-icon {
-    color: var(--text-3);
-  }
-  .n-is-checking .n-text {
-    color: var(--text-3);
-  }
-
-  /* 检测中转圈 */
   .n-spin {
     width: 16px;
     height: 16px;
-    border-radius: var(--radius-xs);
-    border: 2px solid var(--border-strong);
-    border-top-color: var(--accent);
-    animation: n-rotate 0.8s var(--ease-in-out) infinite;
-  }
-  @keyframes n-rotate {
-    to { transform: rotate(360deg); }
+    border: 2px solid var(--border);
+    border-top-color: currentColor;
+    border-radius: var(--radius-pill);
+    animation: n-rotate 0.8s linear infinite;
   }
 
-  @media (max-width: 767px) {
-    .n-banner {
-      padding: var(--space-2) var(--space-3);
-    }
-    .n-card {
-      max-width: 86%;
-    }
+  @keyframes n-rotate { to { transform: rotate(360deg); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .n-spin { animation: none; }
   }
 </style>

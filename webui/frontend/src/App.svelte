@@ -46,21 +46,13 @@
   // 大写变量名: Svelte 5 runes 将其视为动态组件引用，随 route 变化重新渲染
   let Current = $derived(pageMap[$route.page] ?? ChatPage);
 
-  // 页面切换过渡: 只做淡入 (去掉位移与模糊, 更快更干脆)
-  function pageIn() {
-    return {
-      duration: 140,
-      easing: (t) => 1 - Math.pow(1 - t, 3),
-      css: (t) => `opacity: ${t};`,
-    };
-  }
 </script>
 
 <svelte:head><title>慕</title></svelte:head>
 
 {#if !ready}
   <div class="boot">
-    <div class="boot-logo" aria-hidden="true"></div>
+    <div class="brand-mark boot-logo" aria-hidden="true"></div>
     <span class="boot-text">引导中…</span>
   </div>
 {:else}
@@ -72,7 +64,7 @@
     </div>
     {#if activePage !== 'chat'}
       {#key activePage}
-        <div class="page-enter" transition:pageIn>
+        <div class="page-enter page-arrive">
           <Current></Current>
         </div>
       {/key}
@@ -102,39 +94,60 @@
 
 <style>
   .page-enter {
-    /* 必须是确定高度: 子页面 (.chat-page 等) 用 height:100% 撑满,
-       而百分比高度无法从父级的 min-height 解析 (曾导致页面塌缩成内容高度) */
     height: 100%;
     min-height: 0;
-    will-change: opacity;
   }
-  /* 常驻挂载但当前不可见的页面（聊天页切走时用） */
-  .page-hidden {
-    display: none;
+
+  .page-hidden { display: none; }
+  .page-arrive { animation: page-enter var(--transition-snap); }
+
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(var(--motion-offset)); }
+    to { opacity: 1; transform: translateY(0); }
   }
+
+  :global(.brand-mark) {
+    position: relative;
+    flex: none;
+    width: var(--brand-size, 28px);
+    height: var(--brand-size, 28px);
+    border-radius: var(--radius-avatar);
+    background: var(--accent-gradient);
+    box-shadow: inset 0 1px 0 var(--floating-highlight), var(--shadow-accent);
+    color: var(--on-accent);
+  }
+
+  :global(.brand-mark)::before,
+  :global(.brand-mark)::after {
+    position: absolute;
+    content: '';
+    background: currentColor;
+    clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  }
+
+  :global(.brand-mark)::before { inset: 24% 30% 29% 23%; }
+  :global(.brand-mark)::after { inset: 20% 17% 62% 65%; opacity: 0.68; }
+
   .boot {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: var(--space-3);
     min-height: 100dvh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-4);
     color: var(--text-2);
-    font-size: var(--text-sm);
   }
+
   .boot-logo {
-    width: 26px;
-    height: 26px;
-    background: var(--text-1);
-    animation: boot-pulse 1.2s var(--ease-in-out) infinite;
+    --brand-size: 42px;
+    animation: pulse 1.25s var(--ease-in-out) infinite;
   }
-  .boot-text {
-    letter-spacing: 0.08em;
-    font-size: var(--text-xs);
-    color: var(--text-3);
-  }
-  @keyframes boot-pulse {
-    0%, 100% { opacity: 0.25; }
-    50% { opacity: 1; }
+
+  .boot-text { font-size: var(--text-xs); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .boot-logo { animation: none; }
+    /* 页面切换的入场动画也一并关掉：--dur-3 归零只让时长变 0，
+       仍是「一帧闪」；显式 animation: none 更干净。 */
+    .page-arrive { animation: none; }
   }
 </style>

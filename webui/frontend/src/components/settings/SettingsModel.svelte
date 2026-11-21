@@ -422,7 +422,7 @@
   // 区块跳转：标题区/总览里的按钮滚到对应区块，长表单不用手滑
   function jumpTo(id) {
     const el = document.getElementById(id);
-    if (el?.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (el?.scrollIntoView) el.scrollIntoView({ block: 'start' });
   }
 
   // ④ 用已保存服务商的 provider/base_url/model_name + 现场粘贴的密钥测一次
@@ -466,16 +466,15 @@
   }
 </script>
 
-<SettingsShell title="模型设置" desc="默认模型 → 服务商 → 能力分配 → 连接测试" {onback}>
+<SettingsShell title="模型设置" desc="管理服务商、默认模型与识别和语音能力" {onback}>
   {#if loading}
-    <div class="card card-pad">
+    <div class="settings-group settings-group-pad">
       <EmptyState icon="cpu" title="正在加载模型配置…" compact />
     </div>
   {:else}
-    <!-- ============ ① 默认模型与状态 ============ -->
-    <section class="card card-pad" id="overview">
+    <section class="settings-group settings-group-pad" id="overview">
       <div class="section-head">
-        <h4>默认模型与状态</h4>
+        <h2>默认模型与状态</h2>
         <span class="head-sub">当前在用的语言模型与整体情况</span>
       </div>
 
@@ -520,32 +519,30 @@
       {#if !model?.available?.length}
         <div class="ov-warn">
           <p class="ov-warn-text">
-            当前没有任何模型能回复消息 —— 最常见的原因是 API Key 没配好。
-            到下面「服务商」里挑一家，填上 Key 就能开始。
+            添加带有有效 API Key 的服务商并选择模型后，即可使用聊天。
           </p>
           <button class="btn-outline sm" type="button" onclick={() => jumpTo('providers')}>去添加服务商</button>
         </div>
       {/if}
     </section>
 
-    <!-- ============ ② 服务商管理 ============ -->
-    <section class="card card-pad" id="providers">
+    <section class="settings-group settings-group-pad" id="providers">
       <div class="section-head">
-        <h4>服务商</h4>
-        <span class="head-sub">已添加的可以分配模型，下面可以再添一家</span>
+        <h2>服务商</h2>
+        <span class="head-sub">查看已配置的接口，或通过预设添加服务商。</span>
       </div>
 
       {#if providers.length}
         <div class="card-list">
           {#each providers as p}
-            <div class="card-row">
+            <div class="settings-row">
               <div class="row-main">
                 <span class="row-title">{p.provider || p.key}{#if p.model_name}<span class="dim"> · {p.model_name}</span>{/if}</span>
                 <span class="row-sub">{p.base_url || '未配置地址'}</span>
               </div>
               <div class="row-actions">
                 {#if p.key === model.current}<span class="badge ok">使用中</span>{/if}
-                <button class="icon-btn danger" type="button" title="删除" onclick={() => removeProvider(p.key)}>
+                <button class="icon-btn danger" type="button" aria-label={`删除 ${p.provider || p.key}`} title="删除" onclick={() => removeProvider(p.key)}>
                   {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.trash}</svg>`}
                 </button>
               </div>
@@ -553,25 +550,24 @@
           {/each}
         </div>
       {:else}
-        <p class="hint">还没有服务商 —— 从下面挑一家，填上 API Key 保存即可。</p>
+        <EmptyState icon="cpu" title="尚未添加服务商" desc="选择下方预设或使用自定义接口。" compact />
       {/if}
 
       <div class="add-head">
         <span class="micro-label">新增服务商</span>
-        <span class="add-sub">点卡片就地展开，填 API Key 保存</span>
       </div>
 
       {#if presetsLoading}
         <div class="preset-grid">
           {#each [1, 2, 3, 4] as _}
-            <div class="preset-card skeleton" style="height: 88px;"></div>
+            <div class="preset-card skeleton"></div>
           {/each}
         </div>
       {:else}
         <div class="preset-grid">
           {#each presets as p (p.key)}
             <div class="preset-item">
-              <button class="preset-card" class:on={expandedPreset === p.key} type="button" onclick={() => togglePreset(p)}>
+              <button class="preset-card" class:on={expandedPreset === p.key} aria-expanded={expandedPreset === p.key} type="button" onclick={() => togglePreset(p)}>
                 <span class="pc-head">
                   <span class="pc-label">{p.label}</span>
                   <span class="pc-key">{p.key}</span>
@@ -594,7 +590,7 @@
                     </button>
                   </div>
                   {#if testState !== 'idle'}
-                    <p class="test-msg {testState === 'ok' ? 'ok' : 'fail'}">{testMsg}</p>
+                    <p role="status" class="test-msg {testState === 'ok' ? 'ok' : 'fail'}">{testMsg}</p>
                   {/if}
                   {#if formPullMsg}<p class="pull-msg">{formPullMsg}</p>{/if}
 
@@ -603,7 +599,7 @@
                       <span class="micro-label">点选默认模型（再点一次取消）</span>
                       <div class="pick-list">
                         {#each formPull as m (m)}
-                          <button type="button" class="pick-row" class:on={pf.model_name === m} onclick={() => (pf.model_name = pf.model_name === m ? '' : m)}>
+                          <button type="button" class="pick-row" class:on={pf.model_name === m} aria-pressed={pf.model_name === m} onclick={() => (pf.model_name = pf.model_name === m ? '' : m)}>
                             <span class="pool-name mono">{m}</span>
                             {#if pf.model_name === m}<span class="badge ok">已选</span>{/if}
                           </button>
@@ -612,26 +608,7 @@
                     </div>
                   {/if}
 
-                  <details class="adv-details">
-                    <summary>
-                      <span>高级参数</span>
-                      <span class="adv-hint">采样温度与惩罚项，留空用厂商默认</span>
-                    </summary>
-                    <div class="field-row">
-                      <label class="field"><span>Temperature</span><input class="input" type="number" step="0.1" min="0" max="2" bind:value={pf.temperature} placeholder="1.0" /></label>
-                      <label class="field"><span>Max Tokens</span><input class="input" type="number" min="1" bind:value={pf.max_tokens} placeholder="2048" /></label>
-                    </div>
-                    <SamplingPresets
-                      temperature={pf.temperature}
-                      presence={pf.presence_penalty}
-                      frequency={pf.frequency_penalty}
-                      onselect={applySampling}
-                    />
-                    <div class="field-row">
-                      <label class="field"><span class="field-label">存在惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.presence_penalty} placeholder="0.3" /></label>
-                      <label class="field"><span class="field-label">频率惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.frequency_penalty} placeholder="0.3" /></label>
-                    </div>
-                  </details>
+                  {@render samplingFields()}
 
                   <div class="form-actions">
                     <button class="btn-outline sm" type="button" onclick={() => (expandedPreset = null)}>取消</button>
@@ -644,7 +621,7 @@
 
           <!-- 自定义 OpenAI 兼容接口 -->
           <div class="preset-item">
-            <button class="preset-card" class:on={expandedPreset === 'custom'} type="button" onclick={toggleCustom}>
+            <button class="preset-card" class:on={expandedPreset === 'custom'} aria-expanded={expandedPreset === 'custom'} type="button" onclick={toggleCustom}>
               <span class="pc-head">
                 <span class="pc-label">自定义</span>
                 <span class="pc-key">OpenAI 兼容</span>
@@ -673,7 +650,7 @@
                     <span class="micro-label">点选一个模型（再点一次取消；或手动输入）</span>
                     <div class="pick-list">
                       {#each formPull as m (m)}
-                        <button type="button" class="pick-row" class:on={pf.model_name === m} onclick={() => (pf.model_name = pf.model_name === m ? '' : m)}>
+                        <button type="button" class="pick-row" class:on={pf.model_name === m} aria-pressed={pf.model_name === m} onclick={() => (pf.model_name = pf.model_name === m ? '' : m)}>
                           <span class="pool-name mono">{m}</span>
                           {#if pf.model_name === m}<span class="badge ok">已选</span>{/if}
                         </button>
@@ -688,26 +665,7 @@
                   <span>支持图像识别（模型能直接看图就勾上）</span>
                 </label>
 
-                <details class="adv-details">
-                  <summary>
-                    <span>高级参数</span>
-                    <span class="adv-hint">采样温度与惩罚项，留空用厂商默认</span>
-                  </summary>
-                  <div class="field-row">
-                    <label class="field"><span>Temperature</span><input class="input" type="number" step="0.1" min="0" max="2" bind:value={pf.temperature} placeholder="1.0" /></label>
-                    <label class="field"><span>Max Tokens</span><input class="input" type="number" min="1" bind:value={pf.max_tokens} placeholder="2048" /></label>
-                  </div>
-                  <SamplingPresets
-                    temperature={pf.temperature}
-                    presence={pf.presence_penalty}
-                    frequency={pf.frequency_penalty}
-                    onselect={applySampling}
-                  />
-                  <div class="field-row">
-                    <label class="field"><span class="field-label">存在惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.presence_penalty} placeholder="0.3" /></label>
-                    <label class="field"><span class="field-label">频率惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.frequency_penalty} placeholder="0.3" /></label>
-                  </div>
-                </details>
+                {@render samplingFields()}
 
                 <div class="form-actions">
                   <button class="btn-outline sm" type="button" onclick={() => (expandedPreset = null)}>取消</button>
@@ -720,17 +678,16 @@
       {/if}
     </section>
 
-    <!-- ============ ③ 模型能力与用途 ============ -->
-    <section class="card card-pad" id="capability">
+    <section class="settings-group settings-group-pad" id="capability">
       <div class="section-head">
-        <h4>模型能力与用途</h4>
+        <h2>模型能力与用途</h2>
         <span class="head-sub">谁聊天、谁看图、谁发语音</span>
       </div>
 
       {#if roles.pool.length}
-        <div class="entry-list">
+        <div class="card-list">
           {#each roles.pool as entry (entry.key)}
-            <div class="entry-row">
+            <div class="settings-row entry-row">
               <div class="entry-head">
                 <span class="entry-name mono">
                   {entry.model_name || entry.key}
@@ -749,19 +706,20 @@
                   />
                   <span>多模态</span>
                 </label>
-                <span class="ctl-sep"></span>
-                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('chat', entry.model_name, entry.key)}
-                  title={entry.is_current ? '当前语言模型' : '设为语言模型'}
-                  class:on={entry.is_current}>语言</button>
-                <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('vision', entry.model_name, entry.key)}
-                  title={roles.vision?.model_name === entry.model_name ? '再次点击取消（备用识别）' : '设为备用识别模型（图片/语音转文字）'}
-                  class:on={roles.vision?.model_name === entry.model_name}>识别</button>
-                <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(entry.model_name)}
-                  onclick={() => assignRole('tts', entry.model_name, entry.key)}
-                  title={roles.tts?.model_name === entry.model_name ? '再次点击取消' : '只有语音合成类模型（tts）可分配'}
-                  class:on={roles.tts?.model_name === entry.model_name}>语音</button>
+                <div class="settings-segmented" role="group" aria-label="模型用途">
+                  <button type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
+                    onclick={() => assignRole('chat', entry.model_name, entry.key)}
+                    title={entry.is_current ? '当前语言模型' : '设为语言模型'}
+                    aria-pressed={entry.is_current}>语言</button>
+                  <button type="button" disabled={!!assigning || isTtsModel(entry.model_name)}
+                    onclick={() => assignRole('vision', entry.model_name, entry.key)}
+                    title={roles.vision?.model_name === entry.model_name ? '再次点击取消（备用识别）' : '设为备用识别模型（图片/语音转文字）'}
+                    aria-pressed={roles.vision?.model_name === entry.model_name}>识别</button>
+                  <button type="button" disabled={!!assigning || !isTtsModel(entry.model_name)}
+                    onclick={() => assignRole('tts', entry.model_name, entry.key)}
+                    title={roles.tts?.model_name === entry.model_name ? '再次点击取消' : '只有语音合成类模型（tts）可分配'}
+                    aria-pressed={roles.tts?.model_name === entry.model_name}>语音</button>
+                </div>
               </div>
             </div>
           {/each}
@@ -782,23 +740,23 @@
             {#if pullMsg}<span class="pull-msg">{pullMsg}</span>{/if}
           </div>
           {#if pulled.length}
-            <div class="model-pool">
+            <div class="card-list model-pool">
               {#each pulled as m (m)}
-                <div class="pool-row">
+                <div class="settings-row pool-row">
                   <span class="pool-name mono">{m}</span>
-                  <div class="pool-actions">
-                    <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
+                  <div class="settings-segmented" role="group" aria-label="模型用途">
+                    <button type="button" disabled={!!assigning || isTtsModel(m)}
                       onclick={() => assignRole('chat', m, pullKey)}
                       title="把 {pullKey} 条目切到此模型，并设为语言模型"
-                      class:on={roles.chat?.model_name === m && roles.chat?.key === pullKey}>语言</button>
-                    <button class="mini-btn" type="button" disabled={!!assigning || isTtsModel(m)}
+                      aria-pressed={roles.chat?.model_name === m && roles.chat?.key === pullKey}>语言</button>
+                    <button type="button" disabled={!!assigning || isTtsModel(m)}
                       onclick={() => assignRole('vision', m, pullKey)}
                       title={roles.vision?.model_name === m ? '再次点击取消' : '设为备用识别模型（图片/语音转文字）'}
-                      class:on={roles.vision?.model_name === m}>识别</button>
-                    <button class="mini-btn" type="button" disabled={!!assigning || !isTtsModel(m)}
+                      aria-pressed={roles.vision?.model_name === m}>识别</button>
+                    <button type="button" disabled={!!assigning || !isTtsModel(m)}
                       onclick={() => assignRole('tts', m, pullKey)}
                       title={roles.tts?.model_name === m ? '再次点击取消' : '只有语音类模型（tts）可分配'}
-                      class:on={roles.tts?.model_name === m}>语音</button>
+                      aria-pressed={roles.tts?.model_name === m}>语音</button>
                   </div>
                 </div>
               {/each}
@@ -807,18 +765,16 @@
         {/if}
 
         <p class="hint">
-          <strong>多模态</strong>：勾了 → 图片直接发给语言模型识别（一次调用，备用识别不启用）；
-          没勾 → 把另一个模型设为「识别」（图片先转文字描述再交给语言模型）。语音合成是生成型模型，用「语音」单独设。
+          启用多模态后，图片直接发给语言模型。也可以另选备用识别模型，将图片转成文字后交给语言模型。
         </p>
       {:else}
         <p class="hint">还没有模型条目 —— 先在「服务商」里添加一家并保存，这里就会出现可分配的角色。</p>
       {/if}
     </section>
 
-    <!-- ============ ④ 连接测试与错误反馈 ============ -->
-    <section class="card card-pad" id="diagnostics">
+    <section class="settings-group settings-group-pad" id="diagnostics">
       <div class="section-head">
-        <h4>连接测试</h4>
+        <h2>连接测试</h2>
         <span class="head-sub">发一条最小请求，验证地址、密钥与模型名</span>
       </div>
 
@@ -856,407 +812,116 @@
   {/if}
 </SettingsShell>
 
+{#snippet samplingFields()}
+  <details class="adv-details">
+    <summary>
+      <span>高级参数</span>
+      <span class="adv-hint">留空使用服务商默认值</span>
+    </summary>
+    <div class="field-row">
+      <label class="field"><span>Temperature</span><input class="input" type="number" step="0.1" min="0" max="2" bind:value={pf.temperature} placeholder="1.0" /></label>
+      <label class="field"><span>Max Tokens</span><input class="input" type="number" min="1" bind:value={pf.max_tokens} placeholder="2048" /></label>
+    </div>
+    <SamplingPresets
+      temperature={pf.temperature}
+      presence={pf.presence_penalty}
+      frequency={pf.frequency_penalty}
+      onselect={applySampling}
+    />
+    <div class="field-row">
+      <label class="field"><span class="field-label">存在惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.presence_penalty} placeholder="0.3" /></label>
+      <label class="field"><span class="field-label">频率惩罚</span><input class="input" type="number" step="0.1" min="-2" max="2" bind:value={pf.frequency_penalty} placeholder="0.3" /></label>
+    </div>
+  </details>
+{/snippet}
+
 <style>
-  /* ---- ① 总览四宫格 ----
-     原来这一块只有一段「识别流程」长句 + 一串条目行，用户第一眼看不出
-     「现在到底在用哪个模型」。四宫格把四个关键状态一次摆出来：
-     语言 / 已配置数 / 备用识别 / 语音，值用等宽字，附注一行小字说明含义。
-     网格 auto-fit 236px：窄屏自动落到两列、一列，不需要额外 media query。 */
   .ov-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 146px), 1fr));
     gap: var(--space-2);
-    margin-bottom: var(--space-4);
   }
   .ov-item {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    align-content: start;
     gap: var(--space-1);
-    padding: var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
     min-width: 0;
-  }
-  .ov-label {
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wider);
-    color: var(--text-3);
-  }
-  .ov-value {
-    font-size: var(--text-lg);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-1);
-    word-break: break-all;
-    line-height: 1.3;
-  }
-  .ov-value.mono { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 500; }
-  .ov-value.is-empty { color: var(--text-3); font-weight: 400; }
-  .ov-note {
-    font-size: var(--text-2xs);
-    line-height: 1.6;
-    color: var(--text-3);
-  }
-
-  /* ---- 识别流程：原来是一整块 surface-2 色板，现在退化成一条带竖线的说明 ---- */
-  .ov-chain {
-    padding-left: var(--space-3);
-    border-left: 2px solid var(--accent-line);
-    margin-bottom: var(--space-3);
-  }
-  .ov-chain-text {
-    margin: var(--space-1) 0 0;
-    font-size: var(--text-sm);
-    line-height: 1.65;
-    color: var(--text-1);
-  }
-
-  /* ---- 无模型警示：不是又一张卡，而是一条带动作的提示 ---- */
-  .ov-warn {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    flex-wrap: wrap;
     padding: var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
-    border-radius: var(--radius-sm);
-    background: var(--warning-soft);
+    border-radius: var(--radius-lg);
+    background: var(--settings-control);
   }
-  .ov-warn-text {
-    margin: 0;
-    flex: 1;
-    min-width: 200px;
-    font-size: var(--text-xs);
-    line-height: 1.7;
-    color: var(--text-1);
+  .ov-label, .micro-label { color: var(--text-2); font-size: var(--text-xs); font-weight: 650; }
+  .ov-value { color: var(--text-1); font-size: var(--text-sm); font-weight: 650; overflow-wrap: anywhere; }
+  .ov-value.is-empty, .ov-note { color: var(--text-2); }
+  .ov-note { font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+  .ov-chain { margin-top: var(--space-3); }
+  .ov-chain-text { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--text-13); overflow-wrap: anywhere; }
+  .ov-warn {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+    gap: var(--space-2); margin-top: var(--space-3); padding: var(--space-3);
+    border-radius: var(--radius-lg); background: var(--settings-selected);
   }
-
-  /* ---- ② 服务商：已添加列表 → 新增区，两段各自有微标签 ---- */
-  .add-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-    margin: var(--space-5) 0 var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
-  }
-  .add-sub { font-size: var(--text-2xs); color: var(--text-3); }
-
-  /* ---- 已添加模型条目 ---- */
-  .entry-list {
-    display: flex;
-    flex-direction: column;
-    margin-bottom: var(--space-3);
-  }
-  .entry-row {
-    padding: var(--space-3) 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .entry-row:last-child { border-bottom: none; }
-  .entry-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    margin-bottom: var(--space-2);
-  }
-  .entry-name {
-    font-size: var(--text-sm);
-    color: var(--text-1);
-    word-break: break-all;
-  }
-  .entry-key {
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    margin-left: var(--space-1);
-  }
-  .entry-controls {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-  }
-  .ctl-sep {
-    width: 1px;
-    height: 16px;
-    background: var(--border);
-  }
-
-  /* ---- 勾选框 ---- */
-  .check-line {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-sm);
-    color: var(--text-2);
-    cursor: pointer;
-    user-select: none;
-  }
-  .check-line input {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-
-  .pull-bar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    margin-bottom: var(--space-3);
-    flex-wrap: wrap;
-  }
-  .pull-provider {
-    width: auto;
-    min-width: 140px;
-    height: 32px;
-    padding: 0 var(--space-2);
-    font-size: var(--text-sm);
-  }
-  .pull-msg {
-    font-size: var(--text-xs);
-    color: var(--text-3);
-  }
-
-  /* ---- 选择服务商：卡片 + 内联展开 ----
-     原来 12 张卡挤在 220px 网格里, 每张内部是「名称 14px + key 12px +
-     描述 12px」三行同权重的小字, 一屏 12 个方块看不出主次, 也不知道
-     点下去是什么。现在:
-       ① 网格放宽到 240px 最小宽, 一屏 3 列, 每张卡有足够宽度放一行描述
-       ② 卡片标题 13px/500, key 走 11px 等宽字, 描述 11px 两行截断 ——
-          名称是主体, key 与描述是附注, 三层重量区分开
-       ③ 卡片左侧留 2px 竖线, 展开时变冷蓝, 与 card-row 的 hover 语言一致
-       ④ 展开区与卡片同宽同边 (border-top:none), 视觉上确实是「卡片就地长出来」*/
+  .ov-warn-text { flex: 1 1 180px; margin: 0; font-size: var(--text-13); line-height: 1.55; }
+  .add-head { margin: var(--space-4) 0 var(--space-2); }
   .preset-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
     gap: var(--space-2);
+    align-items: start;
   }
-  .preset-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-  .preset-item .inline-form {
-    border: 1px solid var(--accent-line);
-    border-top: none;
-    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-    padding: var(--space-3);
-    background: var(--surface-2);
-  }
-  .preset-card {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-3);
+  .preset-item { min-width: 0; }
+  .preset-item:has(.inline-form) { grid-column: 1 / -1; }
+  .preset-item:not(:has(.inline-form)) { align-self: stretch; }
+  .preset-item:not(:has(.inline-form)) > .preset-card { height: 100%; }
+  .preset-card, .pick-row {
+    display: grid;
     width: 100%;
+    min-width: 0;
+    gap: var(--space-2);
     padding: var(--space-3);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--settings-control);
     color: var(--text-1);
-    cursor: pointer;
+    font: inherit;
     text-align: left;
-    transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
-  }
-  .preset-card:hover {
-    border-color: var(--border-strong);
-    border-left-color: var(--accent);
-    background: var(--surface-2);
-  }
-  .preset-card.on {
-    border-color: var(--accent-line);
-    border-left-color: var(--accent);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    background: var(--accent-wash);
-  }
-  .pc-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .pc-label {
-    font-weight: 500;
-    font-size: var(--text-13);
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-1);
-  }
-  .pc-key {
-    flex: none;
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    letter-spacing: 0.02em;
-    color: var(--text-3);
-  }
-  .pc-desc {
-    font-size: var(--text-2xs);
-    color: var(--text-2);
-    line-height: 1.55;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .pc-meta {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: 0;
-    margin-top: var(--optical-2);
-  }
-  .inline-form { margin-bottom: 0; }
-  .inline-form .pull-bar { margin: var(--space-2) 0; }
-  .inline-form .form-actions { margin-top: var(--space-3); }
-
-  /* ---- 已添加提供商列表（现在用 settings-base 的 .card-list/.card-row，
-        旧的 .added-block 包裹层已删除） ---- */
-
-  .form-model-pick {
-    margin-bottom: var(--space-3);
-  }
-  .form-model-pick .micro-label {
-    display: block;
-    margin-bottom: var(--space-2);
-  }
-  .pick-list {
-    max-height: 220px;
-    overflow-y: auto;
-    border-top: 1px solid var(--border);
-  }
-  .pick-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    width: 100%;
-    padding: var(--space-2) var(--space-1);
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: transparent;
-    color: inherit;
     cursor: pointer;
-    text-align: left;
+    overflow-wrap: anywhere;
     transition: background var(--transition);
   }
-  .pick-row:hover { background: var(--surface-2); }
-  .pick-row.on { background: var(--accent-wash); border-left: 2px solid var(--accent); padding-left: var(--optical-6); }
-
-  .adv-details {
-    margin-bottom: var(--space-3);
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-2);
-  }
-  .adv-details summary {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    cursor: pointer;
-    font-size: var(--text-13);
-    font-weight: 500;
-    color: var(--text-2);
-    margin-bottom: 0;
-    padding: var(--space-1) 0;
-    user-select: none;
-    list-style: none;
-  }
-  .adv-details summary::-webkit-details-marker { display: none; }
-  .adv-details summary::before {
-    content: '＋';
-    flex: none;
-    width: 12px;
-    color: var(--text-3);
-    font-size: var(--text-xs);
-  }
-  .adv-details[open] summary::before { content: '－'; }
-  .adv-details[open] summary { margin-bottom: var(--space-3); }
-  .adv-details summary:hover { color: var(--text-1); }
-  .adv-hint { font-size: var(--text-2xs); font-weight: 400; color: var(--text-3); }
-
-  /* ---- ④ 连接测试 ----
-     已保存服务商的密钥不回显，所以测试要求现场粘贴一次；
-     测试结果与它的服务商绑定，切换服务商时由 $effect 清空。 */
-  .diag {
-    display: flex;
-    flex-direction: column;
+  .preset-card { min-height: 88px; align-content: start; }
+  .preset-card:hover, .pick-row:hover { background: var(--field-fill-focus); }
+  .preset-card.on, .pick-row.on { background: var(--settings-selected); box-shadow: inset 0 0 0 1px var(--accent-line); }
+  .skeleton { cursor: default; }
+  .pc-head { display: flex; justify-content: space-between; gap: var(--space-1) var(--space-2); flex-wrap: wrap; }
+  .pc-label { font-size: var(--text-sm); font-weight: 650; }
+  .pc-key, .pc-desc { color: var(--text-2); font-size: var(--text-xs); line-height: 1.45; }
+  .inline-form {
+    display: grid;
     gap: var(--space-3);
+    margin-top: var(--space-2);
+    padding: var(--settings-inset);
+    border-radius: var(--radius-lg);
+    background: var(--surface-2);
   }
-  .diag .field-row { align-items: flex-end; }
-  .diag-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-  }
-  .diag-actions .test-msg { margin: 0; flex: 1; min-width: 180px; }
-
-  .model-pool {
-    display: flex;
-    flex-direction: column;
-    border-top: 1px solid var(--border);
-  }
-  .pool-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .pool-name {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--text-1);
-    word-break: break-all;
-  }
-  .pool-actions { display: flex; gap: var(--space-1); flex: none; }
-  .mini-btn {
-    height: 24px;
-    padding: 0 var(--space-2);
-    font-size: var(--text-xs);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-2);
-    cursor: pointer;
-    transition: background var(--transition), color var(--transition), border-color var(--transition);
-  }
-  .mini-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .mini-btn.on {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-  }
-  .mini-btn:disabled { opacity: 0.5; cursor: default; }
-
-  /* 采样参数: 字段标签小字 */
-  .field-label {
-    font-size: var(--text-xs);
-    color: var(--text-2);
-    font-weight: 500;
-  }
-
-  /* 连接与测试反馈 */
-  .test-msg {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    line-height: var(--leading-snug);
-    word-break: break-all;
-  }
-  .test-msg.ok { color: var(--success); background: var(--success-soft); }
-  .test-msg.fail { color: var(--error); background: var(--error-soft); }
-
-  /* ---- 无可用模型时的引导（现已并入 ① 的 .ov-warn） ---- */
+  .pull-bar, .diag-actions, .entry-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .pull-bar, .diag-actions { margin-top: var(--space-2); }
+  .pull-provider { max-width: 240px; }
+  .pull-msg, .test-msg { min-width: 0; margin: 0; color: var(--text-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .test-msg.ok { color: var(--success); }
+  .test-msg.fail:not(:empty) { color: var(--error); }
+  .form-model-pick { display: grid; gap: var(--space-2); }
+  .pick-list { display: grid; gap: var(--space-1); max-height: 240px; overflow: auto; padding: var(--space-1); }
+  .pick-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .adv-details { padding: var(--space-3); border-radius: var(--radius-lg); background: var(--surface); }
+  .adv-details summary { color: var(--text-1); font-size: var(--text-13); font-weight: 620; cursor: pointer; }
+  .adv-details[open] > :not(summary) { margin-top: var(--space-3); }
+  .adv-hint { display: inline-block; margin-inline-start: var(--space-2); color: var(--text-2); font-size: var(--text-xs); font-weight: 400; }
+  .entry-row, .pool-row { justify-content: space-between; flex-wrap: wrap; }
+  .entry-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); flex: 1 1 180px; min-width: 0; }
+  .entry-name, .pool-name { color: var(--text-1); font-size: var(--text-13); overflow-wrap: anywhere; min-width: 0; }
+  .entry-key { display: block; color: var(--text-2); font-size: var(--text-xs); }
+  .check-line { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-13); color: var(--text-2); }
+  .check-line input { width: 16px; height: 16px; margin: 0; flex: none; }
+  .model-pool { margin-top: var(--space-2); max-height: 320px; overflow: auto; }
 </style>

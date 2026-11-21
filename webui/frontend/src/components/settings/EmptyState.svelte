@@ -21,51 +21,27 @@
 </div>
 
 <style>
-  /* 空状态原来是一个「虚线圆角框 + 居中图标 + 居中文字」的居中方团,
-     放在已经去框化的设置区块里像一块补丁。
-     现在改为左对齐的「竖线锚点 + 图标 + 文案」: 竖线把视线钉在左边,
-     图标缩到 22px 只作为符号, 文案左起 —— 和页面级空状态 (.pg-empty)
-     用同一套语言, 全站空状态终于长得一致。 */
   .empty-state {
     display: flex;
     align-items: flex-start;
     gap: var(--space-3);
-    text-align: left;
-    padding: var(--space-4) 0 var(--space-4) var(--space-4);
-    border-left: 2px solid var(--border-strong);
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    background: var(--field-fill);
   }
-  .empty-state.compact {
-    padding: var(--space-3) 0 var(--space-3) var(--space-3);
-    gap: var(--space-2);
-  }
+  .empty-state.compact { padding: var(--space-3); }
   .empty-icon {
     flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    color: var(--text-3);
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--accent-strong);
   }
-  .empty-copy {
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-3);
-    min-width: 0;
-  }
-  .empty-title {
-    margin: 0;
-    font-size: var(--text-13);
-    font-weight: 600;
-    letter-spacing: var(--tracking-tight);
-    color: var(--text-1);
-  }
-  .empty-desc {
-    margin: 0;
-    max-width: 52ch;
-    font-size: var(--text-xs);
-    color: var(--text-2);
-    line-height: 1.7;
-  }
+  .empty-copy { display: grid; align-self: center; gap: var(--space-1); min-width: 0; }
+  .empty-title { margin: 0; color: var(--text-1); font-size: var(--text-13); font-weight: 650; overflow-wrap: anywhere; }
+  .empty-desc { margin: 0; max-width: 54ch; color: var(--text-2); font-size: var(--text-xs); line-height: 1.55; overflow-wrap: anywhere; }
   .empty-action { margin-top: var(--space-2); }
 </style>

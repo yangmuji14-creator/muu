@@ -101,9 +101,9 @@
   desc="TTS 服务商配置与试听"
   {onback}
 >
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>服务商</h4>
+      <h2>服务商</h2>
       <button class="btn-primary sm" type="button" onclick={() => startEdit(null)}>
         {@html `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.plus}</svg>`}
         新增
@@ -119,7 +119,7 @@
     {:else}
       <div class="card-list">
         {#each providers as v}
-          <div class="card-row">
+          <div class="settings-row">
             <span class="row-icon" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.voice}</svg>`}</span>
             <div class="row-main">
               <span class="row-title">{v.name}{#if v.type}<span class="dim"> · {v.type}</span>{/if}</span>
@@ -142,8 +142,8 @@
   </section>
 
   {#if editing}
-    <section class="card card-pad">
-      <div class="section-head"><h4>{editing.name ? `编辑 ${editing.name}` : '新增服务商'}</h4></div>
+    <section class="settings-group settings-group-pad">
+      <div class="section-head"><h2>{editing.name ? `编辑 ${editing.name}` : '新增服务商'}</h2></div>
       <form class="form" onsubmit={submit}>
         <div class="field-row">
           <label class="field"><span>名称</span><input class="input" type="text" bind:value={form.name} required disabled={!!editing.name} /></label>
@@ -157,7 +157,7 @@
           <label class="field"><span>模型</span><input class="input" type="text" bind:value={form.model} /></label>
           <label class="field"><span>音色</span><input class="input" type="text" bind:value={form.voice} /></label>
         </div>
-        <div class="switch-row"><span class="switch-label">启用</span><Switch checked={form.enabled} onchange={(v) => (form.enabled = v)} label="启用" /></div>
+        <div class="settings-row switch-row"><span class="switch-label">启用</span><Switch checked={form.enabled} onchange={(v) => (form.enabled = v)} label="启用" /></div>
         <div class="form-actions">
           <button class="btn-outline" type="button" onclick={() => (editing = null)}>取消</button>
           <button class="btn-primary" type="submit" disabled={saving}>保存</button>
@@ -166,8 +166,8 @@
     </section>
   {/if}
 
-  <section class="card card-pad">
-    <div class="section-head"><h4>试听（合成）</h4></div>
+  <section class="settings-group settings-group-pad">
+    <div class="section-head"><h2>试听（合成）</h2></div>
     <div class="form">
       <label class="field"><span>文本</span><input class="input" type="text" bind:value={synthText} placeholder="你好，这是语音合成试听。" /></label>
       <div class="form-actions">
@@ -182,8 +182,3 @@
     </div>
   </section>
 </SettingsShell>
-
-<style>
-  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; }
-  .switch-label { font-size: var(--text-sm); color: var(--text-1); }
-</style>

@@ -1,4 +1,5 @@
 <script>
+  import './editor.css';
   // PromptDictEditor.svelte — 友好键值表单 (用于 dict 类高级字段)
   //
   // 只渲染 spec.fields 里声明的输入框, 每个输入框对应一个后端 dict key。
@@ -12,10 +13,10 @@
 
 <div class="dict-editor">
   {#each fields as spec (spec.key)}
-    <label class="dfield">
-      <span class="dfield-label">{spec.label}</span>
+    <label class="persona-field">
+      <span class="persona-label">{spec.label}</span>
       <textarea
-        class="dfield-input {spec.mono ? 'mono' : ''}"
+        class="persona-control {spec.mono ? 'mono' : ''}"
         rows={spec.rows || 2}
         value={value[spec.key] ?? ''}
         placeholder={spec.placeholder || ''}
@@ -27,43 +28,8 @@
 
 <style>
   .dict-editor {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
     gap: var(--space-3);
-    width: 100%;
-  }
-  .dfield {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .dfield-label {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .dfield-input {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--radius-sm);
-    color: var(--input-text);
-    font-size: var(--text-sm);
-    line-height: var(--leading-snug);
-    resize: vertical;
-    font-family: var(--font-sans);
-  }
-  .dfield-input.mono {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-  .dfield-input:focus-visible {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .dfield-input::placeholder {
-    color: var(--input-placeholder);
   }
 </style>

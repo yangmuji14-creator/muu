@@ -68,12 +68,12 @@
 
 <SettingsShell title="朋友圈自动发布" desc="定时自动发布朋友圈" {onback}>
   {#if !loaded}
-    <div class="card card-pad"><EmptyState icon="moments" title="正在加载…" compact /></div>
+    <div class="settings-group settings-group-pad"><EmptyState icon="moments" title="正在加载…" compact /></div>
   {:else}
-    <section class="card card-pad">
-      <div class="section-head"><h4>自动发布配置</h4></div>
+    <section class="settings-group settings-group-pad">
+      <div class="section-head"><h2>自动发布配置</h2></div>
       <form class="form" onsubmit={submit}>
-        <div class="switch-row"><span class="switch-label">启用自动发布</span><Switch checked={form.enabled} onchange={(v) => (form.enabled = v)} label="启用自动发布" /></div>
+        <div class="settings-row switch-row"><span class="switch-label">启用自动发布</span><Switch checked={form.enabled} onchange={(v) => (form.enabled = v)} label="启用自动发布" /></div>
         <div class="field-row">
           <label class="field"><span>间隔（分钟）</span><input class="input" type="number" min="1" bind:value={form.interval_minutes} /></label>
           <label class="field"><span>Persona</span>
@@ -98,8 +98,8 @@
       </form>
     </section>
 
-    <section class="card card-pad">
-      <div class="section-head"><h4>手动发布</h4></div>
+    <section class="settings-group settings-group-pad">
+      <div class="section-head"><h2>手动发布</h2></div>
       <p class="hint" style="margin:0 0 var(--space-3)">立即执行一次自动发布逻辑。</p>
       <button class="btn-primary" type="button" onclick={manualPublish} disabled={publishing}>
         {@html `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.play}</svg>`}
@@ -108,8 +108,3 @@
     </section>
   {/if}
 </SettingsShell>
-
-<style>
-  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; }
-  .switch-label { font-size: var(--text-sm); color: var(--text-1); }
-</style>

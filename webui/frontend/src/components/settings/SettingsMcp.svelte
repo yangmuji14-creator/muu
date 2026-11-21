@@ -115,9 +115,9 @@
 </script>
 
 <SettingsShell title="MCP 扩展" desc="管理 MCP 服务器与外部能力" {onback}>
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>MCP 服务器</h4>
+      <h2>MCP 服务器</h2>
       <button class="btn-primary sm" type="button" onclick={() => startEdit(null)}>
         {@html `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.plus}</svg>`}
         新增
@@ -133,7 +133,7 @@
     {:else}
       <div class="card-list">
         {#each servers as s}
-          <div class="card-row">
+          <div class="settings-row">
             <span class="row-icon" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.plug}</svg>`}</span>
             <div class="row-main">
               <span class="row-title">{s.name}</span>
@@ -161,8 +161,8 @@
   </section>
 
   {#if editing}
-    <section class="card card-pad">
-      <div class="section-head"><h4>{editing.name ? `编辑 ${editing.name}` : '新增 MCP 服务器'}</h4></div>
+    <section class="settings-group settings-group-pad">
+      <div class="section-head"><h2>{editing.name ? `编辑 ${editing.name}` : '新增 MCP 服务器'}</h2></div>
       <form class="form" onsubmit={submit}>
         <label class="field"><span>名称</span><input class="input" type="text" bind:value={form.name} placeholder="如 filesystem" required disabled={!!editing.name} /></label>
         <label class="field"><span>命令</span><input class="input" type="text" bind:value={form.command} placeholder="如 npx" required /></label>
@@ -176,9 +176,9 @@
   {/if}
 
   {#if toolsFor}
-    <section class="card card-pad">
+    <section class="settings-group settings-group-pad">
       <div class="section-head">
-        <h4>{toolsFor} · 工具</h4>
+        <h2>{toolsFor} · 工具</h2>
         <button class="icon-btn" type="button" onclick={() => (toolsFor = null)}>
           {@html `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.close}</svg>`}
         </button>
@@ -203,13 +203,13 @@
 
 <style>
   .tools-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .tool-chip { display: flex; flex-direction: column; gap: var(--optical-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+  .tool-chip { display: flex; flex-direction: column; gap: var(--optical-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--settings-control); }
   .tool-name { font-weight: 600; font-size: var(--text-xs); color: var(--text-1); }
-  .tool-desc { font-size: var(--text-xs); color: var(--text-3); max-width: 220px; }
+  .tool-desc { overflow-wrap: anywhere; font-size: var(--text-xs); color: var(--text-3); max-width: 220px; }
 
   /* 窄屏: 操作区折到下一行并收紧间距, 避免按钮挤出卡片被裁切 */
   @media (max-width: 560px) {
-    .card-row { flex-wrap: wrap; align-items: flex-start; }
+    .settings-row { flex-wrap: wrap; align-items: flex-start; }
     .row-actions.wrap { flex: 1 1 100%; justify-content: flex-start; gap: var(--optical-6); }
     .row-actions.wrap .btn-outline.sm { padding: 0 var(--space-2); }
   }

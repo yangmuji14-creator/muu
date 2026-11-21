@@ -15,6 +15,43 @@ const STORAGE_KEY = 'muu:background';
 const MAX_SIZE = 3 * 1024 * 1024; // 3MB -> base64 后约 4MB，留出配额余量
 const SAVE_DEBOUNCE_MS = 300;
 
+/**
+ * data URL -> Blob URL。
+ *
+ * 为什么不能把 data URL 直接写进 CSS 变量：Chrome 对单条 CSS 声明的长度
+ * 有上限（实测 ~1.6MB，2MB 起 setProperty 静默失败——不抛错、也读不回来）。
+ * 一张 2.8MB 的壁纸 base64 后是 3.7MB，写进 --ambient-image 会被浏览器
+ * 整条丢掉，界面看起来就是「上传成功但背景没变」。
+ *
+ * Blob URL 只有几十个字符，图片本体留在内存里；刷新后由 localStorage
+ * 里的 data URL 重新生成（Blob URL 本身不跨文档存活）。
+ */
+function dataUrlToObjectUrl(dataUrl) {
+  try {
+    // 必须是 data: URL。旧/损坏的 localStorage 里可能存着 http URL（含逗号），
+    // 直接 slice(5, comma) 会把 "//host/a" 当成 header，编出一个坏 Blob URL，
+    // 反而盖掉本来能用的 url("...") 兜底。
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+    const comma = dataUrl.indexOf(',');
+    if (comma === -1) return null;
+    const header = dataUrl.slice(5, comma); // 去掉 "data:"
+    const isBase64 = /;base64/i.test(header);
+    const mime = header.split(';')[0] || 'application/octet-stream';
+    const payload = dataUrl.slice(comma + 1);
+    let bytes;
+    if (isBase64) {
+      const binary = atob(payload);
+      bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(payload));
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch {
+    return null;
+  }
+}
+
 export const PRESETS = [
   {
     name: '暖阳',
@@ -81,10 +118,35 @@ class BackgroundManager {
   constructor() {
     this.config = defaultConfig();
     this._saveTimer = null;
+    // 当前图片对应的 Blob URL 与它的来源 data URL（用于判断是否需要重建）
+    this._objectUrl = null;
+    this._objectSource = '';
     this.loadFromStorage();
     this.applyImage();
     this.applyScrim();
     this.watchTheme();
+  }
+
+  /** 释放旧 Blob URL：换图/换预设/重置时都要调用，否则内存会一直涨。 */
+  releaseObjectUrl() {
+    if (this._objectUrl) {
+      URL.revokeObjectURL(this._objectUrl);
+      this._objectUrl = null;
+    }
+    this._objectSource = '';
+  }
+
+  /** 当前自定义图片在 CSS 里的 URL。优先 Blob URL，失败才退回短 data URL。 */
+  imageCssUrl() {
+    const value = this.config.value;
+    if (this._objectSource !== value || !this._objectUrl) {
+      this.releaseObjectUrl();
+      this._objectUrl = dataUrlToObjectUrl(value);
+      this._objectSource = this._objectUrl ? value : '';
+    }
+    if (this._objectUrl) return `url("${this._objectUrl}")`;
+    // 极小图片理论上走不到这里；真走不到说明 data URL 本身坏了。
+    return value.length < 1_500_000 ? `url("${value}")` : 'none';
   }
 
   /* ────────── 持久化 ────────── */
@@ -151,12 +213,38 @@ class BackgroundManager {
     const c = this.config;
     let image = 'none';
     if (c.type === 'image' && c.value) {
-      image = `url("${c.value}")`;
+      image = this.imageCssUrl();
     } else if (c.type === 'preset') {
+      this.releaseObjectUrl();
       const preset = PRESETS[c.preset] || PRESETS[0];
       image = preset[currentTheme()] || preset.light;
+    } else {
+      this.releaseObjectUrl();
     }
     document.documentElement.style.setProperty('--ambient-image', image);
+    this.applyTint();
+  }
+
+  /**
+   * 主题里的 `--ambient-tint` 是给背景压色用的（浅色 58% 画布色 / 深色 70%）。
+   *
+   * 早期版本给自定义照片把 tint 直接设成 transparent，让照片完全露出来。
+   * 但顶栏/侧栏/底栏是 48%~55% 的薄玻璃：照片如果是纯黑或纯白，玻璃后
+   * 的合成色会被拉到极端，叠在上面的次级文字只有 1.5~1.8:1 —— 基本读不出。
+   * 所以照片保留一层**较薄但非零**的 tint（50%），既让壁纸仍清晰可见，
+   * 又把最坏底拉回 AA。这个下限由 tests/test_design_tokens.py 的
+   * TestImageTintContract 守住：调低它，测试会红。
+   */
+  applyTint() {
+    const root = document.documentElement;
+    if (this.config.type === 'image' && this.config.value) {
+      // 50% 画布色压在图上层：实测浅色/深色两种主题、黑白两种极端照片下，
+      // 顶栏次级文字都能回到 3.0:1 以上（纯黑照片浅色主题 3.98、纯白照片
+      // 深色主题 3.40）。低于 0.43 时深色主题会跌破 3.0。
+      root.style.setProperty('--ambient-tint', 'color-mix(in srgb, var(--bg) 50%, transparent)');
+    } else {
+      root.style.removeProperty('--ambient-tint');
+    }
   }
 
   applyScrim() {

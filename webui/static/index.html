@@ -1,13 +1,76 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="light" data-accent="amber">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#F6F5F2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0D0E12" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="慕 · 本地优先的 AI 伴侣" />
     <title>慕</title>
-    <script type="module" crossorigin src="/static/assets/index-DJISe-Ae.js"></script>
-    <link rel="stylesheet" crossorigin href="/static/assets/index-DJ8J_YsZ.css">
+
+    <!-- 首屏底色：样式表是 JS 模块，加载前会有一帧纯白。
+         深色模式下的白闪比任何视觉细节都刺眼，所以在这里先垫上画布色。 -->
+    <style>
+      html {
+        background: #f6f5f2;
+      }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme='light']) {
+          background: #0d0e12;
+        }
+      }
+      html[data-theme='dark'] {
+        background: #0d0e12;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+    </style>
+
+    <!-- 主题/强调色在首帧前落到 <html>：
+         等 main.js 执行再设置会先闪一帧默认暖白，深色用户每次刷新都看得到。 -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('cc-theme');
+          // 'system' 是设置页提供的第三个选项：必须在这里解析成实际主题，
+          // 否则刷新后 main.js 只认 light/dark，会悄悄退回浅色。
+          // 没选过时同样跟随系统（与 main.js / 设置页默认值一致）。
+          if (theme !== 'dark' && theme !== 'light') {
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+          }
+          document.documentElement.setAttribute(
+            'data-theme',
+            theme === 'dark' || theme === 'light' ? theme : 'light',
+          );
+          var accent = localStorage.getItem('cc-accent');
+          var allowed = ['amber', 'blue', 'teal', 'rose', 'violet', 'slate'];
+          document.documentElement.setAttribute(
+            'data-accent',
+            allowed.indexOf(accent) >= 0 ? accent : 'amber',
+          );
+        } catch (err) {
+          /* 隐私模式下 localStorage 不可用，保持默认值即可 */
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/static/assets/index-0UbU05iH.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/assets/index-D9Y9IXGM.css">
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"></div>
   </body>
 </html>

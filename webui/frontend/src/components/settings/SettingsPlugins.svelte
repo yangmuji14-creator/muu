@@ -63,20 +63,20 @@
 
 <SettingsShell title="工具与能力" desc="内置工具 + MCP 工具（只读）" {onback}>
   {#if !loaded}
-    <div class="card card-pad"><EmptyState icon="puzzle" title="正在加载…" compact /></div>
+    <div class="settings-group settings-group-pad"><EmptyState icon="puzzle" title="正在加载…" compact /></div>
   {:else if !plugins?.plugins?.length}
-    <div class="card card-pad">
+    <div class="settings-group settings-group-pad">
       <EmptyState icon="puzzle" title="暂无工具" desc="当前没有内置工具或已连接的 MCP 工具" />
     </div>
   {:else}
-    <section class="card card-pad">
+    <section class="settings-group settings-group-pad">
       <div class="section-head">
-        <h4>工具列表</h4>
+        <h2>工具列表</h2>
         <span class="head-sub">{plugins.builtin_count ?? 0} 内置 · {plugins.mcp_count ?? 0} MCP</span>
       </div>
       <div class="card-list">
         {#each plugins.plugins as p}
-          <div class="card-row">
+          <div class="settings-row">
             <span class="row-icon" aria-hidden="true">{@html `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.puzzle}</svg>`}</span>
             <div class="row-main">
               <span class="row-title">{p.name}</span>
@@ -87,9 +87,9 @@
         {/each}
       </div>
       {#if mcpServers.length}
-        <ul class="mcp-status">
+        <ul class="card-list mcp-status">
           {#each mcpServers as s (s.name)}
-            <li class="mcp-row">
+            <li class="settings-row mcp-row">
               <span class="mcp-dot" class:on={s.connected} aria-hidden="true"></span>
               <span class="mcp-name">{s.name}</span>
               <span class="mcp-state">{mcpLabel(s.state)}</span>
@@ -103,34 +103,16 @@
 </SettingsShell>
 
 <style>
-  /* MCP 状态行: 原来是一句 "[object Object]" 的 hint。
-     现在按「状态灯 + 名字 + 状态 + 工具数」四列排, 与系统监控页的诊断行
-     同一种写法, 这一屏终于能读出「哪几个服务端在线、各带多少工具」。 */
   .mcp-status {
     margin: var(--space-3) 0 0;
-    padding: var(--space-3) 0 0;
+    padding: var(--space-2);
     list-style: none;
-    border-top: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: var(--optical-2);
+    border-radius: var(--radius-lg);
+    background: var(--settings-control);
   }
-  .mcp-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--optical-3) 0;
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-  }
-  .mcp-dot {
-    flex: none;
-    width: 5px;
-    height: 5px;
-    background: var(--text-3);
-  }
+  .mcp-row { font-size: var(--text-xs); flex-wrap: wrap; }
+  .mcp-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
   .mcp-dot.on { background: var(--success); }
-  .mcp-name { flex: 1; min-width: 0; color: var(--text-1); font-size: var(--text-xs); letter-spacing: 0; }
-  .mcp-state { flex: none; color: var(--text-3); }
-  .mcp-tools { flex: none; min-width: 52px; text-align: right; color: var(--text-3); }
+  .mcp-name { flex: 1 1 100px; min-width: 0; overflow-wrap: anywhere; }
+  .mcp-state, .mcp-tools { color: var(--text-2); }
 </style>

@@ -1,9 +1,5 @@
 <script>
-  // Avatar.svelte — 方角头像 (有图显示图, 无图用姓名哈希的冷蓝淡调色块)
-  //
-  // 注意: 色块只用 accent(冷蓝) 的不同淡化程度, 不再映射到 success/warning/error
-  // 这类语义状态色 —— 那会让某个名字恰好撞上"错误红", 语义错且视觉跳。
-  let { name = '', src = '', size = 44 } = $props();
+  let { name = '', src = '', size = 44, online = false } = $props();
 
   const HUES = ['h0', 'h1', 'h2', 'h3', 'h4'];
 
@@ -17,47 +13,67 @@
   let initial = $derived((name || '?').trim().charAt(0).toUpperCase());
 </script>
 
-<span class="avatar" style="--asize:{size}px" aria-hidden={src ? undefined : 'true'}>
+<span class="avatar" style="--asize:{size}px">
   {#if src}
     <img src={src} alt="" />
   {:else}
-    <span class="avatar-fallback {hue}">{initial}</span>
+    <span class="avatar-fallback {hue}" aria-hidden="true">{initial}</span>
   {/if}
+  {#if online}<span class="avatar-status" role="img" aria-label="在线"></span>{/if}
 </span>
 
 <style>
   .avatar {
+    position: relative;
+    display: inline-grid;
     flex: none;
     width: var(--asize, 44px);
     height: var(--asize, 44px);
-    border-radius: var(--radius-xs);
-    overflow: hidden;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    border-radius: var(--radius-avatar);
     background: var(--surface-2);
-    border: 1px solid var(--avatar-border);
+  }
+
+  .avatar::after {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
     box-shadow: var(--avatar-shadow);
+    content: '';
+    pointer-events: none;
   }
-  .avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
+
+  .avatar img,
   .avatar-fallback {
     width: 100%;
     height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-1);
-    font-weight: 500;
-    font-size: calc(var(--asize, 44px) * 0.42);
-    user-select: none;
-    letter-spacing: 0.02em;
+    min-width: 0;
+    border-radius: inherit;
   }
-  /* 冷蓝淡调: 只调 accent 的混入比例, 深浅主题自动跟随 */
+
+  .avatar img { display: block; object-fit: cover; }
+
+  .avatar-fallback {
+    display: grid;
+    place-items: center;
+    color: var(--text-1);
+    font-size: calc(var(--asize, 44px) * 0.42);
+    font-weight: 650;
+    user-select: none;
+  }
+
+  .avatar-status {
+    position: absolute;
+    inset-inline-end: 0;
+    inset-block-end: 0;
+    z-index: 2;
+    width: clamp(7px, 24%, 14px);
+    aspect-ratio: 1;
+    border-radius: var(--radius-pill);
+    background: var(--success);
+    box-shadow: 0 0 0 2px var(--avatar-ring, var(--surface));
+  }
+
   .h0 { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); }
   .h1 { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); }
   .h2 { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); }

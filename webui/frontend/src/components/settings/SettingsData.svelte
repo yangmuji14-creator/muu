@@ -77,9 +77,9 @@
 </script>
 
 <SettingsShell title="数据与关于" desc="诊断报告、备份与恢复、关于信息" {onback}>
-  <section class="card card-pad">
+  <section class="settings-group settings-group-pad">
     <div class="section-head">
-      <h4>诊断中心</h4>
+      <h2>诊断中心</h2>
       <div class="row-actions">
         <button class="btn-outline sm" type="button" onclick={runDiag} disabled={diagLoading}>{diagLoading ? '诊断中…' : '运行诊断'}</button>
         <button class="btn-outline sm" type="button" onclick={exportDiag}>
@@ -104,8 +104,8 @@
     {/if}
   </section>
 
-  <section class="card card-pad">
-    <div class="section-head"><h4>备份与恢复</h4></div>
+  <section class="settings-group settings-group-pad">
+    <div class="section-head"><h2>备份与恢复</h2></div>
     <div class="backup-actions">
       <button class="btn-primary" type="button" onclick={backup}>
         {@html `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.download}</svg>`}
@@ -114,24 +114,24 @@
       <label class="btn-outline file-btn">
         {@html `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I.upload}</svg>`}
         选择备份文件
-        <input type="file" accept=".zip,application/zip" hidden onchange={restore} />
+        <input type="file" accept=".zip,application/zip" aria-label="选择备份文件" onchange={restore} />
       </label>
       {#if restoreFile}<span class="dim">{restoreFile}</span>{/if}
     </div>
     <p class="hint">恢复将覆盖当前数据，请谨慎操作。</p>
   </section>
 
-  <section class="card card-pad">
-    <div class="section-head"><h4>关于</h4></div>
+  <section class="settings-group settings-group-pad">
+    <div class="section-head"><h2>关于</h2></div>
     {#if !about}
       <p class="hint">正在加载…</p>
     {:else}
       {#if about.tagline}<p class="about-tagline">{about.tagline}</p>{/if}
-      <div class="about-grid">
-        {#if about.name}<div class="about-item"><span class="about-k">名称</span><span class="about-v">{about.name}</span></div>{/if}
-        {#if about.version}<div class="about-item"><span class="about-k">版本</span><span class="about-v">{about.version}</span></div>{/if}
-        {#if about.author}<div class="about-item"><span class="about-k">创作者</span><span class="about-v">{about.author}</span></div>{/if}
-        {#if about.license}<div class="about-item"><span class="about-k">许可证</span><span class="about-v">{about.license}</span></div>{/if}
+      <div class="card-list about-grid">
+        {#if about.name}<div class="settings-row about-item"><span class="about-k">名称</span><span class="about-v">{about.name}</span></div>{/if}
+        {#if about.version}<div class="settings-row about-item"><span class="about-k">版本</span><span class="about-v">{about.version}</span></div>{/if}
+        {#if about.author}<div class="settings-row about-item"><span class="about-k">创作者</span><span class="about-v">{about.author}</span></div>{/if}
+        {#if about.license}<div class="settings-row about-item"><span class="about-k">许可证</span><span class="about-v">{about.license}</span></div>{/if}
       </div>
       {#if about.extra}
         <pre class="payload compact">{JSON.stringify(about.extra, null, 2)}</pre>
@@ -149,12 +149,12 @@
 
   .backup-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   .file-btn { position: relative; cursor: pointer; }
+  .file-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
   .about-tagline { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-2); font-style: italic; line-height: 1.7; }
-  .about-grid { display: flex; flex-direction: column; gap: var(--space-2); }
-  .about-item { display: flex; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
-  .about-item:last-child { border-bottom: none; }
+
+  .about-item { justify-content: space-between; }
   .about-k { flex: none; width: 72px; font-size: var(--text-sm); color: var(--text-3); }
   .about-v { font-size: var(--text-sm); color: var(--text-1); word-break: break-all; }
 </style>

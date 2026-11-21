@@ -20,7 +20,10 @@ export default defineConfig({
     proxy: {
       // 所有后端路径代理到本机 aiohttp 服务（python main.py web）
       '/api': { target: BACKEND, changeOrigin: true },
-      '/static': { target: BACKEND, changeOrigin: true },
+      // 不要把 '/static' 代理走：dev 模式下 base 就是 '/static/'，
+      // 代理会抢在 Vite 自己前面把请求转给后端，而后端对目录返回 403
+      // （ShowIndex 关闭），于是 `npm run dev` 打开就是 403。构建产物
+      // 由后端直接服务，开发期不需要这条代理。
       '/avatars': { target: BACKEND, changeOrigin: true },
       '/stickers': { target: BACKEND, changeOrigin: true },
     },

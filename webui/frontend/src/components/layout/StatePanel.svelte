@@ -99,6 +99,14 @@
   });
   let diary = $derived(data?.diary ?? null);
 
+  function progress(value, min, max) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : min;
+  }
+
+  let moodValue = $derived(progress(mood?.valence, -1, 1));
+  let affectionValue = $derived(progress(affection?.level, 0, 100));
+
   let hasAny = $derived(
     !!(mood || affection || memories.length || loops.length || monologue || diary),
   );
@@ -116,32 +124,37 @@
     </div>
   {:else}
     {#if mood || affection}
-      <div class="sp-section">
-        <div class="micro-label">此刻</div>
-        {#if mood}
+      {#if mood}
+        <section class="sp-section">
           <div class="sp-row">
-            <span class="sp-key">心情</span>
-            <span class="sp-track"><span class="sp-fill" style="width:{(mood.valence + 1) / 2 * 100}%"></span></span>
-            <span class="sp-val">{mood.label}</span>
+            <h3>此刻心情</h3>
+            {#if mood.label}<span class="sp-pill"><span class="sp-dot" aria-hidden="true"></span>{mood.label}</span>{/if}
           </div>
-        {/if}
-        {#if affection}
+          <div class="sp-track" role="meter" aria-label="心情" aria-valuemin="-1" aria-valuemax="1" aria-valuenow={moodValue} aria-valuetext={mood.label || undefined}>
+            <span class="sp-fill" style:width={(moodValue + 1) * 50 + '%'}></span>
+          </div>
+        </section>
+      {/if}
+      {#if affection}
+        <section class="sp-section">
           <div class="sp-row">
-            <span class="sp-key">亲密</span>
-            <span class="sp-track"><span class="sp-fill" style="width:{affection.level}%"></span></span>
-            <span class="sp-val mono">{Math.round(affection.level)}</span>
+            <h3>亲密度</h3>
+            <span class="sp-val">{Math.round(affectionValue)}</span>
           </div>
-          <div class="sp-note">{affection.stage}</div>
-        {/if}
-      </div>
+          <div class="sp-track" role="meter" aria-label="亲密度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={affectionValue}>
+            <span class="sp-fill" style:width={affectionValue + '%'}></span>
+          </div>
+          {#if affection.stage}<div class="sp-note">{affection.stage}</div>{/if}
+        </section>
+      {/if}
     {/if}
 
     {#if monologue}
       <div class="sp-section">
-        <div class="micro-label">心里在想</div>
+        <h3>心里在想</h3>
         <p class="sp-quote" class:is-clamped={monologueLong && !monologueExpanded}>{monologue}</p>
         {#if monologueLong}
-          <button class="sp-more" type="button" onclick={() => (monologueExpanded = !monologueExpanded)}>
+          <button class="sp-more" type="button" aria-expanded={monologueExpanded} onclick={() => (monologueExpanded = !monologueExpanded)}>
             {monologueExpanded ? '收起' : '展开'}
           </button>
         {/if}
@@ -150,7 +163,7 @@
 
     {#if memories.length}
       <div class="sp-section">
-        <div class="micro-label">记得的事</div>
+        <h3>记得的事</h3>
         <ul class="sp-list">
           {#each memories as m}
             <li title={m.category}>{m.content}</li>
@@ -161,7 +174,7 @@
 
     {#if loops.length}
       <div class="sp-section">
-        <div class="micro-label">待跟进</div>
+        <h3>待跟进</h3>
         <ul class="sp-list">
           {#each loops as l}
             <li class="sp-loop">
@@ -173,8 +186,8 @@
     {/if}
 
     {#if diary?.summary}
-      <div class="sp-section sp-last">
-        <div class="micro-label">最近</div>
+      <div class="sp-section">
+        <h3>最近</h3>
         <p class="sp-diary">{diary.summary}</p>
       </div>
     {/if}
@@ -183,178 +196,176 @@
 
 <style>
   .state-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
     height: 100%;
+    min-height: 0;
+    padding: var(--space-3);
     overflow-y: auto;
-    /* 不再自带底色: 外层 .panel-col 已经是 glass-1, 这里再铺一层 --bg
-       会把玻璃彻底盖住, 让侧栏又变回不透明。 */
-    background: transparent;
+    overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
   }
-  .state-panel::-webkit-scrollbar { width: 8px; }
-  .state-panel::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border: 2px solid transparent;
-    background-clip: padding-box;
-    border-radius: var(--radius-full);
+
+  .state-panel.compact {
+    height: auto;
+    overflow: visible;
+    padding-top: 0;
   }
 
-  .sp-section {
-    padding: var(--space-4) var(--space-4) var(--space-5);
-    border-bottom: 1px solid var(--border);
+  .sp-section,
+  .sp-empty {
+    flex: none;
+    min-width: 0;
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
   }
-  .sp-section.sp-last { border-bottom: none; }
-  .sp-section .micro-label { margin-bottom: var(--space-3); }
 
-  /* 两条进度行: 3px 细条改成 4px 圆头, 填充色从炭黑改冷蓝。
-     炭黑填充在暖灰轨道上读数很费解 (哪头是“满”看不出来),
-     冷蓝 + 圆头 + 右侧等宽读数, 一眼能读出比例。 */
+  .sp-section h3 {
+    margin: 0 0 var(--space-2);
+    color: var(--text-1);
+    font-size: var(--text-13);
+    font-weight: 650;
+    line-height: var(--leading-snug);
+  }
+
   .sp-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
-    margin-bottom: var(--optical-10);
+    margin-bottom: var(--space-2);
   }
-  .sp-key {
+
+  .sp-row h3 { margin: 0; }
+
+  .sp-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--optical-5);
+    max-width: 65%;
+    padding: 3px var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    overflow-wrap: anywhere;
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug);
+  }
+
+  .sp-dot {
     flex: none;
-    width: 30px;
-    font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    color: var(--text-3);
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: currentColor;
   }
+
+  .sp-val {
+    color: var(--accent);
+    font-size: var(--text-lg);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
   .sp-track {
-    flex: 1;
-    height: 4px;
-    background: var(--surface-3);
+    height: 5px;
     overflow: hidden;
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-pill);
+    background: var(--progress-track);
   }
+
   .sp-fill {
     display: block;
     height: 100%;
-    background: var(--accent);
-    border-radius: var(--radius-full);
-    transition: width var(--transition-slow);
-  }
-  .sp-val {
-    flex: none;
-    min-width: 30px;
-    text-align: right;
-    font-size: var(--text-2xs);
-    color: var(--text-2);
-    font-variant-numeric: tabular-nums;
-  }
-  .sp-note {
-    font-size: var(--text-2xs);
-    color: var(--text-3);
-    padding-left: 38px;
-    margin-top: -4px;
+    border-radius: inherit;
+    background: var(--accent-gradient);
+    transition: width var(--transition-spring);
   }
 
-  /* 内心独白: 这一栏原本是「28px 灰标签 + 14px 灰字」,
-     整块面板读起来没有一处是「内容」。给它一道左竖线 + 15px/1.75,
-     成为这一栏第一个真正可读的段落。 */
-  .sp-quote {
-    margin: 0;
-    padding-left: var(--space-3);
-    border-left: 2px solid var(--accent-line);
-    font-size: var(--text-15);
-    line-height: 1.72;
-    letter-spacing: 0.005em;
-    color: var(--text-1);
+  .sp-note,
+  .sp-date,
+  .sp-hint {
+    color: var(--text-2);
+    font-size: var(--text-xs);
   }
-  .sp-quote.is-clamped {
+
+  .sp-note { margin-top: var(--space-2); }
+
+  .sp-quote,
+  .sp-diary {
+    margin: 0;
+    color: var(--text-2);
+    font-size: var(--text-13);
+    line-height: var(--leading-normal);
+    overflow-wrap: anywhere;
+  }
+
+  .sp-quote.is-clamped,
+  .sp-diary {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 4;
-    line-clamp: 4;
     overflow: hidden;
   }
+
+  .sp-quote.is-clamped { -webkit-line-clamp: 4; line-clamp: 4; }
+  .sp-diary { -webkit-line-clamp: 6; line-clamp: 6; }
+
   .sp-more {
-    display: inline-block;
-    margin: var(--space-1) 0 0 var(--space-3);
-    padding: 0;
-    border: none;
-    background: none;
-    font-size: var(--text-xs);
+    min-height: 32px;
+    margin-top: var(--space-2);
+    padding-inline: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
     color: var(--accent);
+    font-size: var(--text-xs);
     cursor: pointer;
   }
-  .sp-more:hover { text-decoration: underline; }
+
+  .sp-more:hover { background: var(--accent-glow); }
 
   .sp-list {
+    display: grid;
+    gap: var(--space-2);
     margin: 0;
     padding: 0;
     list-style: none;
   }
-  /* 记忆条目: 原来是 nowrap + ellipsis, 242px 宽的栏里几乎每条都被裁成
-     「他说他会一直陪着我，我记住了…」—— 六条记忆五条以省略号收尾,
-     一栏全是断句, 读的人根本得不到信息。放开到两行 clamp:
-     一行放得下的自然还是一行, 长的那条多给一行就够说完整。 */
+
   .sp-list li {
     position: relative;
-    padding-left: 12px;
-    margin-bottom: var(--optical-7);
-    font-size: var(--text-13);
-    line-height: 1.62;
-    color: var(--text-2);
     display: -webkit-box;
+    padding-left: var(--space-3);
+    overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
-    overflow: hidden;
-    word-break: break-word;
-  }
-  .sp-list li::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 9px;
-    width: 5px;
-    height: 1px;
-    background: var(--border-strong);
-  }
-  /* 待跟进: 标题可截断, 日期完整保留（不随长标题被裁掉） */
-  .sp-list li.sp-loop {
-    display: flex;
-    align-items: baseline;
-    gap: var(--optical-6);
-    overflow: visible;
-    white-space: normal;
-  }
-  .sp-loop-title {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .sp-date {
-    flex: none;
-    font-size: var(--text-2xs);
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-
-  .sp-diary {
-    margin: 0;
-    font-size: var(--text-13);
-    line-height: 1.74;
     color: var(--text-2);
-    display: -webkit-box;
-    -webkit-line-clamp: 6;
-    line-clamp: 6;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: var(--text-13);
+    overflow-wrap: anywhere;
   }
 
-  .sp-empty {
-    padding: var(--space-6) var(--space-4);
-    font-size: var(--text-13);
-    color: var(--text-3);
-    line-height: 1.72;
+  .sp-list li::before {
+    position: absolute;
+    top: 0.65em;
+    left: 0;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    content: '';
   }
-  .sp-empty p { margin: 0 0 var(--optical-5); }
-  .sp-hint { font-size: var(--text-xs); color: var(--text-3); }
+
+  .sp-list li.sp-loop { display: flex; align-items: baseline; gap: var(--space-2); }
+  .sp-loop-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sp-date { flex: none; white-space: nowrap; }
+
+  .sp-empty { color: var(--text-2); font-size: var(--text-13); }
+  .sp-empty p { margin: 0; }
+  .sp-empty .sp-hint { margin-top: var(--space-1); }
 </style>

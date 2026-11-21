@@ -74,7 +74,7 @@
 </script>
 
 <SettingsShell title="系统监控 / 日志" desc="运行状态、诊断检查与运维指标" {onback}>
-  <div class="monitor-toolbar">
+  <div class="settings-group settings-group-pad monitor-toolbar">
     <div class="switch-row"><span class="switch-label">自动刷新</span><Switch checked={autoRefresh} onchange={(v) => { autoRefresh = v; if (v) refreshMonitor(); }} label="自动刷新" /></div>
     <div class="toolbar-right">
       <span class="dim">{#if monLastRefresh}上次刷新 {monLastRefresh}{/if}{#if monLoading}{#if monLastRefresh} · {/if}刷新中…{/if}</span>
@@ -86,18 +86,18 @@
   </div>
 
   {#if monitorError}
-    <div class="card card-pad mon-error">
+    <div class="settings-group settings-group-pad mon-error">
       <span class="badge error">不可达</span>
       <span class="mon-error-text">{monitorError}</span>
     </div>
   {/if}
 
   {#if !health && !diag && !monitorError}
-    <div class="card card-pad"><EmptyState icon="monitor" title="正在加载监控数据…" compact /></div>
+    <div class="settings-group settings-group-pad"><EmptyState icon="monitor" title="正在加载监控数据…" compact /></div>
   {:else}
     {#if health}
-      <section class="card card-pad">
-        <div class="section-head"><h4>健康概览</h4></div>
+      <section class="settings-group settings-group-pad">
+        <div class="section-head"><h2>健康概览</h2></div>
         <div class="health-grid">
           <div class="health-cell">
             <span class="health-k">状态</span>
@@ -120,9 +120,9 @@
     {/if}
 
     {#if diag}
-      <section class="card card-pad">
+      <section class="settings-group settings-group-pad">
         <div class="section-head">
-          <h4>诊断检查</h4>
+          <h2>诊断检查</h2>
           <div class="row-actions wrap">
             <span class="badge {diag.overall === 'ok' ? 'ok' : diag.overall === 'warn' ? 'warn' : 'error'}">整体 {diag.overall ?? '—'}</span>
             {#if diag.summary}
@@ -157,11 +157,11 @@
     {/if}
 
     {#if health?.runtime?.operations && opsList(health.runtime.operations).length}
-      <section class="card card-pad">
-        <div class="section-head"><h4>操作计数</h4></div>
-        <div class="ops-list">
+      <section class="settings-group settings-group-pad">
+        <div class="section-head"><h2>操作计数</h2></div>
+        <div class="card-list ops-list">
           {#each opsList(health.runtime.operations) as [name, val]}
-            <div class="ops-row">
+            <div class="settings-row ops-row">
               <span class="ops-name">{name}</span>
               <span class="ops-val">{val}</span>
             </div>
@@ -174,20 +174,17 @@
 
 <style>
   .monitor-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
-  .monitor-toolbar .switch-row { padding: 0; }
-  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .switch-label { font-size: var(--text-sm); color: var(--text-1); }
   .toolbar-right { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   .mon-error { display: flex; align-items: center; gap: var(--space-3); border-color: var(--error); background: color-mix(in srgb, var(--error) 8%, var(--surface)); }
   .mon-error-text { font-size: var(--text-sm); color: var(--text-1); word-break: break-word; }
 
-  .health-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); }
-  .health-cell { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+  .health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+  .health-cell { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3); border-radius: var(--radius-lg); background: var(--settings-control); }
   .health-k { font-size: var(--text-xs); color: var(--text-3); }
   .health-v { font-size: var(--text-lg); font-weight: 700; color: var(--text-1); line-height: 1.2; word-break: break-word; }
 
   .diag-checks { display: flex; flex-direction: column; gap: var(--space-2); }
-  .diag-check { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+  .diag-check { padding: var(--space-3); border-radius: var(--radius-lg); background: var(--settings-control); }
   .diag-check-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   .diag-check-label { font-weight: 600; color: var(--text-1); font-size: var(--text-sm); flex: 1; word-break: break-word; }
   .diag-toggle { border: none; background: transparent; color: var(--text-3); transform: rotate(0deg); transition: transform var(--transition); flex: none; }
@@ -196,12 +193,11 @@
   .payload { margin: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); overflow: auto; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 240px; }
   .payload.compact { max-height: 200px; margin-top: var(--space-2); }
 
-  .ops-list { display: flex; flex-direction: column; gap: var(--space-1); }
-  .ops-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); }
+  .ops-row { justify-content: space-between; font-family: var(--font-mono); font-size: var(--text-xs); }
   .ops-name { color: var(--text-2); word-break: break-all; }
   .ops-val { color: var(--text-1); font-weight: 600; }
 
   @media (min-width: 560px) {
-    .health-grid { grid-template-columns: repeat(4, 1fr); }
+    .health-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 </style>

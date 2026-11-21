@@ -26,47 +26,62 @@
     position: relative;
     flex: none;
     width: var(--switch-w);
-    height: var(--switch-h);
-    border-radius: var(--radius-xs);
-    background: var(--switch-bg);
-    border: none;
-    cursor: pointer;
-    transition: background var(--transition), box-shadow var(--transition),
-      transform var(--transition-fast);
+    height: max(36px, var(--switch-h));
     padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    cursor: pointer;
+    touch-action: manipulation;
   }
-  .switch .knob {
+
+  .switch::before,
+  .switch::after {
     position: absolute;
-    top: 50%;
-    left: calc((var(--switch-h) - var(--switch-knob-size)) / 2);
-    width: var(--switch-knob-size);
-    height: var(--switch-knob-size);
-    border-radius: var(--radius-xs);
-    background: var(--switch-knob);
-    transform: translateY(-50%);
-    transition: transform var(--transition-snap), width var(--transition-fast),
-      height var(--transition-fast);
-    box-shadow: var(--switch-shadow);
+    inset: calc((100% - var(--switch-h)) / 2) 0;
+    border-radius: var(--radius-pill);
+    content: '';
   }
-  .switch.is-on {
+
+  .switch::before {
+    background: var(--switch-bg);
+    box-shadow: inset 0 0 0 1px var(--surface-divider);
+  }
+
+  .switch::after {
     background: var(--switch-bg-on);
     box-shadow: var(--switch-shadow-on);
+    opacity: 0;
+    transition: opacity var(--transition);
   }
+
+  .switch.is-on::after { opacity: 1; }
+
+  .knob {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: calc((var(--switch-h) - var(--switch-knob-size)) / 2);
+    z-index: 1;
+    width: var(--switch-knob-size);
+    height: var(--switch-knob-size);
+    border-radius: var(--radius-pill);
+    background: var(--switch-knob);
+    box-shadow: var(--switch-shadow);
+    transform: translateY(-50%);
+    transition: transform var(--transition-spring);
+  }
+
   .switch.is-on .knob {
     transform: translate(calc(var(--switch-w) - var(--switch-h)), -50%);
     background: var(--switch-knob-on);
   }
-  .switch:active:not(:disabled) .knob {
-    width: calc(var(--switch-knob-size) * 1.14);
-    height: calc(var(--switch-knob-size) * 1.14);
-  }
-  .switch:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-  .switch:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
+
+  .switch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  @media (forced-colors: active) {
+    .switch::before { border: 1px solid ButtonText; }
+    .switch::after { background: Highlight; }
+    .knob { background: ButtonText; }
+    .switch.is-on .knob { background: HighlightText; }
   }
 </style>

@@ -16,34 +16,24 @@
 </script>
 
 <div class="url-preview">
+  <span class="up-label">请求地址</span>
   {#if preview}
-    <span class="up-label">请求地址</span>
     <code class="up-code">{preview}</code>
   {:else}
-    <span class="up-label">请求地址</span>
     <span class="up-empty">—</span>
   {/if}
 </div>
 
 <style>
   .url-preview {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    margin-top: var(--space-1);
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--field-fill);
     font-size: var(--text-xs);
   }
-  .up-label { color: var(--text-3); }
-  .up-code {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--accent-strong);
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--optical-2) var(--space-2);
-    word-break: break-all;
-  }
-  .up-empty { color: var(--text-3); }
+  .up-label, .up-empty { color: var(--text-2); }
+  .up-code { color: var(--accent-strong); font-family: var(--font-mono); overflow-wrap: anywhere; }
 </style>

@@ -49,6 +49,11 @@
     return [...map.entries()];
   });
 
+  function rangeProgress(value, min, max) {
+    const ratio = value == null || value === '' ? NaN : (value - min) / (max - min);
+    return Number.isFinite(ratio) ? `${ratio * 100}%` : '50%';
+  }
+
   async function reset() {
     try {
       const r = await settingsApi.get();
@@ -72,11 +77,11 @@
   }
 </script>
 
-<SettingsShell title="对话设置" desc="回复风格、智能开关与主动消息偏好" {onback}>
+<SettingsShell showFooter={!loading && sections.length > 0} title="对话设置" desc="回复风格、智能开关与主动消息偏好" {onback}>
   {#if loading}
     <div class="skeleton-list" aria-label="加载中">
       {#each [0, 1, 2] as n}
-        <div class="card card-pad skeleton-card">
+        <div class="settings-group settings-group-pad skeleton-card">
           <div class="sk sk-title" style="width:{60 - n * 10}%"></div>
           <div class="sk sk-line" style="width:100%"></div>
           <div class="sk sk-line" style="width:80%"></div>
@@ -84,22 +89,22 @@
       {/each}
     </div>
   {:else if !sections.length}
-    <div class="card card-pad">
+    <div class="settings-group settings-group-pad">
       <EmptyState icon="message" title="没有可配置的设置项" desc="后端未返回任何设置项" compact />
     </div>
   {:else}
     <form class="conv-form" onsubmit={(e) => { e.preventDefault(); submit(); }}>
       {#each sections as [sec, fields]}
-        <section class="card card-pad conv-section">
+        <section class="settings-group settings-group-pad">
           <div class="section-head">
-            <h4>{sec}</h4>
+            <h2>{sec}</h2>
             {#if fields.some((f) => f.live)}
-              <span class="badge info live-badge">实时生效</span>
+              <span class="badge info">实时生效</span>
             {/if}
           </div>
-          <div class="conv-fields">
-            {#each fields as f, i}
-              <div class="conv-field" class:has-divider={i > 0}>
+          <div class="card-list">
+            {#each fields as f (f.key)}
+              <div class="settings-row conv-field">
                 <div class="conv-label">
                   <span class="conv-name">{f.label || f.key}</span>
                   {#if f.hint}<span class="conv-hint">{f.hint}</span>{/if}
@@ -121,7 +126,8 @@
                     />
                     {#if f.min !== undefined && f.max !== undefined}
                       <input
-                        class="num-slider"
+                        class="settings-range"
+                        style:--range-progress={rangeProgress(values[f.key], f.min, f.max)}
                         type="range"
                         min={f.min}
                         max={f.max}
@@ -135,6 +141,7 @@
                 {:else}
                   <input
                     class="input conv-text"
+                    aria-label={f.label || f.key}
                     type="text"
                     value={values[f.key] ?? ''}
                     oninput={(e) => (values[f.key] = e.currentTarget.value)}
@@ -148,157 +155,28 @@
       {/each}
     </form>
   {/if}
+  {#snippet footer()}
+    <div class="save-bar">
+      <button class="btn-primary" type="button" onclick={submit} disabled={saving}>
+        {saving ? '保存中…' : '保存对话设置'}
+      </button>
+      <button class="btn-outline" type="button" onclick={reset} disabled={saving}>重置</button>
+    </div>
+  {/snippet}
 </SettingsShell>
 
-{#if !loading && sections.length}
-  <div class="save-bar card">
-    <button class="btn-primary" type="button" onclick={submit} disabled={saving}>
-      {saving ? '保存中…' : '保存对话设置'}
-    </button>
-    <button class="btn-outline" type="button" onclick={reset} disabled={saving}>重置</button>
-  </div>
-{/if}
-
 <style>
-  .conv-form { display: flex; flex-direction: column; gap: var(--space-4); }
-  .live-badge { flex: none; }
-  .conv-fields { display: flex; flex-direction: column; }
-  .conv-field {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--space-3) 0;
-  }
-  .conv-field.has-divider { border-top: 1px solid var(--border); }
-  .conv-label { display: flex; flex-direction: column; gap: var(--optical-2); min-width: 0; flex: 1; }
-  .conv-name { font-weight: 600; color: var(--text-1); font-size: var(--text-sm); }
-  .conv-hint { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-snug); }
-
-  .num-control { display: flex; flex-direction: column; gap: var(--space-2); flex: none; max-width: 240px; min-width: 180px; }
-  .num-value { text-align: center; max-width: 130px; align-self: flex-end; }
-  /* 滑杆原来只设了 accent-color, 用的是浏览器原生样式:
-     轨道是 8px 圆头厚条、滑块是圆润的水滴 —— 在一个通篇 2-6px 方角的
-     界面里, 它是最不像「这套设计语言」的一个控件, 而且是设置页里
-     出现次数最多的控件 (一屏 6 条)。
-     改为自绘: 轨道 3px 方角 + 冷蓝填充, 滑块 10x16 方角 + 1px 描边,
-     hover/active 时滑块变高一点作为触感反馈。 */
-  .num-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 18px;
-    margin: 0;
-    background: transparent;
-    cursor: pointer;
-  }
-  .num-slider::-webkit-slider-runnable-track {
-    height: 3px;
-    background: var(--surface-3);
-    border-radius: var(--radius-xs);
-  }
-  .num-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 10px;
-    height: 16px;
-    margin-top: -6.5px;
-    background: var(--accent);
-    border: 1px solid var(--accent-strong);
-    border-radius: var(--radius-xs);
-    transition: background var(--transition), transform var(--transition);
-  }
-  .num-slider:hover::-webkit-slider-thumb { background: var(--accent-strong); }
-  .num-slider:active::-webkit-slider-thumb { transform: scaleY(1.1); }
-  .num-slider::-moz-range-track {
-    height: 3px;
-    background: var(--surface-3);
-    border-radius: var(--radius-xs);
-  }
-  .num-slider::-moz-range-progress {
-    height: 3px;
-    background: var(--accent);
-    border-radius: var(--radius-xs);
-  }
-  .num-slider::-moz-range-thumb {
-    width: 8px;
-    height: 14px;
-    background: var(--accent);
-    border: 1px solid var(--accent-strong);
-    border-radius: var(--radius-xs);
-  }
-  .num-slider:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-
-  .conv-text { max-width: 240px; }
-
-  /* 骨架屏 */
-  .skeleton-list { display: flex; flex-direction: column; gap: var(--space-4); }
-  .skeleton-card { display: flex; flex-direction: column; gap: var(--space-3); }
-  .sk { border-radius: var(--radius-sm); background: var(--surface-3); animation: sk-pulse 1.4s var(--ease-in-out) infinite; }
+  .conv-form, .skeleton-list { display: grid; gap: var(--space-4); }
+  .conv-field { justify-content: space-between; flex-wrap: wrap; }
+  .conv-label { display: grid; gap: var(--space-1); flex: 1 1 170px; min-width: 0; }
+  .conv-name { color: var(--text-1); font-size: var(--text-sm); font-weight: 620; }
+  .conv-hint { color: var(--text-2); font-size: var(--text-xs); line-height: 1.5; }
+  .num-control { display: flex; flex-direction: column; gap: var(--space-3); flex: 1 1 128px; max-width: 240px; min-width: 0; }
+  .num-value { text-align: center; max-width: 100px; align-self: flex-end; font-variant-numeric: tabular-nums; }
+  .conv-text { flex: 1 1 128px; max-width: 240px; }
+  .save-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .skeleton-card { display: grid; gap: var(--space-3); }
+  .sk { border-radius: var(--radius-pill); background: var(--field-fill); }
   .sk-title { height: 16px; }
   .sk-line { height: 12px; }
-  @keyframes sk-pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
-
-  /* 底部固定保存条
-     .card / .btn-* 已收归 .settings-main 作用域, 而这条保存条挂在
-     SettingsShell 外面, 所以这里自带背景与按钮样式。
-     它是 sticky 到内容区底部的 chrome, 用 glass-1 让下面的表单透出来 ——
-     实心底色会把最后一行字段切成两半, 玻璃反而让"还有内容在下面"可读。 */
-  .save-bar {
-    position: sticky;
-    bottom: 0;
-    z-index: var(--z-sticky);
-    display: flex;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
-    padding: var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--glass-border-2);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-md);
-  }
-  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .save-bar {
-      background: var(--glass-1);
-      -webkit-backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-      backdrop-filter: blur(var(--glass-blur-1)) saturate(var(--glass-sat-1));
-    }
-  }
-  @media (prefers-reduced-transparency: reduce) {
-    .save-bar {
-      background: var(--surface);
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-  .save-bar .btn-primary,
-  .save-bar .btn-outline {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: var(--btn-h-lg);
-    padding: 0 var(--space-4);
-    border-radius: var(--btn-radius);
-    font-family: inherit;
-    font-size: var(--text-13);
-    font-weight: 500;
-    cursor: pointer;
-    transition: background var(--transition), border-color var(--transition), transform var(--transition);
-  }
-  .save-bar .btn-primary {
-    background: var(--accent);
-    color: var(--on-accent);
-    border: 1px solid transparent;
-  }
-  .save-bar .btn-primary:hover { background: var(--accent-strong); }
-  .save-bar .btn-primary:disabled { opacity: 0.5; cursor: default; }
-  .save-bar .btn-outline {
-    background: var(--btn-outline-bg);
-    color: var(--btn-outline-text);
-    border: 1px solid var(--btn-outline-border);
-  }
-  .save-bar .btn-outline:hover { background: var(--btn-outline-hover); border-color: var(--border-strong); }
-  .save-bar .btn-primary:active,
-  .save-bar .btn-outline:active { transform: scale(0.98); }
 </style>

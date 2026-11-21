@@ -1,4 +1,5 @@
 <script>
+  import './editor.css';
   // PersonaField.svelte — 根据 meta.type 分发渲染对应控件
   //
   // 输入: item = { meta, value } （来自父层 $state 表单对象的某字段）.
@@ -36,17 +37,17 @@
 </script>
 
 {#if meta.type === 'text'}
-  <input class="field-input" type="text" value={typeof value === 'string' ? value : ''}
+  <input class="persona-control" aria-label={meta.label} type="text" value={typeof value === 'string' ? value : ''}
     placeholder={meta.placeholder || ''} oninput={(e) => setRaw(e.currentTarget.value)} />
 {:else if meta.type === 'number'}
-  <input class="field-input" type="number" value={value === '' || value == null ? '' : value}
+  <input class="persona-control" aria-label={meta.label} type="number" value={value === '' || value == null ? '' : value}
     step={meta.step || 1} min={meta.min} max={meta.max}
     oninput={(e) => {
       const n = e.currentTarget.value;
       setRaw(n === '' ? '' : Number(n));
     }} />
 {:else if meta.type === 'select'}
-  <select class="field-select" value={typeof value === 'string' ? value : ''} onchange={(e) => setRaw(e.currentTarget.value)}>
+  <select class="persona-control" aria-label={meta.label} value={typeof value === 'string' ? value : ''} onchange={(e) => setRaw(e.currentTarget.value)}>
     {#if meta.optional}<option value="">不设定</option>{/if}
     {#each meta.options || [] as opt (opt)}
       <option value={opt}>{opt}</option>
@@ -54,7 +55,7 @@
   </select>
 {:else if meta.type === 'range'}
   <div class="range-row">
-    <input class="field-range" type="range" value={value == null ? (meta.min ?? 0) : value}
+    <input class="field-range" aria-label={meta.label} aria-valuetext={rangeDisplay()} type="range" value={value == null ? (meta.min ?? 0) : value}
       min={meta.min ?? 0} max={meta.max ?? 100} step={meta.step ?? 1}
       oninput={(e) => setRaw(Number(e.currentTarget.value))} />
     <span class="range-val">{rangeDisplay()}</span>
@@ -68,14 +69,14 @@
 {:else if meta.type === 'list-dict'}
   <PersonaListDictEditor bind:value={item.value} namePlaceholder={meta.namePlaceholder || '名称'} detailPlaceholder={meta.detailPlaceholder || '说明（可选）'} />
 {:else if meta.type === 'json'}
-  <textarea class="field-input mono" rows={meta.rows || 4}
+  <textarea class="persona-control mono" aria-label={meta.label} rows={meta.rows || 4}
     value={typeof value === 'string' ? value : ''}
     placeholder={meta.placeholder || 'JSON 格式，保持默认即可'}
     oninput={(e) => setRaw(e.currentTarget.value)}></textarea>
 {:else}
   <!-- textarea / 默认多行 -->
   <div class="textarea-wrap">
-    <textarea class="field-input" rows={meta.rows || 3}
+    <textarea class="persona-control" aria-label={meta.label} rows={meta.rows || 3}
       value={typeof value === 'string' ? value : ''}
       placeholder={meta.placeholder || ''}
       oninput={(e) => setRaw(e.currentTarget.value)}></textarea>
@@ -86,107 +87,19 @@
 {/if}
 
 {#if meta.hint}
-  <p class="field-hint">{meta.hint}</p>
+  <p class="persona-hint">{meta.hint}</p>
 {/if}
 
 <style>
-  .field-input {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--input-radius);
-    color: var(--input-text);
-    font-size: var(--text-base);
-    font-family: var(--font-sans);
-    line-height: var(--leading-snug);
-  }
-  .field-input.mono {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    border-radius: var(--radius-sm);
-    resize: vertical;
-  }
-  textarea.field-input {
-    resize: vertical;
-  }
-  .field-input:focus-visible {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-  .field-input::placeholder {
-    color: var(--input-placeholder);
-  }
-
-  .field-select {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: var(--input-radius);
-    color: var(--input-text);
-    font-size: var(--text-base);
-    font-family: var(--font-sans);
-    line-height: var(--leading-snug);
-    cursor: pointer;
-    appearance: none;
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a9907d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right var(--space-3) center;
-    padding-right: var(--space-7);
-  }
-  .field-select:focus-visible {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: var(--focus-ring);
-  }
-
-  .range-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .field-range {
-    flex: 1;
-    min-width: 0;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .range-val {
-    flex: none;
-    min-width: 56px;
-    text-align: right;
-    font-size: var(--text-sm);
-    font-weight: 600;
+  .range-row { display: flex; align-items: center; gap: var(--space-3); min-height: 40px; }
+  .field-range { flex: 1; min-width: 0; height: 28px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .range-val, .char-count {
     color: var(--text-2);
+    font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
   }
-
-  .field-switch {
-    display: flex;
-  }
-
-  .textarea-wrap {
-    position: relative;
-    width: 100%;
-  }
-  .textarea-wrap textarea {
-    width: 100%;
-  }
-  .char-count {
-    position: absolute;
-    right: var(--space-2);
-    bottom: var(--space-1);
-    font-size: var(--text-xs);
-    color: var(--text-3);
-    pointer-events: none;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .field-hint {
-    margin: 0;
-    font-size: var(--text-xs);
-    color: var(--text-3);
-  }
+  .range-val { flex: none; min-width: 4ch; text-align: right; }
+  .field-switch { display: flex; align-items: center; min-height: 42px; }
+  .textarea-wrap { display: grid; gap: var(--space-1); min-width: 0; }
+  .char-count { justify-self: end; }
 </style>
