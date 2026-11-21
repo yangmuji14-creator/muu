@@ -742,18 +742,25 @@ def register(routes, app_components):
 
     @routes.delete("/api/model/{model_key}")
     async def delete_model_provider(request):
-        """删除一个模型提供商配置。"""
+        """删除一个模型提供商配置。
+
+        允许删到「一个都不剩」：用户清空后重新配置是常见流程（换厂商、
+        重建密钥），这里不能把删除当成阻碍。清空后：
+          · `default_model` 置为 None（而不是崩溃——`next(iter({}))`
+            会抛 StopIteration）；
+          · 注册表清空，`/api/health` 的 models=0、`/api/bootstrap/status`
+            的 needs_setup=true，前端据此提示「先去配置模型」；
+          · 视觉/视频角色一并清掉，避免残留指向已删条目的 401。
+        """
         model_key = request.match_info["model_key"]
         try:
             settings = _load_settings()
             models = settings.get("models", {})
+            if not isinstance(models, dict):
+                models = {}
             if model_key not in models:
                 return web.json_response(
                     {"error": "model key not found"}, status=404
-                )
-            if len(models) == 1:
-                return web.json_response(
-                    {"error": "cannot delete last model"}, status=400
                 )
             removed = models[model_key]
             reference = str(removed.get("api_key_ref") or "") if isinstance(removed, dict) else ""
@@ -761,7 +768,8 @@ def register(routes, app_components):
             removed_provider = str(removed.get("provider") or "") if isinstance(removed, dict) else ""
             del models[model_key]
             if was_default:
-                settings["default_model"] = next(iter(models))
+                # 还有别的条目就顺延成默认；全删光了就是「尚未配置」状态。
+                settings["default_model"] = next(iter(models), None)
 
             # 清理指向被删条目的视觉/视频配置：否则 advanced.vision_model 还挂着
             # 已删的 base_url + 已删的密钥引用 → 发图静默 401，设置页仍显示"已配置"。
@@ -794,12 +802,37 @@ def register(routes, app_components):
                         vision.update_config({})
                     if isinstance(getattr(app_components, "advanced_config", None), dict):
                         app_components.advanced_config.pop("vision_model", None)
+            # 热同步注册表：不重载的话运行时仍持有被删的实例 ——
+            # /api/health 仍报 models=1、聊天仍会用旧密钥发请求（401），
+            # 用户以为删干净了其实没有。重载后 models 归零，前端走「未配置」引导。
+            restart_required = was_default
+            registry = getattr(app_components, "registry", None)
+            if registry is not None and hasattr(registry, "load_config"):
+                try:
+                    registry.load_config(SETTINGS_PATH)
+                    handler = getattr(app_components, "handler", None)
+                    remaining = list(getattr(registry, "available_models", []))
+                    if handler is not None and remaining:
+                        if hasattr(handler, "activate_default_model"):
+                            handler.activate_default_model()
+                        vision = getattr(app_components, "vision_manager", None)
+                        if vision is not None and hasattr(vision, "update_main_model"):
+                            vision.update_main_model(registry.get())
+                    elif handler is not None:
+                        # 一个模型都不剩：不能调 activate_default_model（registry.get() 会抛），
+                        # 只把 pipeline 的 llm 摘掉，下一次请求走「请先配置模型」。
+                        pipeline = getattr(handler, "pipeline", None)
+                        if pipeline is not None and hasattr(pipeline, "set_llm"):
+                            pipeline.set_llm(None)
+                    restart_required = False
+                except Exception as e:
+                    logger.warning(f"provider delete registry reload failed: {e}")
+                    restart_required = was_default
             logger.info(f"WebUI model provider deleted: key={model_key}")
             return web.json_response({
                 "ok": True,
                 "current": settings.get("default_model"),
-                # 删掉的是当前默认模型 → 运行时仍持有旧实例，需重启才切干净
-                "restart_required": was_default,
+                "restart_required": restart_required,
                 "cleaned_roles": cleaned_roles,
             })
         except Exception as e:

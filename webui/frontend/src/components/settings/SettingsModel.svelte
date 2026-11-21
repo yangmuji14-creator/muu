@@ -304,15 +304,23 @@
   }
 
   async function removeProvider(key) {
-    const ok = await confirmDialog(`删除提供商 ${key}？`, { title: '删除服务商', danger: true });
+    const last = providers.length <= 1;
+    const ok = await confirmDialog(
+      last
+        ? `删除最后一个服务商「${key}」后，就没有可用模型了，聊天暂时无法回复。之后可以随时重新添加。确定删除吗？`
+        : `删除提供商 ${key}？`,
+      { title: last ? '删除最后一个服务商' : '删除服务商', danger: true },
+    );
     if (!ok) return;
     saving = true;
     try {
       const r = await modelApi.remove(key);
       if (r.ok) {
-        notify('已删除', 'success');
+        notify(last ? '已删除，当前没有可用模型' : '已删除', 'success');
         providers = providers.filter((p) => p.key !== key);
         if (model?.available) model.available = model.available.filter((k) => k !== key);
+        // 删到空之后 reloadModels 会把 model.current 清空、界面回到「未配置」引导
+        await reloadModels();
         await loadRoles();
       } else notify(errMsg(r, '删除失败'), 'error');
     } finally { saving = false; }
