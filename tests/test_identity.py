@@ -456,3 +456,32 @@ class TestGetContext:
         (tmp_path / "identities").mkdir(exist_ok=True)
         (tmp_path / "identities" / "u1.json").write_text("[[[", encoding="utf-8")
         assert layer.get_context("u1") == ""
+
+    @pytest.mark.parametrize(
+        "uid",
+        [
+            "web::girlfriend_001",
+            "wechat::default::wxid@im.wechat",
+            "../evil:id",
+        ],
+    )
+    def test_composite_and_unsafe_user_ids_do_not_fail_on_windows(self, layer, tmp_path, uid: str) -> None:
+        layer.save(IdentityProfile(user_id=uid, major="计算机"))
+        loaded = layer.load(uid)
+        assert loaded.user_id == uid
+        assert loaded.major == "计算机"
+
+        target = layer._file_path(uid)
+        assert target.is_relative_to((tmp_path / "identities").resolve())
+        assert ":" not in target.name
+
+    def test_extract_from_message_with_web_scope_succeeds(self, layer) -> None:
+        profile = layer.extract_from_message("web::girlfriend_001", "我喜欢你")
+        assert "你" in profile.interests
+        assert layer.load("web::girlfriend_001").interests == ["你"]
+
+    def test_sanitized_ids_do_not_collide(self, layer) -> None:
+        layer.save(IdentityProfile(user_id="web::a", major="数学"))
+        layer.save(IdentityProfile(user_id="web__a", major="物理"))
+        assert layer.load("web::a").major == "数学"
+        assert layer.load("web__a").major == "物理"

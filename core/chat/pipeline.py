@@ -339,7 +339,10 @@ class ChatPipeline:
         if self._open_loop and not skip_user_message:
             self._open_loop.detect(memory_user_id, content)
         if self._identity and not skip_user_message:
-            self._identity.extract_from_message(memory_user_id, content)
+            try:
+                self._identity.extract_from_message(memory_user_id, content)
+            except Exception as e:
+                logger.warning(f"Identity extraction failed for {memory_user_id}: {e}")
 
         self._context_assembler.mcp_manager = getattr(self, "_mcp_manager", None)
         prompt_context = await self._context_assembler.build(

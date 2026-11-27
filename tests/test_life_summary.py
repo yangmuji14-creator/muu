@@ -985,3 +985,16 @@ class TestDiaryRecall:
 
     def test_empty_diary_returns_empty(self) -> None:
         assert LifeSummary(user_id="u", summary_type="diary").diary_snippet() == ""
+
+
+class TestEngineCompositeUserIds:
+    def test_web_scope_save_and_load_without_colon_in_filename(self, engine, tmp_path) -> None:
+        uid = "web::girlfriend_001"
+        engine.save(LifeSummary(user_id=uid, summary="跨平台安全写入"))
+        loaded = engine.load(uid)
+        assert loaded.user_id == uid
+        assert loaded.summary == "跨平台安全写入"
+
+        target = engine._file_path(uid)
+        assert target.is_relative_to((tmp_path / "life_summaries").resolve())
+        assert ":" not in target.name

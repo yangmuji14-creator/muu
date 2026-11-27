@@ -3,6 +3,7 @@
 提取跨模块复用的模式：LLM JSON 响应解析、原子文件写入。
 """
 
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,26 @@ from loguru import logger
 
 # LLM 响应中 markdown 代码块的正则
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+# Windows / POSIX 通用安全文件名前缀字符集（向后兼容合法单段 user_id，如 u1 / wxid@im.wechat）
+_SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_\-.@]+$")
+
+
+def safe_user_filename(user_id: str) -> str:
+    """将任意 user_id / scope_id 映射为跨平台安全的文件名（不含拓展名）。
+
+    单段合法 ASCII 标识（如 ``u1``、``scope_xxx``、``wxid@im.wechat``）原样保留以兼容既有数据；
+    含冒号（如 ``web::girlfriend_001``）、斜杠或其他 Windows 非法字符时清洗并附加 8 位短哈希防碰撞。
+    """
+    raw = str(user_id or "").strip()
+    if raw and ".." not in raw and len(raw) <= 120 and _SAFE_FILENAME_RE.fullmatch(raw):
+        return raw
+
+    cleaned = re.sub(r"[^a-zA-Z0-9_\-.@]", "_", raw)
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", "_")
+    cleaned = cleaned.strip("._")[:80] or "user"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+    return f"{cleaned}_{digest}"
 
 
 def parse_json_response(text: str) -> dict[str, Any] | None:

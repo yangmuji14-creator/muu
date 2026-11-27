@@ -20,6 +20,7 @@
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -28,7 +29,7 @@ from typing import Any
 
 from loguru import logger
 
-from core.utils import atomic_write_json
+from core.utils import atomic_write_json, safe_user_filename
 
 # 校名抓取：只在「大学 / 学院 / 学校」三种后缀上做锚点
 _SCHOOL_SUFFIXES = ("大学", "学院", "学校")
@@ -239,12 +240,28 @@ class IdentityLayer:
         self._path.mkdir(parents=True, exist_ok=True)
 
     def _file_path(self, user_id: str) -> Path:
-        """获取用户身份文件路径"""
-        return self._path / f"{user_id}.json"
+        """获取用户身份文件路径（Windows 规避 ``::`` 等非法文件名字符）。"""
+        base = self._path.resolve()
+        safe_name = safe_user_filename(user_id)
+        path = (base / f"{safe_name}.json").resolve()
+        if not path.is_relative_to(base):
+            raise ValueError(f"Unsafe identity path for {user_id!r}")
+        return path
 
     def load(self, user_id: str) -> IdentityProfile:
         """加载用户身份档案"""
         path = self._file_path(user_id)
+        if (
+            not path.exists()
+            and os.name != "nt"
+            and user_id
+            and "/" not in user_id
+            and "\\" not in user_id
+            and ".." not in user_id
+        ):
+            legacy = (self._path.resolve() / f"{user_id}.json").resolve()
+            if legacy.is_relative_to(self._path.resolve()) and legacy.exists():
+                path = legacy
         if not path.exists():
             return IdentityProfile(user_id=user_id)
         try:

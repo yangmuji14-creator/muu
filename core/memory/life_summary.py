@@ -20,6 +20,7 @@
 
 import asyncio
 import json
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from typing import Any
 
 from loguru import logger
 
-from core.utils import atomic_write_json, parse_json_response
+from core.utils import atomic_write_json, parse_json_response, safe_user_filename
 
 
 # 日记回灌 prompt 时的节选长度（字符）。实测三条日记 60–196 字，
@@ -440,11 +441,27 @@ class LifeSummaryEngine:
     # ── JSON 模式 ──
 
     def _file_path(self, user_id: str) -> Path:
-        return self._path / f"{user_id}.json"
+        base = self._path.resolve()
+        safe_name = safe_user_filename(user_id)
+        path = (base / f"{safe_name}.json").resolve()
+        if not path.is_relative_to(base):
+            raise ValueError(f"Unsafe life summary path for {user_id!r}")
+        return path
 
     def load(self, user_id: str) -> LifeSummary:
         """加载摘要（JSON 模式）"""
         path = self._file_path(user_id)
+        if (
+            not path.exists()
+            and os.name != "nt"
+            and user_id
+            and "/" not in user_id
+            and "\\" not in user_id
+            and ".." not in user_id
+        ):
+            legacy = (self._path.resolve() / f"{user_id}.json").resolve()
+            if legacy.is_relative_to(self._path.resolve()) and legacy.exists():
+                path = legacy
         if not path.exists():
             return LifeSummary(user_id=user_id)
         try:
