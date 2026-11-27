@@ -247,11 +247,10 @@ class TestChromeLayerUsage:
     """
 
     CHROME = [
-        "components/TopBar.svelte",
-        "components/TabBar.svelte",
-        "components/PhoneShell.svelte",
-        "components/layout/ImmersiveShell.svelte",
-        "components/layout/StatePanel.svelte",
+        "components/TopBar.tsx",
+        "components/Composer.tsx",
+        "components/settings/SettingsModal.tsx",
+        "components/StateDrawer.tsx",
     ]
 
     @pytest.mark.parametrize("rel", CHROME)

@@ -32,6 +32,10 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8")
 
 
+venv_site = APP_DIR / ".venv" / "Lib" / "site-packages"
+if venv_site.exists() and str(venv_site) not in sys.path:
+    sys.path.insert(0, str(venv_site))
+
 # ========== 自动切换虚拟环境（必须在第三方 import 之前）==========
 # 必须在 import dotenv/loguru 等第三方依赖之前调用，否则系统 Python
 # 加载 main.py 时会因找不到依赖而崩溃，永远到不了 main() 里的调用。
@@ -51,9 +55,10 @@ def _ensure_venv():
     cmd 终端断开，交互式输入（input()）会被 cmd 当成命令解析。因此
     Windows 下必须用 subprocess.run 同步等待子进程结束，再退出。
     """
-    if sys.prefix != sys.base_prefix:
-        return  # 已在 venv 中
+    if sys.prefix != sys.base_prefix or os.environ.get("CYBER_NO_VENV") == "1":
+        return  # 已在 venv 中或明确跳过 venv
 
+    # 尝试把 .venv 的 site-packages 加入当前环境
     venv_dir = Path(__file__).parent / ".venv"
     if not venv_dir.exists():
         return  # 没有 .venv，用系统 Python

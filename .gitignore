@@ -133,13 +133,17 @@ config/*.bak-*
 /docs/设计语言_Ink.md
 /docs/方案_*.md
 /docs/screenshots/legacy/
-# 历史设计迭代截图（glass / ink / ink-v2 / apple-glass / tmp）只留本地。
-# 仓库只保留 README 用到的当前主题：docs/screenshots/midnight-violet/
+# 历史设计迭代截图与废弃前端原型只留本地。
+# 仓库保留当前主题文档截图：docs/screenshots/react-v3/ 与 docs/screenshots/midnight-violet/
 /docs/screenshots/glass/
 /docs/screenshots/ink/
 /docs/screenshots/ink-v2/
 /docs/screenshots/apple-glass/
 /docs/screenshots/tmp/
+/docs/v2-shots/
+/webui/frontend-v2/
+/webui/frontend/LEGACY.md
+/tools/check_contrast_v2.py
 /docs/iLink接入调研.md
 /docs/项目架构对齐方案.md
 /docs/项目理解报告/

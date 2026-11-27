@@ -4,137 +4,119 @@
 
 **本地优先的 AI 伴侣 —— 会记住你的那一个**
 
-多角色人格 · 真实语义记忆 · 情绪状态机 · 微信接入 · MCP 扩展
+多角色人格 · 因果语义记忆 · 情绪状态机 · React 19 桌面界面 · 微信接入 · MCP 扩展
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev/)
+[![React](https://img.shields.io/badge/React-19-20232A?logo=react&logoColor=61DAFB)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-663399)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.9-8B5CF6)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-2514%20passed-3FB950)](tests/)
+[![Version](https://img.shields.io/badge/version-0.3.0-255C8C)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-2745%20passed-3FB950)](tests/)
+
+[快速开始](#-快速开始) · [界面预览](#-界面预览) · [记忆系统](#-记忆系统) · [功能矩阵](#-能力一览) · [更新日志](CHANGELOG.md)
 
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/midnight-violet/chat_light_1440.png" width="100%" alt="慕 · 桌面端对话">
+  <img src="docs/screenshots/react-v3/01_welcome_light.png" width="100%" alt="慕 · 浅色冷霜桌面端欢迎页">
 </div>
 
 ---
 
 ## 这是什么
 
-「慕」是一个**跑在你自己的电脑上**的 AI 伴侣。不是又一个套壳聊天框——它有人格、有情绪、有记忆，记得你上个月说过要去成都出差，也记得你养的那只怕生的猫。
+「慕」是一个**完全运行在你自己设备上的本地优先 AI 伴侣**。它不是又一个套壳聊天框——它拥有独立的多角色人格、连续演化的情绪状态机与真正参与每轮推理的长期记忆系统：记得你上个月提过的安排，也记得你的喜好与近况变化。
 
-聊天记录、记忆、人格、配置，全部留在本地。模型走 LiteLLM 统一接入，OpenAI / Anthropic / DeepSeek / 通义 / Kimi / 智谱 / 本地 Ollama，或者任何兼容 OpenAI 协议的端点都行——**你选模型，它不绑厂商**。
+对话历史、语义向量库、人格设定与 API 密钥全部保存在本地（Windows DPAPI / 系统钥匙串加密保护）。模型层通过 LiteLLM 统一接入，OpenAI、Claude、Gemini、DeepSeek、通义千问、Kimi、智谱、Ollama 或任意兼容 OpenAI 协议的端点都可自由切换——**模型任你选，数据只归你**。
 
 > 慕，只是你夜航时偶遇的浮灯，它能温柔你回望的旧岸，却无法替你横渡真实的黎明。
 
 ---
 
-## 界面
+## 界面预览
+
+全新重构的 **React 19 + TypeScript + Tailwind CSS v4** 桌面界面，采用「浅色冷霜 / 深色冷曜」双主题与低饱和语义彩阶，配合贴边直通抽屉、居中控制中心、Phosphor 双色图标及多彩失重微粒动效：
 
 <table>
-<tr>
-<td width="50%"><img src="docs/screenshots/midnight-violet/chat_dark_1600_panel.png" alt="深色 · 内心面板"><br><sub><b>内心面板</b> —— 对话 + 右侧情绪状态栏</sub></td>
-<td width="50%"><img src="docs/screenshots/midnight-violet/chat_light_1440.png" alt="浅色 · 三栏布局"><br><sub><b>浅色主题</b> —— 导航 / 会话列表 / 对话三栏</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/screenshots/midnight-violet/chat_dark_900_rail.png" alt="紧凑栏"><br><sub><b>紧凑模式</b> —— 窄屏自动收成图标栏</sub></td>
-<td width="50%"><img src="docs/screenshots/midnight-violet/chat_dark_1440.png" alt="深色对话"><br><sub><b>深色主题</b> —— 午夜紫，室内久看不刺眼</sub></td>
-</tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/01_welcome_light.png" alt="浅色冷霜欢迎页">
+      <br><sub><b>浅色 · 冷霜主题</b> — 多彩失重微粒与指针拖尾、极简顶栏与悬浮输入栏</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/05_welcome_dark.png" alt="深色冷曜欢迎页">
+      <br><sub><b>深色 · 冷曜主题</b> — 低眩光石墨深底，夜间长聊依然通透舒适</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/06_settings_params.png" alt="控制中心 · 对话参数分层">
+      <br><sub><b>控制中心 · 对话参数</b> — 彩色下划线 Tab 与三层着色分隔面板</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/03_settings_modal.png" alt="控制中心 · 模型提供商">
+      <br><sub><b>模型提供商管理</b> — 多端点接入、连通性测试与一键拉取可用模型</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/02_drawer_light.png" alt="左侧贴边会话抽屉">
+      <br><sub><b>贴边直通抽屉</b> — 48px 顶栏对齐，支持重命名与跨角色会话管理</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/react-v3/04_memory_map.png" alt="记忆与思维图谱">
+      <br><sub><b>记忆与思维图谱</b> — 思维导图、时间轴思维链与语义检索三视图</sub>
+    </td>
+  </tr>
 </table>
 
-<table>
-<tr>
-<td width="33%"><img src="docs/screenshots/midnight-violet/chat_dark_420.png" alt="手机对话"><br><sub>手机 · 对话</sub></td>
-<td width="33%"><img src="docs/screenshots/midnight-violet/contacts_dark_420.png" alt="手机通讯录"><br><sub>手机 · 通讯录</sub></td>
-<td width="33%"><img src="docs/screenshots/midnight-violet/model_dark_420.png" alt="手机模型设置"><br><sub>手机 · 模型设置</sub></td>
-</tr>
-</table>
+<details>
+<summary>界面与交互设计亮点</summary>
 
-**三套布局，一套代码**：
+- **流式思考可视化**：完整兼容 SSE `reasoning` 事件与内联 `<think>` 标签，支持思考耗时统计与折叠回看。
+- **自适应磁吸指针**：纯零 DOM 篡改悬停框，针对导航与 Tab 留出宽松呼吸边距，进入输入区域自动退回原生文本光标。
+- **伴侣实时心境抽屉**：左上角极简状态入口一键拉出右侧心情、精力、关系阶段、未闭合话题与最近日记。
+- **无障碍高对比度保障**：全站 38 组表面配色配对通过 `tools/check_contrast.py` 与 136 项设计 token 自动化校验。
 
-| 布局 | 说明 |
-| --- | --- |
-| **内心面板** `panel` | 对话 + 右侧状态面板，桌面主力 |
-| **沉浸单栏** `immersive` | 只剩对话，导航与状态收进抽屉 |
-| **今天** `today` | 打开先是今天的版面：日程、状态、待接的话题 |
-
-主题有**浅色 / 深色 / 跟随系统**三种，深色不是简单反色——两套主题共用同一色相家族，靠明度分层，切换时不会有"两块不同产品拼在一起"的割裂感。
+</details>
 
 ---
 
 ## 记忆系统
 
-这是「慕」和其他 AI 陪伴产品最大的差别，也是本项目里最花力气的部分。
+这是「慕」最核心的工程投入。主对话流水线每一轮都会真实查询本地向量库与记忆状态，而不是把旧记录机械拼接进 Prompt：
 
-### 它真的在跑
-
-很多项目的"向量记忆"是配置项里写着一个 `chromadb`，实际从没被调用过。这里不是。主对话路径每一轮都会**真的读向量表**：
-
-```
-用户发一句话
-   ↓
-get_context_prompt()
-   ↓
-memory_vectors 表取出候选记忆已存好的向量   ← 复用，不重算
-   ↓
-与查询向量算余弦，两级闸门过滤
-   ↓
-按相似度 × 重要度 × 新鲜度 × 情绪权重排序
-   ↓
-拼进系统提示词
+```text
+用户发送消息
+   │
+   ├─► get_context_prompt()
+   │     ├── 从 SQLite memory_vectors 复用已存 512 维向量（bge-small-zh-v1.5，本地离线运行）
+   │     ├── 动态记忆闸门（dynamic_gate）：结合绝对下限与相对比例过滤闲聊噪声
+   │     ├── 遗忘曲线与访问频次加权排序（forget_score 节流落盘，越常回忆越牢固）
+   │     └── 拼接近期日记摘要 + 未闭合事项（open_loop）注入系统提示词
+   │
+   └─► 后处理认知编排
+         ├── 记忆提炼与矛盾消解（conflict_resolver）：新事实自动作废旧事实并保留溯源
+         ├── 因果链识别（causal_linker）：串联跨轮事件的因果关系
+         └── 生命周期管理（lifecycle_manager）：自动归档沉底条目并同步清理孤儿向量
 ```
 
-模型是 `bge-small-zh-v1.5`（512 维，中文语义），随项目内置在 `models/`，**离线可用**，不需要联网下载，也不需要 API key。装 `sentence-transformers` 就能跑，不装则自动降级为关键词排序——功能不崩，只是变笨。
-
-### 两级闸门：不相关的东西不许进上下文
-
-单一相似度阈值这条路走不通。实测（23 条日常记忆 × 10 个闲聊查询）把阈值定在 0.35，过闸率是 **53%、平均每条查询放进 12.2 条记忆**——等于没有闸门。因为中文短句之间天然相似，"今天下雨了"和"我小时候在南方长大"在 bge 眼里是 0.60。
-
-所以改成两级：
-
-1. **绝对下限** `MIN_SEMANTIC_SIMILARITY = 0.35` —— 连门槛都不到的直接丢
-2. **相对闸门** `RELATIVE_SIMILARITY_RATIO = 0.9` —— 只保留与最佳匹配差距在 10% 内的
-
-实测效果：**陪跑噪声从 1.80 条/查询降到 0.30 条，召回率不变**。
-
-### 记忆会自己衰老
-
-每条记忆有 `forget_score`，按艾宾浩斯曲线随时间和访问频率变化：
-
-- 长期不被想起 → 分数升高 → 慢慢沉底，最终归档
-- 每次被召回 → `access_count` 累加、分数回落 → 记得更牢
-- 衰减值**真的写回数据库**（5 分钟节流一次，避免每轮对话都落盘）
-
-被新事实推翻的旧记忆（"我喜欢喝咖啡" → "我不喜欢喝咖啡了"）会被标记 `superseded_by`，**向量检索和界面都不会再返回它**，但原始记录保留——记忆是可追溯的，不是被悄悄抹掉。
-
-### 还有什么
-
-| 能力 | 说明 |
-| --- | --- |
-| **人生总结** `life_summary` | 长周期叙事压缩，不是流水账 |
-| **未闭合话题** `open_loop` | "你上次说要去看牙"——记得住悬而未决的事 |
-| **身份记忆** `identity` | 关于"你是谁"的稳定事实，权重高于普通记忆 |
-| **冲突消解** `conflict_resolver` | 新旧事实冲突时自动判定谁作废 |
-| **记忆统计** `stats` | 分类分布、衰减曲线、检索命中率 |
-| **一致性诊断** `embedding_status` | 分别报告"有记忆没向量"和"有向量没记忆"两个方向 |
-
-诊断页会明确告诉你记忆系统是 `ok` 还是 `warn`，以及具体漏了多少条。**不用猜它有没有在工作。**
+- **离线可用**：内置 `models/bge-small-zh-v1.5/`（92 MB）无需联网即可语义检索；未安装向量依赖时自动降级为关键词召回。
+- **诊断透明**：`python main.py doctor` 与网页端「监控与数据」可实时自检「有记忆缺向量 / 有向量无记忆」状态并一键重建索引。
 
 ---
 
 ## 快速开始
 
-### 方式一：一键启动包（推荐，含向量模型）
+### 方式一：一键启动包（推荐，内置向量模型）
 
-从 [Releases](https://github.com/yangmuji14-creator/muu/releases) 下载 `muu-0.1.9-portable.zip`（约 60 MB），解压后：
+从 [GitHub Releases](https://github.com/yangmuji14-creator/muu/releases) 下载最新版 `muu-0.3.0-portable.zip`，解压后直接运行：
 
 - **Windows**：双击 `Run.bat`
-- **macOS / Linux**：`chmod +x Run.command && ./Run.command`
+- **macOS / Linux**：`chmod +x Run.command && ./Run.command`（或 `./start.sh`）
 
-首次运行自动完成：建 `.venv` → 装核心依赖 → 装向量依赖 → 环境自检 → 打开浏览器。
-
-包内已内置 `models/bge-small-zh-v1.5`（92 MB），**开箱即有语义记忆**，不需要联网下载模型。代价是首次要装 `torch`（约 2 GB，一次性）。只想用关键词记忆的话，把 `models/` 删掉再启动，脚本会自动跳过。
+首次运行将自动完成 `.venv` 创建、核心与向量依赖安装、环境自检并拉起 `http://127.0.0.1:8000`。若希望轻量化跳过 `torch`（约 2 GB），删除解压目录下的 `models/` 文件夹后启动即可切换为关键词记忆模式。
 
 ### 方式二：源码运行
 
@@ -142,183 +124,127 @@ memory_vectors 表取出候选记忆已存好的向量   ← 复用，不重算
 git clone https://github.com/yangmuji14-creator/muu.git
 cd muu
 
-python install.py --all    # 建虚拟环境 + 装依赖 + 向量记忆
-python main.py setup       # 配置向导：模型 + 人设
-python main.py web         # 网页端 → http://127.0.0.1:8000
+python install.py --all     # 创建虚拟环境并安装全量依赖（也可按需 --vector / --wechat / --dev）
+python main.py setup        # 交互式向导：配置模型与角色
+python main.py web          # 启动 WebUI → http://127.0.0.1:8000
 ```
 
-`install.py` 的开关：
+如需拉取本地向量模型：
 
 ```bash
-python install.py            # 只装核心依赖（最轻）
-python install.py --vector   # + 向量记忆（sentence-transformers + torch，约 2 GB）
-python install.py --wechat   # + 微信接入
-python install.py --dev      # + 测试工具
-python install.py --all      # 全都要
+python -m tools.fetch_embedding_model
 ```
 
-装完向量依赖还要有模型文件：
+前端开发与生产构建（修改 `webui/frontend/` 后执行）：
 
 ```bash
-python -m tools.fetch_embedding_model   # 自动从 ModelScope / hf-mirror / HF 找最快源
+cd webui/frontend
+npm install
+npm run build               # 产物自动输出至 webui/static/
 ```
 
-> 没装 `[vector]` 也能跑——记忆会退化成关键词匹配，`python main.py doctor` 和诊断页都会如实告诉你向量功能未启用。
-
-### 方式三：Docker
+### 方式三：Docker 部署
 
 ```bash
 git clone https://github.com/yangmuji14-creator/muu.git
 cd muu
 cp .env.example .env
-# Edit .env and set MU_WEB_AUTH_USER plus a long random MU_WEB_AUTH_PASSWORD.
+# 在 .env 中设置 MU_WEB_AUTH_USER 与至少 16 位的 MU_WEB_AUTH_PASSWORD
 docker compose up -d
 ```
 
-访问 `http://127.0.0.1:8000`。`config/` `data/` `logs/` 三个目录挂载到宿主机，容器删了数据还在。想带向量记忆就把 `INSTALL_EXTRAS` 设成 `vector`：
+如需启用语义向量记忆，可将 `INSTALL_EXTRAS=vector` 写入构建参数：
 
 ```bash
 INSTALL_EXTRAS=vector docker compose up -d --build
 ```
 
-### 关于 Windows EXE
-
-`packaging/` 下的 PyInstaller 打包版为控制体积**排除了 torch / transformers**，因此**不带语义记忆**——记忆走关键词匹配。要语义记忆请用上面的一键启动包或源码方式。
-
 ---
 
-## 命令行
+## 命令行工具
 
 ```bash
-python main.py              # 启动（默认 run；检测到微信配置会同时起微信 Bot）
-python main.py setup        # 配置向导
-python main.py web          # 只启动网页端
-python main.py wechat       # 配置微信
-python main.py restore <备份文件>
-python main.py doctor       # 环境自检：Python / 依赖 / 目录 / 端口 / 模型 / 语义记忆
+python main.py              # 启动主程序（检测到微信配置时同步拉起微信端）
+python main.py setup        # 命令行初始化配置向导
+python main.py web          # 仅启动 Web 控制台（默认 127.0.0.1:8000）
+python main.py wechat       # 微信账号配置与扫码管理
+python main.py restore <备份.zip>  # 从加密安全校验的备份包恢复
+python main.py doctor       # 全量环境自检：Python / 依赖 / 端口 / 向量模型状态
 ```
 
-环境变量：`MU_WEB_HOST`（默认 `127.0.0.1`）、`MU_WEB_PORT`（默认 `8000`）。绑定到非本机地址时，必须设置 `MU_WEB_AUTH_USER` 和至少 16 个字符的 `MU_WEB_AUTH_PASSWORD`；否则 WebUI 会拒绝启动。Docker 部署也必须设置这两个变量。HTTP Basic 认证不加密网络流量，跨设备或公网访问时应放在启用 HTTPS 的反向代理后。
-
-> 卡住了先跑 `python main.py doctor`，它会逐项告诉你缺什么——包括语义记忆是「已启用」还是「降级成关键词匹配」。
+> [!IMPORTANT]
+> **公网与跨设备安全约束**：当 `MU_WEB_HOST` 绑定到非本机回环地址时，必须设置 `MU_WEB_AUTH_USER` 与至少 16 个字符的 `MU_WEB_AUTH_PASSWORD`，否则 WebUI 将拒绝启动；公网暴露请配合 HTTPS 反向代理使用。
 
 ---
 
 ## 能力一览
 
-### 人格与情绪
-
-- **多角色人格引擎**：一个实例下可配多套身份，性格、语气、背景故事、称呼各自独立，随时切换
-- **情绪状态机**：情绪不是提示词里写死的"你现在很开心"，而是有状态的——会被对话推动，也会自己平复
-- **亲密度**：钟形曲线增长，普通寒暄不会偷偷加分，负面互动在亲密关系里也能正常扣分
-
-### 对话
-
-- **网页端**：手机 / 桌面浏览器，三套布局
-- **命令行**：`/help` 看命令
-- **微信 Bot**：微信消息和本地消息由同一个 AI 处理，上下文共享
-
-### 扩展
-
-- **MCP 扩展**：内置 System / Web / Weather 三台服务器开箱即用，也可自定义任意 MCP 服务器（stdio JSON-RPC）
-- **内置工具**：时间、计算、随机数、天气、读文本
-- **语音合成**：多服务商，网页端直接播
-- **贴纸系统**：内置贴纸包，可导入自定义
-
-### 社交
-
-- **朋友圈**：发布、点赞、评论回复，支持定时 / 触发的 AI 自动发布
-- **联系人管理**、**微信多账号**（扫码登录）
-
-### 数据
-
-- **一键备份 / 恢复**：完整导出，恢复前可预览与安全检查
-- **诊断导出**：脱敏报告，报 bug 时附上它
-- **数据自持**：默认全部落在本地，打包版落 `%APPDATA%`，不污染安装目录
+| 模块 | 核心能力 |
+| --- | --- |
+| **人格与情感** | 多角色独立档案与人格漂移引擎 · 多维情绪状态机 · 基于互动质量的好感度成长曲线 |
+| **记忆与认知** | `bge-small-zh-v1.5` 向量语义检索 · 动态闸门 · 因果链识别 · 矛盾消解 · 艾宾浩斯遗忘衰减 · 阶段日记 |
+| **多端对话** | React 19 流式对话 WebUI（支持推理折叠与图文表情）· CLI 交互 · 微信多账号共享上下文接入 |
+| **工具与扩展** | 内置 System / Web / Weather 三个 MCP 服务器 · 自定义 stdio MCP · TTS 语音合成 · 贴纸系统 |
+| **社交与主动关怀** | 动态广场（发布 / 点赞 / 评论 / 自动发动态）· 定时与事件触发的主动消息 · 未闭合话题追问 |
+| **本地安全运维** | DPAPI / 系统钥匙串密钥加密 · 完整数据备份恢复 · 一键导出脱敏诊断包 |
 
 ---
 
 ## 项目结构
 
-```
-core/              核心逻辑（23k 行）
-├── memory/        记忆系统：manager 编排 / storage 持久化 / vector_store 向量表
-│                  embedder 嵌入 / decay 衰减 / conflict_resolver 冲突 / life_summary 人生总结
-├── brain/         认知层：collector 采集 / organizer 整理 / weaver 编织 / triggers 触发
-├── chat/          对话流水线：context_builder 上下文 / pipeline 主链 / post_process 后处理
-├── emotion/       情绪状态机：analyzer 分析 / mood 心境 / expression 表达
-├── persona/       人格与身份
-├── personality/   性格引擎
-├── social/        关系与好感度
-├── llm/           模型接入（LiteLLM 封装、Provider 管理）
-├── multimodal/    图片 / 视觉
-├── storage/       SQLite + 文件存储
-├── security/      密钥存储（Windows DPAPI / 钥匙串）
-├── runtime/       路径解析 / 诊断 / 事件总线 / 任务
-└── tools/         内置工具与 MCP 客户端
+```text
+core/                 核心业务与认知引擎
+├── brain/            后台认知编排（采集 / 整理 / 编织 / 触发器）
+├── chat/             对话主流水线（上下文构建 / 流式生成 / 后处理）
+├── emotion/          情绪分析、心境状态机与表达约束
+├── llm/              LiteLLM 统一适配、厂商目录与连通性诊断
+├── memory/           向量库、动态闸门、因果链、衰减、冲突消解与生命周期
+├── persona/          角色加载、人格漂移与提示词装配
+├── security/         Windows DPAPI 与跨平台密钥加密存储
+├── social/           关系阶段与好感度持久化
+└── tools/            内置工具与 MCP 客户端
 
 webui/
-├── routes/        后端路由（按域拆成 11 个模块）
-├── static/        构建产物（由 aiohttp 托管）
-└── frontend/      前端源码（Svelte 5 + Vite，61 个组件）
+├── routes/           后端 API 路由与状态存储模块（18 个模块）
+├── frontend/         React 19 + TypeScript + Vite 6 + Tailwind v4 前端源码（37 个源文件）
+└── static/           生产构建产物（由 aiohttp 托管）
 
-adapters/          消息通道适配（微信）
-mcp_servers/       内置 MCP 服务器（system / web / weather）
-tools/             运维脚本（模型下载、导出、截图、探针）
-tests/             测试套件（40 个文件，2514 个用例）
-models/            内置向量模型（bge-small-zh-v1.5，92 MB）
-main.py            统一入口
+adapters/             消息通道适配（微信 iLink）
+mcp_servers/          内置 MCP 服务器（system / web / weather）
+tools/                运维、打包与视觉对比度校验脚本
+tests/                自动化测试套件（2,745 passed）
 ```
 
-**技术栈**：Python 3.11+ · aiohttp · Svelte 5 + Vite · SQLite · LiteLLM · sentence-transformers · MCP
-
 ---
 
-## 常见问题
-
-**Q：一定要联网吗？**
-只有调模型 API 时需要。记忆、检索、人格、情绪全在本地算，向量模型也内置。想彻底离线就把模型换成 Ollama 本地跑的。
-
-**Q：我的数据会被上传吗？**
-不会。数据只在你机器上，唯一的外发是发给你自己配置的模型 API。诊断报告默认脱敏。
-
-**Q：记忆会不会把不相关的东西硬塞进上下文？**
-不会，这正是两级闸门要解决的问题——上面那组数字（噪声 1.80 → 0.30）就是实测结果。你也可以在设置里关掉语义记忆，退化成关键词匹配。
-
-**Q：能同时跟多个人格聊吗？**
-可以，每个人格是独立会话、独立记忆、独立情绪状态。
-
-**Q：为什么版本号是 0.1.x？**
-核心能力已经稳定（2514 个测试全绿），但接口还在演进。1.0 之前不保证 API 兼容。
-
----
-
-## 参与
-
-- [贡献指南](.github/CONTRIBUTING.md) —— 环境搭建、项目约定、提交自查清单
-- [行为守则](.github/CODE_OF_CONDUCT.md)
-- [安全策略](.github/SECURITY.md) —— 漏洞请走私密报告，别开公开 Issue
-
-跑测试：
+## 测试与质量保障
 
 ```bash
 pip install -e ".[dev]"
 pytest tests/ -q
+python tools/check_contrast.py
 ```
+
+---
+
+## 参与贡献
+
+欢迎阅读社区协作文档：
+
+- [贡献指南](.github/CONTRIBUTING.md)
+- [行为守则](.github/CODE_OF_CONDUCT.md)
+- [安全策略](.github/SECURITY.md)（安全漏洞请通过 GitHub Security Advisories 私密提交）
 
 ---
 
 ## 许可
 
-[AGPL-3.0](LICENSE)。
+本项目采用 [AGPL-3.0](LICENSE) 开源许可。
 
-自用、修改、给朋友部署：完全自由，不需要任何申请。
-唯一的约束在二次开发：**基于「慕」提供的网络服务，必须开源你对服务端的改动**（防闭源套壳）。个人使用完全无感。
-
-如果你的场景无法接受开源义务（闭源集成、企业内部分发、OEM），可以联系 [@yangmuji14-creator](https://github.com/yangmuji14-creator) 谈商业授权。
-
----
+- 个人学习、修改与自部署完全自由，无需额外申请。
+- 若基于本项目向第三方提供网络服务，需按 AGPL-3.0 开源你对服务端的修改。
+- 如需闭源集成、企业内部专有分发或商业授权，请联系项目作者 [@yangmuji14-creator](https://github.com/yangmuji14-creator)。
 
 <div align="center">
-<sub>「慕」—— 让 AI 成为身边靠得住的伴侣。所有能力本地运行，数据自己掌握。</sub>
+  <sub>Created by <a href="https://github.com/yangmuji14-creator">yangmuji14-creator</a> · 本地运行，记忆常在</sub>
 </div>

@@ -1,5 +1,5 @@
-/* 慕 · Liquid Glass
-   浅色暖瓷与深色黑曜石共用同一组基础刻度。 */
+/* 慕 · Apple HIG Inspired Theme
+   极简中性灰与柔和质感，轻盈通透。 */
 
 :root,
 [data-theme='light'] {
@@ -7,7 +7,7 @@
 
   --bg: #f6f5f2;
   --canvas-end: #efece6;
-  --surface: #fff;
+  --surface: #ffffff;
   --surface-2: #f6f5f3;
   --surface-3: #ebe9e6;
   --surface-inset: #f2f0ed;
@@ -18,30 +18,29 @@
      AA 4.5:1 不达标 —— 已知且已接受的例外，见 tests/test_design_tokens.py
      的 TestTertiaryTextException；不要为了过测试改这里的色值。 */
   --text-3: #8e8e93;
-  --text-inverse: #fff;
+  --text-inverse: #ffffff;
 
-  --border: rgba(24, 24, 27, 0.10);
+  --border: rgba(24, 24, 27, 0.08);
   --border-strong: #84848c;
-  --surface-divider: rgba(0, 0, 0, 0.04);
+  --surface-divider: rgba(0, 0, 0, 0.05);
 
   --surface-panel: rgba(255, 255, 255, 0.48);
   --surface-stage: rgba(255, 255, 255, 0.86);
   --surface-floating: rgba(255, 255, 255, 0.88);
-  --surface-bubble: rgba(255, 255, 255, 0.96);
-  /* 减弱透明时的兜底实色 = 玻璃与其氛围色按 alpha 合成后的颜色
-     （三列共用一档，取三条合成色的中位值，误差 ≤3）。 */
+  --surface-bubble: rgba(255, 255, 255, 0.98);
+  /* 减弱透明时的兜底实色 */
   --col-nav-solid: #f9f7f5;
   --col-aside-solid: var(--col-nav-solid);
   --col-list-solid: var(--col-nav-solid);
   --col-content-solid: #fdfcfb;
 
-  --stage-highlight: rgba(255, 255, 255, 0.75);
-  --floating-highlight: rgba(255, 255, 255, 0.90);
-  --mat-specular-soft: rgba(255, 255, 255, 0.36);
-  --shadow-1: 0 1px 3px rgba(15, 23, 42, 0.07);
-  --shadow-2: 0 3px 12px -3px rgba(15, 23, 42, 0.09);
-  --shadow-3: 0 8px 32px -8px rgba(15, 23, 42, 0.06);
-  --shadow-4: 0 20px 48px -12px rgba(0, 0, 0, 0.18);
+  --stage-highlight: rgba(255, 255, 255, 0.85);
+  --floating-highlight: rgba(255, 255, 255, 0.95);
+  --mat-specular-soft: rgba(255, 255, 255, 0.40);
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-2: 0 4px 14px -2px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-3: 0 10px 30px -4px rgba(0, 0, 0, 0.10), 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-4: 0 20px 48px -8px rgba(0, 0, 0, 0.14), 0 8px 24px rgba(0, 0, 0, 0.06);
 
   --ambient-a: #f6f5f2;
   --ambient-b: #f3f0eb;
@@ -49,28 +48,28 @@
   --ambient-d: #efece6;
   --ambient-tint: rgba(246, 245, 242, 0.58);
 
-  --accent: #a44e13;
-  --accent-hover: #873d10;
-  --on-accent: #fff;
+  --accent: #2264c6;
+  --accent-hover: #194fa3;
+  --on-accent: #ffffff;
 
-  --success: #2f6f4f;
-  --warning: #8a5a12;
-  --error: #a63d34;
-  --info: #3d6391;
-  --on-success: #fff;
-  --on-warning: #fff;
-  --on-error: #fff;
-  --success-soft: rgba(47, 111, 79, 0.12);
-  --warning-soft: rgba(138, 90, 18, 0.12);
-  --error-soft: rgba(166, 61, 52, 0.12);
-  --info-soft: rgba(61, 99, 145, 0.12);
+  --success: #1e7e34;
+  --warning: #995700;
+  --error: #d73a49;
+  --info: #2264c6;
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --on-error: #ffffff;
+  --success-soft: rgba(30, 126, 52, 0.12);
+  --warning-soft: rgba(153, 87, 0, 0.12);
+  --error-soft: rgba(215, 58, 73, 0.12);
+  --info-soft: rgba(34, 100, 198, 0.12);
 
-  --overlay: rgba(24, 24, 27, 0.38);
+  --overlay: rgba(24, 24, 27, 0.35);
   --scrim: var(--overlay);
-  --hover-overlay: rgba(24, 24, 27, 0.05);
-  --active-overlay: rgba(24, 24, 27, 0.09);
-  --disabled-text: rgba(24, 24, 27, 0.36);
-  --disabled-bg: rgba(24, 24, 27, 0.05);
+  --hover-overlay: rgba(24, 24, 27, 0.04);
+  --active-overlay: rgba(24, 24, 27, 0.08);
+  --disabled-text: rgba(24, 24, 27, 0.38);
+  --disabled-bg: rgba(24, 24, 27, 0.04);
   --field-fill: rgba(0, 0, 0, 0.035);
 }
 
@@ -90,7 +89,7 @@
   --text-3: #71717a;
   --text-inverse: #11131a;
 
-  --border: rgba(255, 255, 255, 0.11);
+  --border: rgba(255, 255, 255, 0.10);
   --border-strong: #8b8b96;
   --surface-divider: rgba(255, 255, 255, 0.06);
 
@@ -98,7 +97,7 @@
   --surface-stage: rgba(28, 31, 39, 0.82);
   --surface-floating: rgba(34, 37, 46, 0.88);
   --surface-bubble: #22252e;
-  /* 深色三列的合成色 (19,21,26)/(22,24,32)/(22,24,30) 取中位值。 */
+  /* 深色实色兜底 */
   --col-nav-solid: #15171d;
   --col-aside-solid: var(--col-nav-solid);
   --col-list-solid: var(--col-nav-solid);
@@ -118,9 +117,9 @@
   --ambient-d: #13151b;
   --ambient-tint: rgba(13, 14, 18, 0.70);
 
-  --accent: #f0ab61;
-  --accent-hover: #ffc184;
-  --on-accent: #241508;
+  --accent: #83b6ff;
+  --accent-hover: #a1caff;
+  --on-accent: #0a172a;
 
   --success: #82d1a3;
   --warning: #e9bd72;

@@ -260,8 +260,8 @@
   --bubble-friend-bg: var(--surface-bubble);
   --bubble-friend-text: var(--text-1);
   --bubble-border: var(--surface-divider);
-  --bubble-radius-lg: var(--radius-md);
-  --bubble-radius-sm: var(--radius-xs);
+  --bubble-radius-lg: 18px;
+  --bubble-radius-sm: 6px;
   --bubble-time: var(--text-2);
 
   --input-bg: var(--field-fill);

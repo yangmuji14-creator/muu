@@ -155,6 +155,14 @@ def _make_app(app_components, host: str | None = None):
     if STATIC_DIR.exists():
         aio_app.router.add_static("/static/", STATIC_DIR, name="static")
 
+    # 旧入口兼容：v1（Svelte）下线后 /v2 不再单独存在，统一回根路径。
+    # 保留重定向是为了不让存了 /v2 书签的人撞 404。
+    async def legacy_v2_redirect(_request):
+        raise web.HTTPFound("/")
+
+    aio_app.router.add_get("/v2", legacy_v2_redirect)
+    aio_app.router.add_get("/v2/", legacy_v2_redirect)
+
     # T13: best-effort legacy web_user.json → web:default binding migration.
     # 失败不阻塞 server 启动（log warning + 继续）。
     try:
