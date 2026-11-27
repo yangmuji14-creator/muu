@@ -109,14 +109,15 @@
 
 ## 快速开始
 
-### 方式一：一键启动包（推荐，内置向量模型）
+### 方式一：Windows 离线开箱即用包（推荐，免装环境）
 
-从 [GitHub Releases](https://github.com/yangmuji14-creator/muu/releases) 下载最新版 `muu-0.3.0-portable.zip`，解压后直接运行：
+从 [GitHub Releases](https://github.com/yangmuji14-creator/muu/releases) 下载最新版 **`muu-0.3.0-win64-portable.zip`**，完整解压后直接双击运行：
 
 - **Windows**：双击 `Run.bat`
-- **macOS / Linux**：`chmod +x Run.command && ./Run.command`（或 `./start.sh`）
 
-首次运行将自动完成 `.venv` 创建、核心与向量依赖安装、环境自检并拉起 `http://127.0.0.1:8000`。若希望轻量化跳过 `torch`（约 2 GB），删除解压目录下的 `models/` 文件夹后启动即可切换为关键词记忆模式。
+压缩包已内置嵌入式 Python 3.12、全部核心/微信依赖、CPU 版 PyTorch 与本地中文向量模型 `models/bge-small-zh-v1.5`（91.9 MB）——**无需在本机安装 Python，也无需联网下载任何依赖包**，首次启动自动初始化配置并打开 `http://127.0.0.1:8000`。
+
+macOS / Linux 用户请按下方「方式二：源码运行」（仓库内 `Run.command` / `start.sh` 也支持在有 `python3` 时一键建虚拟环境拉起）。
 
 ### 方式二：源码运行
 

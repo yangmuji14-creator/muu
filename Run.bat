@@ -1,11 +1,30 @@
 @echo off
+chcp 65001 >nul
 rem Mu (mu-companion) one-click launcher for Windows.
-rem Mirrors PawzoChat's Run.bat: detect python -> create venv -> install deps -> start.
+rem Supports two modes:
+rem   1. Standalone offline mode (when bundled runtime\python.exe exists): zero install.
+rem   2. Source mode: detect python -> create venv -> install deps -> start.
 setlocal
 cd /d "%~dp0"
 title Mu
 
-set PY=.venv\Scripts\python.exe
+if not exist "config" mkdir "config" >nul 2>nul
+if not exist "config\settings.json" if exist "config\settings.example.json" copy /y "config\settings.example.json" "config\settings.json" >nul
+if not exist "config\personas.json" if exist "config\personas.example.json" copy /y "config\personas.example.json" "config\personas.json" >nul
+if not exist "config\mcp_servers.json" if exist "config\mcp_servers.example.json" copy /y "config\mcp_servers.example.json" "config\mcp_servers.json" >nul
+
+if exist "runtime\python.exe" (
+  set "PY=%~dp0runtime\python.exe"
+  set "CYBER_NO_VENV=1"
+  set "PYTHONUTF8=1"
+  set "PYTHONNOUSERSITE=1"
+  set "PYTHONPATH="
+  set "PYTHONHOME="
+  echo  [Mu] Using bundled Python runtime ^(offline ready^).
+  goto :run_doctor
+)
+
+set "PY=.venv\Scripts\python.exe"
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -59,6 +78,7 @@ if exist "models\bge-small-zh-v1.5\config.json" (
   )
 )
 
+:run_doctor
 echo  [Mu] Environment self-check...
 "%PY%" main.py doctor
 if errorlevel 1 (

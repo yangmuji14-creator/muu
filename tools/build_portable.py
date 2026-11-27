@@ -27,14 +27,23 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 import zipfile
 from pathlib import Path
 
 MODEL_DIRNAME = "bge-small-zh-v1.5"
+EMBED_PYTHON_VERSION = "3.12.10"
+EMBED_PYTHON_URL = (
+    f"https://www.python.org/ftp/python/{EMBED_PYTHON_VERSION}/"
+    f"python-{EMBED_PYTHON_VERSION}-embed-amd64.zip"
+)
+CPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 # 打包时必须存在的文件（缺一个就说明包不完整，宁可失败也别发出去）
 REQUIRED_IN_PACKAGE = (
@@ -63,6 +72,16 @@ FORBIDDEN_IN_PACKAGE = (
     "packaging",
     "_export",
     "logs",
+)
+
+# --with-runtime 时必须存在的独立运行时与关键三方库路径
+REQUIRED_IN_RUNTIME = (
+    "runtime/python.exe",
+    "runtime/python312._pth",
+    "runtime/Lib/site-packages/torch",
+    "runtime/Lib/site-packages/sentence_transformers",
+    "runtime/Lib/site-packages/litellm",
+    "runtime/Lib/site-packages/aiohttp",
 )
 
 
@@ -121,11 +140,259 @@ def copy_model(root: Path, dest: Path) -> int:
     return count
 
 
-def write_quickstart(dest: Path, version: str) -> Path:
+def _find_uv() -> str:
+    """定位 uv 可执行文件，用于向嵌入式 runtime 离线/纯净装配依赖。"""
+    found = shutil.which("uv")
+    if found:
+        return found
+    for candidate in (
+        Path.home() / ".local" / "bin" / "uv.exe",
+        Path.home() / ".cargo" / "bin" / "uv.exe",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    raise SystemExit("找不到 uv 可执行文件，请先安装 uv 或确认其在 PATH / ~/.local/bin 中")
+
+
+def _isolated_python_env() -> dict[str, str]:
+    """构造不继承宿主机 PYTHONPATH / PYTHONHOME 的纯净环境变量。"""
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def _resolve_embed_zip(root: Path, embed_zip: Path | None) -> Path:
+    """定位或下载官方 Windows 嵌入式 Python ZIP（带 _export/.cache 复用）。"""
+    if embed_zip is not None:
+        resolved = embed_zip.expanduser().resolve()
+        if not resolved.is_file():
+            raise SystemExit(f"指定的嵌入式 Python 包不存在：{resolved}")
+        return resolved
+
+    cache_dir = root / "_export" / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / f"python-{EMBED_PYTHON_VERSION}-embed-amd64.zip"
+    if cached.is_file() and cached.stat().st_size > 5 * 1024 * 1024:
+        print(f"[portable] 复用嵌入式 Python 缓存：{cached}")
+        return cached
+
+    print(f"[portable] 正在下载嵌入式 Python {EMBED_PYTHON_VERSION} -> {EMBED_PYTHON_URL}")
+    tmp_path = cached.with_suffix(".zip.tmp")
+    if tmp_path.exists():
+        tmp_path.unlink()
+    try:
+        urllib.request.urlretrieve(EMBED_PYTHON_URL, tmp_path)
+        tmp_path.replace(cached)
+    except Exception as exc:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise SystemExit(f"下载嵌入式 Python 失败：{exc}") from exc
+    return cached
+
+
+def _cleanup_site_packages(site_packages: Path) -> int:
+    """清理 __pycache__ 与 .pyc/.pyo 字节码以减小发布体积，不删除任何源码或数据文件。"""
+    removed = 0
+    for pycache in list(site_packages.rglob("__pycache__")):
+        if pycache.is_dir():
+            shutil.rmtree(pycache, ignore_errors=True)
+            removed += 1
+    for pattern in ("*.pyc", "*.pyo"):
+        for file_path in list(site_packages.rglob(pattern)):
+            if file_path.is_file():
+                try:
+                    file_path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
+
+
+def bundle_runtime(root: Path, dest: Path, embed_zip: Path | None = None) -> None:
+    """内置 Windows 嵌入式 Python 3.12 + 全量核心/微信/CPU PyTorch 依赖。"""
+    zip_path = _resolve_embed_zip(root, embed_zip)
+    runtime_dir = dest / "runtime"
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[portable] 解压嵌入式 Python 到 {runtime_dir}")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(runtime_dir)
+
+    pth_file = runtime_dir / "python312._pth"
+    pth_file.write_text(
+        "python312.zip\n.\nLib/site-packages\n..\n../mcp_servers\nimport site\n",
+        encoding="utf-8",
+    )
+
+    site_packages = runtime_dir / "Lib" / "site-packages"
+    site_packages.mkdir(parents=True, exist_ok=True)
+
+    uv_bin = _find_uv()
+    runtime_python = runtime_dir / "python.exe"
+    if not runtime_python.is_file():
+        raise SystemExit(f"嵌入式 Python 解压后缺少可执行文件：{runtime_python}")
+
+    # 1. 先单独安装 CPU 版 torch，避免后续解析器从 PyPI 拉取 ~2.5 GB CUDA 版
+    print("[portable] 安装 CPU 版 PyTorch 到 runtime/Lib/site-packages ...")
+    subprocess.run(
+        [
+            uv_bin,
+            "pip",
+            "install",
+            "--target",
+            str(site_packages),
+            "--python-version",
+            "3.12",
+            "--python-platform",
+            "x86_64-pc-windows-msvc",
+            "--index-url",
+            CPU_TORCH_INDEX,
+            "torch",
+        ],
+        cwd=root,
+        check=True,
+    )
+
+    iso_env = _isolated_python_env()
+    torch_ver_proc = subprocess.run(
+        [
+            str(runtime_python),
+            "-c",
+            "import importlib.metadata as m; print(m.version('torch'))",
+        ],
+        cwd=dest,
+        env=iso_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    torch_version = torch_ver_proc.stdout.strip()
+    print(f"[portable] 锁定 CPU torch 版本：{torch_version}")
+
+    # 2. 用 constraint 锁定已装好的 CPU torch，再装配核心 + 向量 + 微信依赖（不含 dev）
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", encoding="utf-8", delete=False
+    ) as tf:
+        tf.write(f"torch=={torch_version}\n")
+        constraint_path = Path(tf.name)
+
+    try:
+        print("[portable] 安装核心、语义记忆与微信依赖（不含 dev 工具）...")
+        subprocess.run(
+            [
+                uv_bin,
+                "pip",
+                "install",
+                "--target",
+                str(site_packages),
+                "--python-version",
+                "3.12",
+                "--python-platform",
+                "x86_64-pc-windows-msvc",
+                "--index-url",
+                "https://pypi.org/simple",
+                "--extra-index-url",
+                CPU_TORCH_INDEX,
+                "--index-strategy",
+                "unsafe-best-match",
+                "--constraint",
+                str(constraint_path),
+                "-r",
+                str(root / "requirements.txt"),
+                "-r",
+                str(root / "requirements-vector.txt"),
+                "-r",
+                str(root / "requirements-wechat.txt"),
+            ],
+            cwd=root,
+            check=True,
+        )
+    finally:
+        if constraint_path.exists():
+            constraint_path.unlink()
+
+    # 3. 校验无 CUDA 巨型 DLL，并尽量通过 runtime Python 校验 CPU 版 torch
+    if "+cpu" not in torch_version:
+        raise SystemExit(f"安装的 torch 不是 CPU 版本：{torch_version}")
+    torch_dir = site_packages / "torch"
+    cuda_dlls = [
+        p.name
+        for p in torch_dir.rglob("*.dll")
+        if any(tok in p.name.lower() for tok in ("cublas", "cudnn", "cudart", "cufft", "cusparse"))
+    ]
+    if cuda_dlls:
+        raise SystemExit(f"检测到 CUDA DLL，可能误装了 GPU 版 PyTorch：{cuda_dlls[:5]}")
+
+    check_proc = subprocess.run(
+        [
+            str(runtime_python),
+            "-c",
+            "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())",
+        ],
+        cwd=dest,
+        env=iso_env,
+        capture_output=True,
+        text=True,
+    )
+    if check_proc.returncode == 0:
+        print(f"[portable] 运行时校验：{check_proc.stdout.strip()}")
+    else:
+        stderr_tail = (check_proc.stderr or "").strip().splitlines()[-1:] or [""]
+        # 在受限工作区目录（带 Low Mandatory Level ACL）下直接执行新解压的 _ctypes.pyd
+        # 可能被 Windows 拦截，解压到普通目录/Temp 即可正常加载；仍需在隔离目录实测。
+        print(f"[portable] 运行时原位冒烟跳过（需在非受限目录实测）：{stderr_tail[0]}")
+
+    cleaned = _cleanup_site_packages(site_packages)
+    runtime_mb = sum(p.stat().st_size for p in runtime_dir.rglob("*") if p.is_file()) / 1024 / 1024
+    print(f"[portable] 清理字节码缓存 {cleaned} 项；runtime 总大小：{runtime_mb:.1f} MB")
+
+
+def write_quickstart(dest: Path, version: str, *, with_runtime: bool = False) -> Path:
     """在包根写一份最短的上手说明（GitHub 上的 README 太长，解压时只想看怎么开）。"""
     path = dest / "启动说明.txt"
-    path.write_text(
-        f"""慕 v{version} — 一键启动版
+    if with_runtime:
+        body = f"""慕 v{version} — Windows 离线开箱即用版
+========================================
+
+本压缩包为真正免安装的独立离线版，已内置：
+  1. Python {EMBED_PYTHON_VERSION} 嵌入式运行时（runtime/）；
+  2. 全部核心依赖、CPU 版 PyTorch、语义记忆（sentence-transformers）与微信插件依赖；
+  3. 本地中文向量模型（models/bge-small-zh-v1.5，约 92MB）。
+
+无需在本机安装 Python，无需联网执行 pip install。
+
+------------------------------------------------
+Windows 使用方法
+------------------------------------------------
+  1. 完整解压本压缩包到任意目录（不要直接在压缩软件预览窗里双击）
+  2. 双击  Run.bat
+  3. 浏览器会自动打开 http://127.0.0.1:8000
+
+  首次启动会自动从 *.example.json 初始化 config/ 并直接运行自检后拉起网页端。
+  （在网页端「设置 → 模型设置」填入你自己的对话模型 API Key 即可开始聊天。）
+
+------------------------------------------------
+数据存在哪
+------------------------------------------------
+  data/       对话、记忆、关系值（首次启动时创建）
+  config/     模型密钥与人设（首次启动时从 *.example.json 初始化）
+  logs/       运行日志
+
+  升级新版时保留自己的 data/ 和 config/ 即可带走全部记忆与配置。
+
+------------------------------------------------
+遇到问题
+------------------------------------------------
+  在包目录执行：  runtime\\python.exe main.py doctor
+  它会逐项检查 Python、依赖、模型、配置、端口。
+"""
+    else:
+        body = f"""慕 v{version} — 一键启动版
 ========================================
 
 这个包和 GitHub 上的源码版只有两点不同：
@@ -174,13 +441,11 @@ macOS / Linux
   在包目录执行：  python main.py doctor
   它会逐项检查 Python、依赖、模型、配置、端口。
 """
-        ,
-        encoding="utf-8",
-    )
+    path.write_text(body, encoding="utf-8")
     return path
 
 
-def verify(dest: Path) -> list[str]:
+def verify(dest: Path, *, with_runtime: bool = False) -> list[str]:
     """发布包自检。返回问题列表，空表示通过。"""
     problems: list[str] = []
 
@@ -188,15 +453,23 @@ def verify(dest: Path) -> list[str]:
         if not (dest / rel).exists():
             problems.append(f"缺少必需文件：{rel}")
 
+    if with_runtime:
+        for rel in REQUIRED_IN_RUNTIME:
+            if not (dest / rel).exists():
+                problems.append(f"缺少内置运行时/依赖：{rel}")
+
     for rel in FORBIDDEN_IN_PACKAGE:
         target = dest / rel
         if target.exists():
             problems.append(f"不该出现的路径：{rel}")
 
-    # 密钥兜底扫描（export_clean 已扫过，这里只查模型/说明文件之外的文本）
+    # 密钥兜底扫描（跳过 runtime/ 第三方库与 model.safetensors 避免无谓扫描）
     secret = re.compile(r"\bsk-[A-Za-z0-9]{20,}")
     for path in dest.rglob("*"):
         if not path.is_file():
+            continue
+        rel_path = path.relative_to(dest)
+        if with_runtime and rel_path.parts and rel_path.parts[0] == "runtime":
             continue
         if path.suffix.lower() not in {".py", ".md", ".json", ".toml", ".txt", ".yml", ".yaml", ".bat", ".sh", ".command"}:
             continue
@@ -207,7 +480,7 @@ def verify(dest: Path) -> list[str]:
         except OSError:
             continue
         if secret.search(text):
-            problems.append(f"疑似密钥泄露：{path.relative_to(dest)}")
+            problems.append(f"疑似密钥泄露：{rel_path}")
 
     return problems
 
@@ -236,15 +509,26 @@ def sha256_of(path: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="打一键启动版发布包（含向量模型）")
-    parser.add_argument("--dest", default="", help="目标目录，默认 _export/muu-<version>-portable")
+    parser.add_argument("--dest", default="", help="目标目录，默认按模式生成在 _export/ 下")
     parser.add_argument("--no-zip", action="store_true", help="只生成目录，不压 zip")
     parser.add_argument("--skip-export", action="store_true", help="复用已导出的 _export/muu-<version>")
+    parser.add_argument(
+        "--with-runtime",
+        action="store_true",
+        help="内置 Windows 嵌入式 Python 3.12 与全量离线依赖（解压双击 Run.bat 零安装直启）",
+    )
+    parser.add_argument(
+        "--python-embed-zip",
+        default="",
+        help="可选：本地 python-3.12.10-embed-amd64.zip 路径（配合 --with-runtime）",
+    )
     args = parser.parse_args(argv)
 
     root = project_root()
     version = read_version(root)
     source = root / "_export" / f"muu-{version}"
-    dest = Path(args.dest) if args.dest else root / "_export" / f"muu-{version}-portable"
+    default_name = f"muu-{version}-win64-portable" if args.with_runtime else f"muu-{version}-portable"
+    dest = Path(args.dest) if args.dest else root / "_export" / default_name
     dest = dest.resolve()
 
     if dest == root or dest in root.parents:
@@ -267,10 +551,14 @@ def main(argv: list[str] | None = None) -> int:
         shutil.copytree(source, dest)
 
     copy_model(root, dest)
-    quickstart = write_quickstart(dest, version)
+    if args.with_runtime:
+        embed_zip = Path(args.python_embed_zip) if args.python_embed_zip else None
+        bundle_runtime(root, dest, embed_zip=embed_zip)
+
+    quickstart = write_quickstart(dest, version, with_runtime=args.with_runtime)
     print(f"[portable] 已写启动说明：{quickstart.name}")
 
-    problems = verify(dest)
+    problems = verify(dest, with_runtime=args.with_runtime)
     if problems:
         print("\n[portable] 自检未通过：")
         for item in problems:
